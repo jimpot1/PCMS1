@@ -1,0 +1,41 @@
+
+backend/storage/app/private/google/
+
+# Dependencies (rebuilt via composer install / npm install)
+backend/vendor/
+frontend/node_modules/
+node_modules/
+
+# Build output (rebuilt via npm run build)
+frontend/dist/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+backend/.env
+backend/.env.*
+!backend/.env.example
+frontend/.env
+frontend/.env.*
+
+# Laravel runtime
+backend/storage/*.key
+backend/storage/logs/*.log
+backend/bootstrap/cache/*.php
+backend/storage/framework/cache/data/*
+backend/storage/framework/sessions/*
+backend/storage/framework/views/*
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Dev server logs
+frontend/vite-dev*.log
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+CAPSTONE/
