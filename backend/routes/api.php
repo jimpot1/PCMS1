@@ -103,8 +103,8 @@ Route::middleware(['auth'])->group(function () {
     Route::patch('/gate-passes/{gatePass}/return', [GatePassController::class, 'return']);
     Route::post('/gate-passes/{gatePass}/scan', [GatePassController::class, 'scan']);
     Route::apiResource('audits', AuditController::class);
-    Route::post('/audits/{audit}/scan', [AuditController::class, 'scan'])->middleware('role:PPMO Staff,OIC');
-    Route::patch('/audits/{audit}/complete', [AuditController::class, 'complete'])->middleware('role:PPMO Staff,OIC');
+    Route::post('/audits/{audit}/scan', [AuditController::class, 'scan'])->middleware('role:PPMO Staff,Property Custodian,OIC');
+    Route::patch('/audits/{audit}/complete', [AuditController::class, 'complete'])->middleware('role:PPMO Staff,Property Custodian,OIC');
     Route::get('/assignments/dashboard', [\App\Http\Controllers\AssetAssignmentController::class, 'dashboard']);
     Route::get('/assignments/export', [\App\Http\Controllers\AssetAssignmentController::class, 'export']);
     Route::get('/assignments/recommendations', [\App\Http\Controllers\AssetAssignmentController::class, 'recommendations']);

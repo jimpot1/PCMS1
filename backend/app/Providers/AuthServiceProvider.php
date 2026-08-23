@@ -10,6 +10,7 @@ use App\Models\DamageReport;
 use App\Models\GatePass;
 use App\Models\MaintenanceRecord;
 use App\Models\PurchaseRequest;
+use App\Models\PhysicalAudit;
 use App\Models\Supply;
 use App\Policies\ActivityLogPolicy;
 use App\Policies\AssetAssignmentPolicy;
@@ -19,6 +20,7 @@ use App\Policies\DamageReportPolicy;
 use App\Policies\GatePassPolicy;
 use App\Policies\MaintenanceRecordPolicy;
 use App\Policies\PurchaseRequestPolicy;
+use App\Policies\PhysicalAuditPolicy;
 use App\Policies\SupplyPolicy;
 use Illuminate\Foundation\Support\Providers\AuthServiceProvider as ServiceProvider;
 
@@ -34,6 +36,7 @@ class AuthServiceProvider extends ServiceProvider
         DamageReport::class => DamageReportPolicy::class,
         MaintenanceRecord::class => MaintenanceRecordPolicy::class,
         ActivityLog::class => ActivityLogPolicy::class,
+        PhysicalAudit::class => PhysicalAuditPolicy::class,
     ];
 
     public function boot(): void

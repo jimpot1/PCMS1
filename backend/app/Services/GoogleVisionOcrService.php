@@ -108,6 +108,17 @@ class GoogleVisionOcrService
 
             $fieldKey = self::detectField($line);
 
+            if ($fieldKey !== null && $pendingFields !== [] && ! preg_match('/^[^:]{1,80}:\s*/', $line)) {
+                $fieldKey = null;
+            }
+
+            // Description values may contain words that are also field labels.
+            // Only a colon-delimited label should close the multiline value.
+            if ($openField === 'description' && ($fieldKey === null || ! preg_match('/^[^:]{1,80}:\s*/', $line))) {
+                $descriptionLines[] = $line;
+                continue;
+            }
+
             if ($fieldKey !== null) {
                 // A new label line closes out any open multi-line description.
                 if ($openField === 'description') {

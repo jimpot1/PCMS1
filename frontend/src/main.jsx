@@ -905,6 +905,7 @@ function App() {
                 path="monitoring"
                 element={<MonitoringPage currentUser={currentUser} />}
               />
+              <Route path="audit" element={<AuditPage />} />
               <Route
                 path="notifications"
                 element={
@@ -4855,162 +4856,175 @@ function EnhancedAssignmentsPage() {
               </button>
             </div>
             <div className="modal-body par-details-body">
-            {selectedAssignment._detailsLoading && (
-              <div className="loading-card">Loading assignment history...</div>
-            )}
-            {selectedAssignment._detailsError && (
-              <div className="alert danger">
-                {selectedAssignment._detailsError}
-              </div>
-            )}
-            <div className="par-details-grid">
-            <AssetDetailGrid asset={selectedAssignment.asset} />
-            <div className="asset-description-card">
-              <span className="asset-detail-label">Accountability</span>
-              <p>
-                Employee:{" "}
-                {formatAssignmentUser(
-                  selectedAssignment.assigned_to ||
-                    selectedAssignment.assignedTo ||
-                    {},
-                )}
-              </p>
-              <p>Quantity: {selectedAssignment.quantity || 1}</p>
-              <p>
-                Purpose:{" "}
-                {selectedAssignment.purpose || selectedAssignment.notes || "-"}
-              </p>
-              <p>Status: {selectedAssignment.status}</p>
-              <p>
-                Assigned: {formatAssignmentDate(selectedAssignment.assigned_at)}{" "}
-                - Expected Return:{" "}
-                {formatAssignmentDate(selectedAssignment.due_date)}
-              </p>
-              <p>
-                Condition Before: {selectedAssignment.condition_before || "N/A"}{" "}
-                - Condition After: {selectedAssignment.condition_after || "N/A"}
-              </p>
-              {selectedAssignment.asset?.qr_code_path && (
-                <img
-                  src={assetQrCodeUrl(selectedAssignment.asset.qr_code_path)}
-                  alt="Assignment QR code"
-                  style={{
-                    width: 84,
-                    height: 84,
-                    objectFit: "contain",
-                    marginTop: 8,
-                  }}
-                />
-              )}
-            </div>
-            {selectedAssignment.asset && (
-              <div className="asset-description-card">
-                <span className="asset-detail-label">QR Scan Details</span>
-                <p>
-                  Property Number:{" "}
-                  {selectedAssignment.asset.property_number ||
-                    selectedAssignment.asset.asset_id ||
-                    "N/A"}
-                </p>
-                <p>
-                  Assigned Employee:{" "}
-                  {formatAssignmentUser(
-                    selectedAssignment.assigned_to ||
-                      selectedAssignment.assignedTo ||
-                      {},
-                  )}
-                </p>
-                <p>
-                  Department:{" "}
-                  {(
-                    selectedAssignment.assigned_to ||
-                    selectedAssignment.assignedTo ||
-                    {}
-                  ).department || "N/A"}
-                </p>
-                <p>
-                  Status: {selectedAssignment.status} - Warranty:{" "}
-                  {formatAssignmentDate(
-                    selectedAssignment.asset.warranty_until,
-                  )}
-                </p>
-                <p>Location: {selectedAssignment.asset.location || "N/A"}</p>
-              </div>
-            )}
-            </div>
-            {selectedAssignment._details?.accountability_form && (
-              <div className="asset-description-card">
-                <span className="asset-detail-label">
-                  Digital Accountability Form
-                </span>
-                <p>
-                  PAR No:{" "}
-                  {selectedAssignment._details.accountability_form.form_number}
-                </p>
-                <p>
-                  Generated:{" "}
-                  {formatAssignmentDate(
-                    selectedAssignment._details.accountability_form
-                      .generated_at,
-                  )}
-                </p>
-                <p>
-                  Property No.:{" "}
-                  {selectedAssignment._details.accountability_form.payload
-                    ?.asset?.property_number ||
-                    selectedAssignment.asset?.property_number ||
-                    "N/A"}
-                </p>
-                <p>
-                  Serial No.:{" "}
-                  {selectedAssignment._details.accountability_form.payload
-                    ?.asset?.serial_number ||
-                    selectedAssignment.asset?.serial_number ||
-                    "N/A"}
-                </p>
-                <p>
-                  Acquisition Cost:{" "}
-                  {formatCurrency(
-                    selectedAssignment._details.accountability_form.payload
-                      ?.asset?.acquisition_cost ||
-                      selectedAssignment.asset?.purchase_cost ||
-                      0,
-                  )}
-                </p>
-                <p>
-                  Accountability Statement:{" "}
-                  {selectedAssignment._details.accountability_form.payload
-                    ?.accountability_statement || "N/A"}
-                </p>
-                <p>
-                  Employee Signature:{" "}
-                  {selectedAssignment.employee_signature || "Pending"}
-                </p>
-                <p>
-                  Property Custodian Signature:{" "}
-                  {selectedAssignment.custodian_signature || "Pending"}
-                </p>
-              </div>
-            )}
-            {(selectedAssignment._details?.history || []).length > 0 && (
-              <div className="asset-description-card">
-                <span className="asset-detail-label">Assignment History</span>
-                <div className="activity-list expanded">
-                  {selectedAssignment._details.history.map((event) => (
-                    <div key={event.id}>
-                      <span className="activity-dot" />
-                      <p>
-                        {String(event.event_type || "updated").replaceAll(
-                          "_",
-                          " ",
-                        )}
-                      </p>
-                      <time>{formatAssignmentDate(event.created_at)}</time>
-                    </div>
-                  ))}
+              {selectedAssignment._detailsLoading && (
+                <div className="loading-card">
+                  Loading assignment history...
                 </div>
+              )}
+              {selectedAssignment._detailsError && (
+                <div className="alert danger">
+                  {selectedAssignment._detailsError}
+                </div>
+              )}
+              <div className="par-details-grid">
+                <AssetDetailGrid asset={selectedAssignment.asset} />
+                <div className="asset-description-card">
+                  <span className="asset-detail-label">Accountability</span>
+                  <p>
+                    Employee:{" "}
+                    {formatAssignmentUser(
+                      selectedAssignment.assigned_to ||
+                        selectedAssignment.assignedTo ||
+                        {},
+                    )}
+                  </p>
+                  <p>Quantity: {selectedAssignment.quantity || 1}</p>
+                  <p>
+                    Purpose:{" "}
+                    {selectedAssignment.purpose ||
+                      selectedAssignment.notes ||
+                      "-"}
+                  </p>
+                  <p>Status: {selectedAssignment.status}</p>
+                  <p>
+                    Assigned:{" "}
+                    {formatAssignmentDate(selectedAssignment.assigned_at)} -
+                    Expected Return:{" "}
+                    {formatAssignmentDate(selectedAssignment.due_date)}
+                  </p>
+                  <p>
+                    Condition Before:{" "}
+                    {selectedAssignment.condition_before || "N/A"} - Condition
+                    After: {selectedAssignment.condition_after || "N/A"}
+                  </p>
+                  {selectedAssignment.asset?.qr_code_path && (
+                    <img
+                      src={assetQrCodeUrl(
+                        selectedAssignment.asset.qr_code_path,
+                      )}
+                      alt="Assignment QR code"
+                      style={{
+                        width: 84,
+                        height: 84,
+                        objectFit: "contain",
+                        marginTop: 8,
+                      }}
+                    />
+                  )}
+                </div>
+                {selectedAssignment.asset && (
+                  <div className="asset-description-card">
+                    <span className="asset-detail-label">QR Scan Details</span>
+                    <p>
+                      Property Number:{" "}
+                      {selectedAssignment.asset.property_number ||
+                        selectedAssignment.asset.asset_id ||
+                        "N/A"}
+                    </p>
+                    <p>
+                      Assigned Employee:{" "}
+                      {formatAssignmentUser(
+                        selectedAssignment.assigned_to ||
+                          selectedAssignment.assignedTo ||
+                          {},
+                      )}
+                    </p>
+                    <p>
+                      Department:{" "}
+                      {(
+                        selectedAssignment.assigned_to ||
+                        selectedAssignment.assignedTo ||
+                        {}
+                      ).department || "N/A"}
+                    </p>
+                    <p>
+                      Status: {selectedAssignment.status} - Warranty:{" "}
+                      {formatAssignmentDate(
+                        selectedAssignment.asset.warranty_until,
+                      )}
+                    </p>
+                    <p>
+                      Location: {selectedAssignment.asset.location || "N/A"}
+                    </p>
+                  </div>
+                )}
               </div>
-            )}
+              {selectedAssignment._details?.accountability_form && (
+                <div className="asset-description-card">
+                  <span className="asset-detail-label">
+                    Digital Accountability Form
+                  </span>
+                  <p>
+                    PAR No:{" "}
+                    {
+                      selectedAssignment._details.accountability_form
+                        .form_number
+                    }
+                  </p>
+                  <p>
+                    Generated:{" "}
+                    {formatAssignmentDate(
+                      selectedAssignment._details.accountability_form
+                        .generated_at,
+                    )}
+                  </p>
+                  <p>
+                    Property No.:{" "}
+                    {selectedAssignment._details.accountability_form.payload
+                      ?.asset?.property_number ||
+                      selectedAssignment.asset?.property_number ||
+                      "N/A"}
+                  </p>
+                  <p>
+                    Serial No.:{" "}
+                    {selectedAssignment._details.accountability_form.payload
+                      ?.asset?.serial_number ||
+                      selectedAssignment.asset?.serial_number ||
+                      "N/A"}
+                  </p>
+                  <p>
+                    Acquisition Cost:{" "}
+                    {formatCurrency(
+                      selectedAssignment._details.accountability_form.payload
+                        ?.asset?.acquisition_cost ||
+                        selectedAssignment.asset?.purchase_cost ||
+                        0,
+                    )}
+                  </p>
+                  <p>
+                    Accountability Statement:{" "}
+                    {selectedAssignment._details.accountability_form.payload
+                      ?.accountability_statement || "N/A"}
+                  </p>
+                  <p>
+                    Employee Signature:{" "}
+                    {selectedAssignment.employee_signature || "Pending"}
+                  </p>
+                  <p>
+                    Property Custodian Signature:{" "}
+                    {selectedAssignment.custodian_signature || "Pending"}
+                  </p>
+                </div>
+              )}
+              {(selectedAssignment._details?.history || []).length > 0 && (
+                <div className="asset-description-card">
+                  <span className="asset-detail-label">Assignment History</span>
+                  <div className="activity-list expanded">
+                    {selectedAssignment._details.history.map((event) => (
+                      <div key={event.id}>
+                        <span className="activity-dot" />
+                        <p>
+                          {String(event.event_type || "updated").replaceAll(
+                            "_",
+                            " ",
+                          )}
+                        </p>
+                        <time>{formatAssignmentDate(event.created_at)}</time>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
             <div className="modal-actions">
               <button
@@ -10402,7 +10416,7 @@ function AuditPage() {
     try {
       setLoading(true);
       const response = await pcmsApi.fetchAudits();
-      setAudits(response?.data || []);
+      setAudits(response || []);
     } catch (err) {
       setError(err.message);
     } finally {
