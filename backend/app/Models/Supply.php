@@ -13,6 +13,7 @@ class Supply extends Model
     protected $fillable = [
         'sku',
         'name',
+        'unit',
         'category',
         'description',
         'stock',
@@ -20,6 +21,7 @@ class Supply extends Model
         'unit_price',
         'expiration_date',
         'supplier_id',
+        'department_id',
     ];
 
     protected $casts = [
@@ -27,9 +29,9 @@ class Supply extends Model
         'unit_price' => 'float',
     ];
 
-    public function supplier(): BelongsTo
+    public function department(): BelongsTo
     {
-        return $this->belongsTo(Supplier::class);
+        return $this->belongsTo(Department::class);
     }
 
     public function stockMovements(): HasMany

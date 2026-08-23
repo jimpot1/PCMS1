@@ -91,14 +91,14 @@ class MaintenanceController extends Controller
         ]);
 
         // If status is being set to 'completed', set completed_at timestamp
-        if ($validated['status'] === 'completed' && !isset($validated['completed_at'])) {
+        if (($validated['status'] ?? null) === 'completed' && !isset($validated['completed_at'])) {
             $validated['completed_at'] = now();
         }
 
         $record->update($validated);
 
         // If this maintenance was just completed, check for repeat repair anomaly
-        if ($record->status === 'completed' && $validated['status'] === 'completed') {
+        if ($record->status === 'completed' && ($validated['status'] ?? null) === 'completed') {
             RepairFrequencyService::checkThreshold($record->asset_id);
         }
 

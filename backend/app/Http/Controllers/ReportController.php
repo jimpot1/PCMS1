@@ -18,6 +18,9 @@ class ReportController extends Controller
             'anomaly-summary' => $this->anomalySummary($format),
             'assignment-summary' => $this->assignmentSummary($format),
             'transfer-summary' => $this->transferSummary($format),
+            'asset-inventory-summary' => $this->assetInventorySummary($format),
+            'supplies-inventory-summary' => $this->suppliesInventorySummary($format),
+            'maintenance-summary' => $this->maintenanceSummary($format),
             default => response()->json(['message' => 'Report type not found.'], 404),
         };
     }
@@ -183,6 +186,30 @@ class ReportController extends Controller
         }
 
         return response()->json($data);
+    }
+
+    private function assetInventorySummary(string $format)
+    {
+        $assets = DB::table('assets')->leftJoin('departments', 'assets.department_id', '=', 'departments.id')
+            ->select('assets.property_number', 'assets.name', 'assets.status', 'assets.condition', 'assets.quantity', 'departments.name as department')
+            ->orderBy('assets.name')->get();
+        return response()->json(['report_type' => 'Asset Inventory Summary', 'generated_at' => now()->toIso8601String(), 'total_assets' => $assets->count(), 'by_status' => $assets->groupBy('status')->map->count()->toArray(), 'assets' => $assets->toArray()]);
+    }
+
+    private function suppliesInventorySummary(string $format)
+    {
+        $supplies = DB::table('supplies')->leftJoin('departments', 'supplies.department_id', '=', 'departments.id')
+            ->select('supplies.sku', 'supplies.name', 'supplies.stock', 'supplies.minimum_stock', 'supplies.unit', 'supplies.unit_price', 'departments.name as department')
+            ->orderBy('supplies.name')->get();
+        return response()->json(['report_type' => 'Supplies Inventory Summary', 'generated_at' => now()->toIso8601String(), 'total_supplies' => $supplies->count(), 'low_stock' => $supplies->filter(fn ($s) => $s->stock <= $s->minimum_stock)->count(), 'supplies' => $supplies->toArray()]);
+    }
+
+    private function maintenanceSummary(string $format)
+    {
+        $records = DB::table('maintenance_records')->leftJoin('assets', 'maintenance_records.asset_id', '=', 'assets.id')
+            ->select('maintenance_records.id', 'assets.name as asset', 'maintenance_records.type', 'maintenance_records.priority', 'maintenance_records.status', 'maintenance_records.scheduled_at', 'maintenance_records.completed_at', 'maintenance_records.cost')
+            ->orderByDesc('maintenance_records.created_at')->get();
+        return response()->json(['report_type' => 'Maintenance Summary', 'generated_at' => now()->toIso8601String(), 'total_records' => $records->count(), 'by_status' => $records->groupBy('status')->map->count()->toArray(), 'maintenance_records' => $records->toArray()]);
     }
 
     private function generatePdf(array $data, string $filename)

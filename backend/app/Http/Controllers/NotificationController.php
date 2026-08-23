@@ -177,7 +177,7 @@ class NotificationController
                     'url' => $this->notificationUrl($notice),
                     'time' => $this->formatTime($notice->created_at),
                     'created_at' => $this->formatTime($notice->created_at),
-                    'urgent' => in_array($notice->type, ['pending_approval', 'temporary_transfer_due'], true),
+                    'urgent' => in_array($notice->type, ['pending_approval', 'temporary_transfer_due', 'maintenance_overdue', 'maintenance_due_today'], true),
                     'read' => ! is_null($notice->read_at),
                 ];
             });
