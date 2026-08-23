@@ -1,11 +1,11 @@
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
-const STORAGE_PUBLIC_URL = import.meta.env.VITE_STORAGE_PUBLIC_URL || '';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "/api";
+const STORAGE_PUBLIC_URL = import.meta.env.VITE_STORAGE_PUBLIC_URL || "";
 
 export function assetQrCodeUrl(path) {
-  if (!path || path === '0' || path === 0) return null;
+  if (!path || path === "0" || path === 0) return null;
   if (/^https?:\/\//i.test(path)) return path;
   if (!STORAGE_PUBLIC_URL) return path;
-  return `${STORAGE_PUBLIC_URL.replace(/\/$/, '')}/${path}`;
+  return `${STORAGE_PUBLIC_URL.replace(/\/$/, "")}/${path}`;
 }
 
 export function releaseReceiptUrl(path) {
@@ -17,42 +17,56 @@ async function request(path, options = {}) {
   const headers = new Headers(options.headers || {});
 
   if (!(options.body instanceof FormData)) {
-    headers.set('Content-Type', 'application/json');
+    headers.set("Content-Type", "application/json");
   }
 
-  if (!headers.has('Accept')) {
-    headers.set('Accept', 'application/json');
+  if (!headers.has("Accept")) {
+    headers.set("Accept", "application/json");
   }
 
   if (currentUser?.id) {
-    headers.set('X-PCMS-User-ID', currentUser.id);
-    headers.set('Authorization', `Bearer ${currentUser.id}`);
+    headers.set("X-PCMS-User-ID", currentUser.id);
+    headers.set("Authorization", `Bearer ${currentUser.id}`);
   }
 
   if (currentUser?.email) {
-    headers.set('X-PCMS-User-Email', currentUser.email);
+    headers.set("X-PCMS-User-Email", currentUser.email);
   }
 
-  const response = await fetchWithTimeout(`${API_BASE_URL}${path}`, {
-    ...options,
-    headers,
-    credentials: 'include'
-  }, 20000).catch((error) => {
+  const response = await fetchWithTimeout(
+    `${API_BASE_URL}${path}`,
+    {
+      ...options,
+      headers,
+      credentials: "include",
+    },
+    20000,
+  ).catch((error) => {
     throw normalizeFetchError(error);
   });
 
-  const contentType = response.headers.get('Content-Type') || '';
-  const payload = contentType.includes('application/json')
+  const contentType = response.headers.get("Content-Type") || "";
+  const payload = contentType.includes("application/json")
     ? await response.json().catch(() => ({}))
-    : { message: await response.text().catch(() => '') };
+    : { message: await response.text().catch(() => "") };
 
   if (!response.ok) {
     const message = normalizeApiErrorMessage(payload, response.status);
     // Verbose logging for development: include status and full payload for 422 responses
     try {
       // eslint-disable-next-line no-console
-      if (response.status === 422) console.error('[pcms] API 422 response', { path, status: response.status, payload });
-      else console.error('API request failed', { path, status: response.status, payload });
+      if (response.status === 422)
+        console.error("[pcms] API 422 response", {
+          path,
+          status: response.status,
+          payload,
+        });
+      else
+        console.error("API request failed", {
+          path,
+          status: response.status,
+          payload,
+        });
     } catch (e) {
       // ignore logging errors
     }
@@ -69,9 +83,14 @@ async function request(path, options = {}) {
     return null;
   }
 
-  const method = (options.method || 'GET').toUpperCase();
-  if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) && typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent('pcms:dataChanged', { detail: { path, method } }));
+  const method = (options.method || "GET").toUpperCase();
+  if (
+    ["POST", "PUT", "PATCH", "DELETE"].includes(method) &&
+    typeof window !== "undefined"
+  ) {
+    window.dispatchEvent(
+      new CustomEvent("pcms:dataChanged", { detail: { path, method } }),
+    );
   }
 
   return payload;
@@ -79,31 +98,34 @@ async function request(path, options = {}) {
 
 function getStoredCurrentUser() {
   try {
-    const rawUser = localStorage.getItem('pcms_current_user');
+    const rawUser = localStorage.getItem("pcms_current_user");
     return rawUser ? JSON.parse(rawUser) : null;
   } catch (error) {
-    localStorage.removeItem('pcms_current_user');
+    localStorage.removeItem("pcms_current_user");
     return null;
   }
 }
 
 function normalizeApiErrorMessage(payload, status) {
-  const rawMessage = payload?.message || payload?.error || '';
+  const rawMessage = payload?.message || payload?.error || "";
 
   // Map common auth/authorization statuses to clearer messages for the UI
   if (status === 401) {
-    return 'Your session has expired. Please sign in again.';
+    return "Your session has expired. Please sign in again.";
   }
 
   if (status === 403) {
-    return 'You are not authorized to review this request.';
+    return "You are not authorized to access this resource.";
   }
 
-  if (typeof rawMessage === 'string' && rawMessage.trim().startsWith('<!DOCTYPE')) {
+  if (
+    typeof rawMessage === "string" &&
+    rawMessage.trim().startsWith("<!DOCTYPE")
+  ) {
     return `Server error (${status}). Check the Laravel log for details.`;
   }
 
-  if (payload?.errors && typeof payload.errors === 'object') {
+  if (payload?.errors && typeof payload.errors === "object") {
     const firstError = Object.values(payload.errors).flat().find(Boolean);
     if (firstError) {
       return String(firstError);
@@ -114,7 +136,7 @@ function normalizeApiErrorMessage(payload, status) {
 }
 
 function uuidv4() {
-  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) {
     return crypto.randomUUID();
   }
   return `asset-${Math.random().toString(36).substring(2, 10)}-${Date.now()}`;
@@ -126,15 +148,15 @@ function fetchWithTimeout(resource, options = {}, timeoutMs = 20000) {
 
   return fetch(resource, {
     ...options,
-    signal: controller.signal
+    signal: controller.signal,
   }).finally(() => {
     clearTimeout(timer);
   });
 }
 
 function normalizeFetchError(error) {
-  if (error.name === 'AbortError') {
-    return new Error('Request timed out.');
+  if (error.name === "AbortError") {
+    return new Error("Request timed out.");
   }
 
   return error;
@@ -142,16 +164,31 @@ function normalizeFetchError(error) {
 
 function normalizeOcrFields(fields = {}) {
   return {
-    property_number: fields.property_number ?? fields.propertyNumber ?? fields.property_no ?? fields.propertyNo ?? null,
-    serial_number: fields.serial_number ?? fields.serialNumber ?? fields.serial ?? null,
+    property_number:
+      fields.property_number ??
+      fields.propertyNumber ??
+      fields.property_no ??
+      fields.propertyNo ??
+      null,
+    serial_number:
+      fields.serial_number ?? fields.serialNumber ?? fields.serial ?? null,
     manufacturer: fields.manufacturer ?? null,
     brand: fields.brand ?? null,
     model: fields.model ?? null,
-    description: fields.description ?? fields.asset_description ?? fields.assetDescription ?? null,
+    description:
+      fields.description ??
+      fields.asset_description ??
+      fields.assetDescription ??
+      null,
     department: fields.department ?? null,
     location: fields.location ?? null,
-    purchase_date: fields.purchase_date ?? fields.date_acquired ?? fields.dateAcquired ?? null,
-    purchase_cost: fields.purchase_cost ?? fields.unit_cost ?? fields.unitCost ?? null,
+    purchase_date:
+      fields.purchase_date ??
+      fields.date_acquired ??
+      fields.dateAcquired ??
+      null,
+    purchase_cost:
+      fields.purchase_cost ?? fields.unit_cost ?? fields.unitCost ?? null,
     quantity: fields.quantity ?? null,
     warranty_until: fields.warranty_until ?? null,
     condition: fields.condition ?? null,
@@ -162,24 +199,33 @@ function normalizeOcrFields(fields = {}) {
 function normalizeOcrPayload(payload = {}) {
   const fields = payload.fields ?? payload.data ?? payload.details ?? {};
   const normalizedFields = normalizeOcrFields(fields);
-  const hasParsedData = Object.values(normalizedFields).some((value) => Boolean(value));
+  const hasParsedData = Object.values(normalizedFields).some((value) =>
+    Boolean(value),
+  );
 
   return {
     success: payload.success === false ? false : hasParsedData,
     scan_id: payload.scan_id ?? payload.id ?? null,
-    processing_status: payload.processing_status ?? (payload.success === false ? 'needs_review' : 'completed'),
-    message: payload.message || (hasParsedData ? 'OCR completed.' : 'OCR did not extract any useful fields.'),
-    confidence: Number(payload.confidence_score ?? payload.confidence ?? 0) || 0,
+    processing_status:
+      payload.processing_status ??
+      (payload.success === false ? "needs_review" : "completed"),
+    message:
+      payload.message ||
+      (hasParsedData
+        ? "OCR completed."
+        : "OCR did not extract any useful fields."),
+    confidence:
+      Number(payload.confidence_score ?? payload.confidence ?? 0) || 0,
     data: normalizedFields,
     details: payload.details ?? normalizedFields,
   };
 }
 
-
-
-export async function fetchBackendAssets({ limit = 200, search = '' } = {}) {
-  const q = search ? `&search=${encodeURIComponent(search)}` : '';
-  const response = await request(`/assets?per_page=${limit}&sort_by=created_at&sort_order=desc${q}`);
+export async function fetchBackendAssets({ limit = 200, search = "" } = {}) {
+  const q = search ? `&search=${encodeURIComponent(search)}` : "";
+  const response = await request(
+    `/assets?per_page=${limit}&sort_by=created_at&sort_order=desc${q}`,
+  );
   // Laravel's paginate() wraps results in { data: [...], current_page, ... }
   return response?.data || [];
 }
@@ -195,20 +241,20 @@ export async function createBackendAsset(payload) {
     category_id: payload.category_id || null,
     department_id: payload.department_id || null,
     location: payload.location || null,
-    condition: payload.condition || 'good',
-    status: payload.status || 'available',
+    condition: payload.condition || "good",
+    status: payload.status || "available",
     purchase_date: payload.purchase_date || null,
     purchase_cost: payload.purchase_cost || null,
     quantity: payload.quantity ?? 1,
     supplier_id: payload.supplier_id || null,
     warranty_until: payload.warranty_until || null,
     remarks: payload.remarks || null,
-    ocr_scan_id: payload.ocr_scan_id || null
+    ocr_scan_id: payload.ocr_scan_id || null,
   };
 
-  return request('/assets', {
-    method: 'POST',
-    body: JSON.stringify(record)
+  return request("/assets", {
+    method: "POST",
+    body: JSON.stringify(record),
   });
 }
 
@@ -227,37 +273,42 @@ export async function updateBackendAsset(id, payload) {
     category_id: payload.category_id || null,
     department_id: payload.department_id || null,
     location: payload.location || null,
-    condition: payload.condition || 'good',
-    status: payload.status || 'available',
+    condition: payload.condition || "good",
+    status: payload.status || "available",
     purchase_date: payload.purchase_date || null,
     purchase_cost: payload.purchase_cost ?? null,
     quantity: payload.quantity ?? 1,
     supplier_id: payload.supplier_id || null,
     warranty_until: payload.warranty_until || null,
-    remarks: payload.remarks || null
+    remarks: payload.remarks || null,
   };
 
   const response = await request(`/assets/${id}`, {
-    method: 'PUT',
-    body: JSON.stringify(record)
+    method: "PUT",
+    body: JSON.stringify(record),
   });
 
   return response?.asset || response;
 }
 
 export async function deleteBackendAsset(id) {
-  return request(`/assets/${id}`, { method: 'DELETE' });
+  return request(`/assets/${id}`, { method: "DELETE" });
 }
 
 export async function fetchAssetHistory(id) {
   return request(`/assets/${id}/history`);
 }
 
-export async function fetchAssignments({ limit = 200, search = '', status = '', assignment_type = '' } = {}) {
+export async function fetchAssignments({
+  limit = 200,
+  search = "",
+  status = "",
+  assignment_type = "",
+} = {}) {
   const params = new URLSearchParams({ per_page: String(limit) });
-  if (search) params.set('search', search);
-  if (status) params.set('status', status);
-  if (assignment_type) params.set('assignment_type', assignment_type);
+  if (search) params.set("search", search);
+  if (status) params.set("status", status);
+  if (assignment_type) params.set("assignment_type", assignment_type);
   const response = await request(`/assignments?${params.toString()}`);
   return response?.data || [];
 }
@@ -265,9 +316,12 @@ export async function fetchAssignments({ limit = 200, search = '', status = '', 
 export async function fetchAssignmentRecommendations(payload = {}) {
   const params = new URLSearchParams();
   Object.entries(payload).forEach(([key, value]) => {
-    if (value !== undefined && value !== null && value !== '') params.set(key, String(value));
+    if (value !== undefined && value !== null && value !== "")
+      params.set(key, String(value));
   });
-  const response = await request(`/assignments/recommendations?${params.toString()}`);
+  const response = await request(
+    `/assignments/recommendations?${params.toString()}`,
+  );
   return response?.data || [];
 }
 
@@ -284,11 +338,11 @@ export async function fetchEmployeeAssetProfile(userId) {
 }
 
 export async function fetchAssignmentDashboard() {
-  return request('/assignments/dashboard');
+  return request("/assignments/dashboard");
 }
 
 export async function fetchAssignmentUsers() {
-  const response = await request('/assignment-users');
+  const response = await request("/assignment-users");
   return response?.data || [];
 }
 
@@ -298,35 +352,39 @@ export async function createAssignment(payload) {
 
   if (hasPhoto) {
     Object.entries(payload).forEach(([key, value]) => {
-      if (value !== undefined && value !== null && value !== '') {
+      if (value !== undefined && value !== null && value !== "") {
         body.append(key, value);
       }
     });
   }
 
-  return request('/assignments', {
-    method: 'POST',
+  return request("/assignments", {
+    method: "POST",
     body,
   });
 }
 
-export async function acceptAssignment(id, employeeSignature = '') {
+export async function acceptAssignment(id, employeeSignature = "") {
   return request(`/assignments/${id}/accept`, {
-    method: 'PATCH',
+    method: "PATCH",
     body: JSON.stringify({ employee_signature: employeeSignature }),
   });
 }
 
-export async function cancelAssignment(id, reason = '') {
+export async function cancelAssignment(id, reason = "") {
   return request(`/assignments/${id}/cancel`, {
-    method: 'PATCH',
+    method: "PATCH",
     body: JSON.stringify({ reason }),
   });
 }
 
-export async function returnAssignment(id, notes = null, conditionAfter = 'good') {
+export async function returnAssignment(
+  id,
+  notes = null,
+  conditionAfter = "good",
+) {
   return request(`/assignments/${id}/return`, {
-    method: 'PATCH',
+    method: "PATCH",
     body: JSON.stringify({ notes, condition_after: conditionAfter }),
   });
 }
@@ -335,9 +393,18 @@ export async function checkClearance(userId) {
   return request(`/assignments/clearance-check/${userId}`);
 }
 
-export async function fetchSupplies({ limit = 200, search = '' } = {}) {
-  const q = search ? `&search=${encodeURIComponent(search)}` : '';
-  const response = await request(`/supplies?per_page=${limit}&sort_by=created_at&sort_order=desc${q}`);
+export async function finalizeClearance(userId, decision, notes = "") {
+  return request(`/assignments/clearance/${userId}/finalize`, {
+    method: "POST",
+    body: JSON.stringify({ decision, notes }),
+  });
+}
+
+export async function fetchSupplies({ limit = 200, search = "" } = {}) {
+  const q = search ? `&search=${encodeURIComponent(search)}` : "";
+  const response = await request(
+    `/supplies?per_page=${limit}&sort_by=created_at&sort_order=desc${q}`,
+  );
   return response?.data || [];
 }
 
@@ -354,20 +421,20 @@ export async function createSupply(payload) {
     supplier_id: payload.supplier_id || null,
   };
 
-  return request('/supplies', {
-    method: 'POST',
+  return request("/supplies", {
+    method: "POST",
     body: JSON.stringify(record),
   });
 }
 
 export async function updateSupply(id, payload) {
   return request(`/supplies/${id}`, {
-    method: 'PATCH',
+    method: "PATCH",
     body: JSON.stringify(payload),
   });
 }
 export async function deleteSupply(id) {
-  return request(`/supplies/${id}`, { method: 'DELETE' });
+  return request(`/supplies/${id}`, { method: "DELETE" });
 }
 export async function recordStockMovement(payload) {
   const record = {
@@ -378,8 +445,8 @@ export async function recordStockMovement(payload) {
     notes: payload.notes || null,
   };
 
-  return request('/stock-movements', {
-    method: 'POST',
+  return request("/stock-movements", {
+    method: "POST",
     body: JSON.stringify(record),
   });
 }
@@ -389,17 +456,22 @@ export async function fetchStockMovements({ limit = 200 } = {}) {
   return response?.data || [];
 }
 
-export async function fetchTransfers({ limit = 200, search = '', status = '', transfer_type = '' } = {}) {
+export async function fetchTransfers({
+  limit = 200,
+  search = "",
+  status = "",
+  transfer_type = "",
+} = {}) {
   const params = new URLSearchParams({ per_page: String(limit) });
-  if (search) params.set('search', search);
-  if (status) params.set('status', status);
-  if (transfer_type) params.set('transfer_type', transfer_type);
+  if (search) params.set("search", search);
+  if (status) params.set("status", status);
+  if (transfer_type) params.set("transfer_type", transfer_type);
   const response = await request(`/transfers?${params.toString()}`);
   return response?.data || [];
 }
 
 export async function fetchTransferDashboard() {
-  return request('/transfers/dashboard');
+  return request("/transfers/dashboard");
 }
 
 export async function fetchTransfer(id) {
@@ -409,9 +481,12 @@ export async function fetchTransfer(id) {
 export async function fetchTransferRecommendations(payload = {}) {
   const params = new URLSearchParams();
   Object.entries(payload).forEach(([key, value]) => {
-    if (value !== undefined && value !== null && value !== '') params.set(key, String(value));
+    if (value !== undefined && value !== null && value !== "")
+      params.set(key, String(value));
   });
-  const response = await request(`/transfers/recommendations?${params.toString()}`);
+  const response = await request(
+    `/transfers/recommendations?${params.toString()}`,
+  );
   return response?.data || [];
 }
 
@@ -421,57 +496,59 @@ export async function createTransfer(payload) {
     to_department_id: payload.to_department_id,
     to_custodian_id: payload.to_custodian_id,
     quantity: Number(payload.quantity || 1),
-    transfer_type: payload.transfer_type || 'permanent',
+    transfer_type: payload.transfer_type || "permanent",
     expected_return_date: payload.expected_return_date || null,
     reason: payload.reason || null,
   };
 
-  return request('/transfers', {
-    method: 'POST',
+  return request("/transfers", {
+    method: "POST",
     body: JSON.stringify(record),
   });
 }
 
 export async function approveTransfer(id) {
   return request(`/transfers/${id}/approve`, {
-    method: 'PATCH',
+    method: "PATCH",
     body: JSON.stringify({}),
   });
 }
 
-export async function rejectTransfer(id, reason = '') {
+export async function rejectTransfer(id, reason = "") {
   return request(`/transfers/${id}/reject`, {
-    method: 'PATCH',
+    method: "PATCH",
     body: JSON.stringify({ reason }),
   });
 }
 
-export async function holdTransfer(id, reason = '') {
+export async function holdTransfer(id, reason = "") {
   return request(`/transfers/${id}/hold`, {
-    method: 'PATCH',
+    method: "PATCH",
     body: JSON.stringify({ reason }),
   });
 }
 
-export async function requestTransferRevision(id, reason = '') {
+export async function requestTransferRevision(id, reason = "") {
   return request(`/transfers/${id}/revision`, {
-    method: 'PATCH',
+    method: "PATCH",
     body: JSON.stringify({ reason }),
   });
 }
 
 export async function executeTransfer(id, payload) {
-  const hasFiles = payload.photo_before instanceof File || payload.photo_after instanceof File;
+  const hasFiles =
+    payload.photo_before instanceof File || payload.photo_after instanceof File;
   const body = hasFiles ? new FormData() : JSON.stringify(payload);
 
   if (hasFiles) {
     Object.entries(payload).forEach(([key, value]) => {
-      if (value !== undefined && value !== null && value !== '') body.append(key, value);
+      if (value !== undefined && value !== null && value !== "")
+        body.append(key, value);
     });
   }
 
   return request(`/transfers/${id}/execute`, {
-    method: 'POST',
+    method: "POST",
     body,
   });
 }
@@ -482,14 +559,14 @@ export function transferExportUrl() {
 
 export async function resolveAnomaly(id) {
   return request(`/inventory-monitoring/anomalies/${id}/resolve`, {
-    method: 'PATCH',
+    method: "PATCH",
     body: JSON.stringify({}),
   });
 }
 
 export async function explainAnomaly(id) {
   return request(`/inventory-monitoring/anomalies/${id}/explain`, {
-    method: 'POST',
+    method: "POST",
     body: JSON.stringify({}),
   });
 }
@@ -500,7 +577,9 @@ export async function fetchMaintenanceRecords({ limit = 200 } = {}) {
 }
 
 export async function fetchMaintenancePredictions({ daysAhead = 14 } = {}) {
-  const response = await request(`/maintenance-predictions?days_ahead=${daysAhead}`);
+  const response = await request(
+    `/maintenance-predictions?days_ahead=${daysAhead}`,
+  );
   return response?.data || [];
 }
 
@@ -508,22 +587,22 @@ export async function createMaintenanceRecord(payload) {
   const record = {
     asset_id: payload.asset_id,
     type: payload.maintenance_type || payload.type,
-    priority: payload.priority || 'medium',
+    priority: payload.priority || "medium",
     technician: payload.technician_name || payload.technician || null,
     scheduled_at: payload.scheduled_date || payload.scheduled_at || null,
     cost: payload.cost || null,
     notes: payload.description || payload.notes || null,
   };
 
-  return request('/maintenance', {
-    method: 'POST',
+  return request("/maintenance", {
+    method: "POST",
     body: JSON.stringify(record),
   });
 }
 
 export async function updateMaintenanceRecord(id, payload) {
   return request(`/maintenance/${id}`, {
-    method: 'PATCH',
+    method: "PATCH",
     body: JSON.stringify(payload),
   });
 }
@@ -535,23 +614,23 @@ export async function fetchDamageReports({ limit = 200 } = {}) {
 
 export async function createDamageReport(payload) {
   const formData = new FormData();
-  formData.append('asset_id', payload.asset_id || '');
-  formData.append('ocr_scan_id', payload.ocr_scan_id || '');
-  formData.append('severity', payload.severity);
-  formData.append('description', payload.description);
+  formData.append("asset_id", payload.asset_id || "");
+  formData.append("ocr_scan_id", payload.ocr_scan_id || "");
+  formData.append("severity", payload.severity);
+  formData.append("description", payload.description);
   if (payload.photo instanceof File) {
-    formData.append('photo', payload.photo);
+    formData.append("photo", payload.photo);
   }
 
-  return request('/damage-reports', {
-    method: 'POST',
+  return request("/damage-reports", {
+    method: "POST",
     body: formData,
   });
 }
 
 export async function updateDamageReport(id, payload) {
   return request(`/damage-reports/${id}`, {
-    method: 'PATCH',
+    method: "PATCH",
     body: JSON.stringify(payload),
   });
 }
@@ -568,8 +647,8 @@ export async function createAudit(payload) {
     scheduled_at: payload.scheduled_date || payload.scheduled_at,
   };
 
-  return request('/audits', {
-    method: 'POST',
+  return request("/audits", {
+    method: "POST",
     body: JSON.stringify(record),
   });
 }
@@ -581,14 +660,14 @@ export async function scanAuditAsset(auditId, payload) {
   };
 
   return request(`/audits/${auditId}/scan`, {
-    method: 'POST',
+    method: "POST",
     body: JSON.stringify(record),
   });
 }
 
 export async function completeAudit(auditId) {
   return request(`/audits/${auditId}/complete`, {
-    method: 'PATCH',
+    method: "PATCH",
     body: JSON.stringify({}),
   });
 }
@@ -596,7 +675,7 @@ export async function completeAudit(auditId) {
 export async function fetchPurchaseRequests({ limit = 200, ...filters } = {}) {
   const params = new URLSearchParams({ per_page: String(limit) });
   Object.entries(filters).forEach(([key, value]) => {
-    if (value !== undefined && value !== null && value !== '') {
+    if (value !== undefined && value !== null && value !== "") {
       params.set(key, String(value));
     }
   });
@@ -606,14 +685,18 @@ export async function fetchPurchaseRequests({ limit = 200, ...filters } = {}) {
 }
 
 export async function recommendingApproverHistory() {
-  const response = await request('/recommending-approver/history');
+  const response = await request("/recommending-approver/history");
   return response?.data || [];
 }
 
-export async function fetchSupplyRequestQueue({ limit = 200, ...filters } = {}) {
+export async function fetchSupplyRequestQueue({
+  limit = 200,
+  ...filters
+} = {}) {
   const params = new URLSearchParams({ per_page: String(limit) });
   Object.entries(filters).forEach(([key, value]) => {
-    if (value !== undefined && value !== null && value !== '') params.set(key, String(value));
+    if (value !== undefined && value !== null && value !== "")
+      params.set(key, String(value));
   });
   const response = await request(`/supply-requests/queue?${params.toString()}`);
   return response?.data || [];
@@ -626,7 +709,7 @@ export async function fetchPurchaseRequest(id) {
 
 export async function releaseSupplyRequest(id, payload) {
   const response = await request(`/purchase-requests/${id}/supply-release`, {
-    method: 'PATCH',
+    method: "PATCH",
     body: JSON.stringify(payload),
   });
   return response?.data ?? response;
@@ -634,34 +717,34 @@ export async function releaseSupplyRequest(id, payload) {
 
 export async function rejectPurchaseRequest(id, payload = {}) {
   return request(`/purchase-requests/${id}/reject`, {
-    method: 'PATCH',
+    method: "PATCH",
     body: JSON.stringify(payload),
   });
 }
 
 export async function requestPurchaseRevision(id, reason) {
   return request(`/purchase-requests/${id}/revision`, {
-    method: 'PATCH',
+    method: "PATCH",
     body: JSON.stringify({ reason }),
   });
 }
 
 export async function resubmitPurchaseRequest(id) {
   return request(`/purchase-requests/${id}/resubmit`, {
-    method: 'PATCH',
+    method: "PATCH",
     body: JSON.stringify({}),
   });
 }
 
 export async function updatePurchaseRequest(id, payload) {
   return request(`/purchase-requests/${id}`, {
-    method: 'PATCH',
+    method: "PATCH",
     body: JSON.stringify(payload),
   });
 }
 
 export async function deletePurchaseRequest(id) {
-  return request(`/purchase-requests/${id}`, { method: 'DELETE' });
+  return request(`/purchase-requests/${id}`, { method: "DELETE" });
 }
 
 export async function createPurchaseRequest(payload) {
@@ -670,28 +753,28 @@ export async function createPurchaseRequest(payload) {
     total_amount: payload.estimated_cost || payload.total_amount || 0,
   };
 
-  return request('/purchase-requests', {
-    method: 'POST',
+  return request("/purchase-requests", {
+    method: "POST",
     body: JSON.stringify(record),
   });
 }
 
 export async function advancePurchaseRequest(id) {
   return request(`/purchase-requests/${id}/advance`, {
-    method: 'PATCH',
+    method: "PATCH",
     body: JSON.stringify({}),
   });
 }
 
 export async function pendingApprovals() {
-  const response = await request('/purchase-requests/pending/approvals');
+  const response = await request("/purchase-requests/pending/approvals");
   return response?.data || [];
 }
 
 export async function fetchOicReleaseQueue() {
   const [purchaseResponse, gatePassResponse] = await Promise.all([
-    request('/purchase-requests?current_stage=property_custodian&per_page=200'),
-    request('/gate-passes?deliverable=1&per_page=200'),
+    request("/purchase-requests?current_stage=property_custodian&per_page=200"),
+    request("/gate-passes?deliverable=1&per_page=200"),
   ]);
 
   return {
@@ -701,25 +784,32 @@ export async function fetchOicReleaseQueue() {
 }
 
 export async function oicRelease(type, id) {
-  const path = type === 'purchase'
-    ? `/purchase-requests/${id}/release`
-    : `/gate-passes/${id}/release`;
+  const path =
+    type === "purchase"
+      ? `/purchase-requests/${id}/release`
+      : `/gate-passes/${id}/release`;
 
   return request(path, {
-    method: 'PATCH',
+    method: "PATCH",
     body: JSON.stringify({}),
   });
 }
 
 export async function ppmoReleaseQueue() {
-  const [purchaseResponse, requestResponse, gatePassResponse] = await Promise.all([
-    request('/purchase-requests?current_stage=property_custodian&per_page=200'),
-    request('/purchase-requests?current_stage=ppmo_staff&per_page=200'),
-    request('/gate-passes?deliverable=1&per_page=200'),
-  ]);
+  const [purchaseResponse, requestResponse, gatePassResponse] =
+    await Promise.all([
+      request(
+        "/purchase-requests?current_stage=property_custodian&per_page=200",
+      ),
+      request("/purchase-requests?current_stage=ppmo_staff&per_page=200"),
+      request("/gate-passes?deliverable=1&per_page=200"),
+    ]);
 
   return {
-    purchaseRequests: [...(purchaseResponse?.data || []), ...(requestResponse?.data || [])],
+    purchaseRequests: [
+      ...(purchaseResponse?.data || []),
+      ...(requestResponse?.data || []),
+    ],
     gatePasses: gatePassResponse?.data || [],
   };
 }
@@ -729,7 +819,9 @@ export async function ppmoRelease(type, id) {
 }
 
 export async function fetchReleasedRequests({ limit = 100 } = {}) {
-  const response = await request(`/purchase-requests?status=released&per_page=${limit}`);
+  const response = await request(
+    `/purchase-requests?status=released&per_page=${limit}`,
+  );
   return response?.data || [];
 }
 
@@ -754,59 +846,69 @@ export async function createGatePass(payload) {
     valid_until: payload.valid_until,
   };
 
-  return request('/gate-passes', {
-    method: 'POST',
+  return request("/gate-passes", {
+    method: "POST",
     body: JSON.stringify(record),
   });
 }
 
 export async function approveGatePass(id) {
   return request(`/gate-passes/${id}/approve`, {
-    method: 'PATCH',
+    method: "PATCH",
     body: JSON.stringify({}),
   });
 }
 
 export async function scanGatePass(id) {
   return request(`/gate-passes/${id}/scan`, {
-    method: 'POST',
+    method: "POST",
     body: JSON.stringify({}),
   });
 }
 
 export async function returnGatePass(id) {
   return request(`/gate-passes/${id}/return`, {
-    method: 'PATCH',
+    method: "PATCH",
     body: JSON.stringify({}),
   });
 }
 
 export async function requesterPurchaseRequests() {
-  const response = await request('/requester/purchase-requests?mine=1&per_page=200');
+  const response = await request(
+    "/requester/purchase-requests?mine=1&per_page=200",
+  );
   return response?.data || [];
 }
 
 export async function requesterGatePasses({ deliverable = false } = {}) {
-  const suffix = deliverable ? '&deliverable=1' : '';
-  const response = await request(`/requester/gate-passes?mine=1&per_page=200${suffix}`);
+  const suffix = deliverable ? "&deliverable=1" : "";
+  const response = await request(
+    `/requester/gate-passes?mine=1&per_page=200${suffix}`,
+  );
   return response?.data || [];
 }
 
 export async function requesterTransfers() {
-  const response = await request('/requester/transfers?mine=1&per_page=200');
+  const response = await request("/requester/transfers?mine=1&per_page=200");
   return response?.data || [];
 }
 
 export async function requesterDashboard() {
-  return request('/requester/dashboard');
+  return request("/requester/dashboard");
 }
 
 export async function requesterRecommendations(payload = {}) {
   const params = new URLSearchParams();
   Object.entries(payload).forEach(([key, value]) => {
-    if (value !== undefined && value !== null && value !== '') params.set(key, typeof value === 'string' ? value : JSON.stringify(value));
+    if (value !== undefined && value !== null && value !== "")
+      params.set(
+        key,
+        typeof value === "string" ? value : JSON.stringify(value),
+      );
   });
-  const response = await request(`/requester/recommendations?${params.toString()}`);
+  const response = await request(
+    `/requester/recommendations?${params.toString()}`,
+  );
   return response?.data || [];
 }
 
@@ -821,13 +923,16 @@ export async function requesterCreatePurchaseRequest(payload) {
   try {
     // avoid logging potentially sensitive user tokens, only payload
     // eslint-disable-next-line no-console
-    console.debug('[pcms] requesterCreatePurchaseRequest payload:', JSON.parse(JSON.stringify(payload)));
+    console.debug(
+      "[pcms] requesterCreatePurchaseRequest payload:",
+      JSON.parse(JSON.stringify(payload)),
+    );
   } catch (e) {
     // ignore
   }
 
-  return request('/requester/purchase-requests', {
-    method: 'POST',
+  return request("/requester/purchase-requests", {
+    method: "POST",
     body: JSON.stringify(payload),
   });
 }
@@ -835,15 +940,19 @@ export async function requesterCreatePurchaseRequest(payload) {
 // Walk-in intake: System Administrator or PPMO Staff files a request on behalf
 // of someone who came to the PPMO office in person (with or without an account).
 // Skips Department Head review and enters directly at Recommending Approver.
-export async function walkInRequesterOptions(search = '') {
+export async function walkInRequesterOptions(search = "") {
   const params = new URLSearchParams({ search });
-  const response = await request(`/purchase-requests/walk-in/requesters?${params.toString()}`);
+  const response = await request(
+    `/purchase-requests/walk-in/requesters?${params.toString()}`,
+  );
   return response?.data || [];
 }
 
-export async function walkInItemSearch(search = '', { limit = 12 } = {}) {
+export async function walkInItemSearch(search = "", { limit = 12 } = {}) {
   const params = new URLSearchParams({ search, limit: String(limit) });
-  const response = await request(`/purchase-requests/walk-in/item-search?${params.toString()}`);
+  const response = await request(
+    `/purchase-requests/walk-in/item-search?${params.toString()}`,
+  );
   return response?.data || [];
 }
 
@@ -852,7 +961,7 @@ export async function createWalkInPurchaseRequest(payload) {
     const formData = new FormData();
     Object.entries(payload).forEach(([key, value]) => {
       if (value === undefined || value === null) return;
-      if (key === 'line_items' && Array.isArray(value)) {
+      if (key === "line_items" && Array.isArray(value)) {
         value.forEach((line, index) => {
           Object.entries(line).forEach(([lineKey, lineValue]) => {
             if (lineValue !== undefined && lineValue !== null) {
@@ -864,59 +973,59 @@ export async function createWalkInPurchaseRequest(payload) {
       }
       // FormData stringifies booleans as "true"/"false", which Laravel's
       // `boolean` rule rejects. Send 1/0 instead, which it accepts.
-      if (typeof value === 'boolean') {
-        formData.append(key, value ? '1' : '0');
+      if (typeof value === "boolean") {
+        formData.append(key, value ? "1" : "0");
         return;
       }
       formData.append(key, value);
     });
 
-    return request('/purchase-requests/walk-in', {
-      method: 'POST',
+    return request("/purchase-requests/walk-in", {
+      method: "POST",
       body: formData,
     });
   }
 
-  return request('/purchase-requests/walk-in', {
-    method: 'POST',
+  return request("/purchase-requests/walk-in", {
+    method: "POST",
     body: JSON.stringify(payload),
   });
 }
 
 export async function verifyWalkInApproval(id, payload) {
   return request(`/purchase-requests/${id}/verify-walk-in-approval`, {
-    method: 'PATCH',
+    method: "PATCH",
     body: JSON.stringify(payload),
   });
 }
 
 export async function uploadWalkInApprovalDocument(id, file) {
   const formData = new FormData();
-  formData.append('approval_document', file);
+  formData.append("approval_document", file);
 
   return request(`/purchase-requests/${id}/walk-in-approval-document`, {
-    method: 'POST',
+    method: "POST",
     body: formData,
   });
 }
 
 export async function updateWalkInDetails(id, payload) {
   return request(`/purchase-requests/${id}/walk-in-details`, {
-    method: 'PATCH',
+    method: "PATCH",
     body: JSON.stringify(payload),
   });
 }
 
 export async function createWalkInGatePass(payload) {
-  return request('/gate-passes/walk-in', {
-    method: 'POST',
+  return request("/gate-passes/walk-in", {
+    method: "POST",
     body: JSON.stringify(payload),
   });
 }
 
 export async function requesterCreateGatePass(payload) {
-  return request('/requester/gate-passes', {
-    method: 'POST',
+  return request("/requester/gate-passes", {
+    method: "POST",
     body: JSON.stringify(payload),
   });
 }
@@ -927,29 +1036,31 @@ export async function requesterConfirmReceipt(id, payload = {}) {
 
   if (hasPhoto) {
     Object.entries(payload).forEach(([key, value]) => {
-      if (value !== undefined && value !== null && value !== '') body.append(key, value);
+      if (value !== undefined && value !== null && value !== "")
+        body.append(key, value);
     });
   }
 
   return request(`/requester/gate-passes/${id}/return`, {
-    method: 'PATCH',
+    method: "PATCH",
     body,
   });
 }
 
-export function requesterExportUrl(type = 'requests') {
-  if (type === 'assigned_assets') return assignmentExportUrl();
-  if (type === 'transfer_requests') return transferExportUrl();
-  if (type === 'gate_passes') return `${API_BASE_URL}/reports/gate-passes`;
+export function requesterExportUrl(type = "requests") {
+  if (type === "assigned_assets") return assignmentExportUrl();
+  if (type === "transfer_requests") return transferExportUrl();
+  if (type === "gate_passes") return `${API_BASE_URL}/reports/gate-passes`;
   return `${API_BASE_URL}/reports/purchase-requests`;
 }
 
 export async function departmentHeadApprovalQueue() {
-  const [purchaseResponse, gatePassResponse, transferResponse] = await Promise.all([
-    request('/department-head/purchase-requests/pending?per_page=200'),
-    request('/department-head/gate-passes/pending?per_page=200'),
-    request('/department-head/transfers/pending?per_page=200'),
-  ]);
+  const [purchaseResponse, gatePassResponse, transferResponse] =
+    await Promise.all([
+      request("/department-head/purchase-requests/pending?per_page=200"),
+      request("/department-head/gate-passes/pending?per_page=200"),
+      request("/department-head/transfers/pending?per_page=200"),
+    ]);
 
   return {
     purchaseRequests: purchaseResponse?.data || [],
@@ -959,52 +1070,60 @@ export async function departmentHeadApprovalQueue() {
 }
 
 export async function departmentHeadApprovalHistory() {
-  const response = await request('/purchase-requests?per_page=200');
-  return (response?.data || []).filter((request) => request.status === 'rejected' || request.current_stage !== 'department_head');
+  const response = await request("/purchase-requests?per_page=200");
+  return (response?.data || []).filter(
+    (request) =>
+      request.status === "rejected" ||
+      request.current_stage !== "department_head",
+  );
 }
 
 export async function departmentHeadDashboard() {
-  const response = await request('/department-head/dashboard');
+  const response = await request("/department-head/dashboard");
   return response || {};
 }
 
 export async function departmentHeadApprove(type, id) {
-  const path = type === 'purchase'
-    ? `/department-head/purchase-requests/${id}/advance`
-    : type === 'gate_pass'
-      ? `/department-head/gate-passes/${id}/approve`
-      : `/department-head/transfers/${id}/approve`;
+  const path =
+    type === "purchase"
+      ? `/department-head/purchase-requests/${id}/advance`
+      : type === "gate_pass"
+        ? `/department-head/gate-passes/${id}/approve`
+        : `/department-head/transfers/${id}/approve`;
 
   return request(path, {
-    method: 'PATCH',
+    method: "PATCH",
     body: JSON.stringify({}),
   });
 }
 
-export async function departmentHeadReject(type, id, reason = '') {
-  const path = type === 'purchase'
-    ? `/department-head/purchase-requests/${id}/reject`
-    : type === 'gate_pass'
-      ? `/department-head/gate-passes/${id}/reject`
-      : `/department-head/transfers/${id}/reject`;
+export async function departmentHeadReject(type, id, reason = "") {
+  const path =
+    type === "purchase"
+      ? `/department-head/purchase-requests/${id}/reject`
+      : type === "gate_pass"
+        ? `/department-head/gate-passes/${id}/reject`
+        : `/department-head/transfers/${id}/reject`;
 
   return request(path, {
-    method: 'PATCH',
+    method: "PATCH",
     body: JSON.stringify({ reason }),
   });
 }
 
 export async function fetchAnomalies({ limit = 200 } = {}) {
-  const response = await request(`/inventory-monitoring/anomalies?per_page=${limit}`);
+  const response = await request(
+    `/inventory-monitoring/anomalies?per_page=${limit}`,
+  );
   return response?.data || [];
 }
 
 export async function fetchAnomalySummary() {
-  return request('/inventory-monitoring/summary');
+  return request("/inventory-monitoring/summary");
 }
 
 export async function analyzeAnomalies() {
-  return request('/inventory-monitoring/analyze', { method: 'POST' });
+  return request("/inventory-monitoring/analyze", { method: "POST" });
 }
 
 export async function generateReport(reportType) {
@@ -1012,7 +1131,7 @@ export async function generateReport(reportType) {
 }
 
 export async function fetchSupabaseDepartments() {
-  const data = await request('/departments');
+  const data = await request("/departments");
   return data || [];
 }
 
@@ -1021,28 +1140,28 @@ export async function createSupabaseDepartment(payload) {
     code: payload.code,
     name: payload.name,
     location: payload.location || null,
-    is_active: payload.is_active !== undefined ? payload.is_active : true
+    is_active: payload.is_active !== undefined ? payload.is_active : true,
   };
 
-  return request('/departments', {
-    method: 'POST',
+  return request("/departments", {
+    method: "POST",
     body: JSON.stringify(record),
   });
 }
 
 export async function fetchNotifications() {
-  return request('/notifications');
+  return request("/notifications");
 }
 
 export async function markAllNotificationsRead() {
-  return request('/notifications/read-all', {
-    method: 'PATCH',
+  return request("/notifications/read-all", {
+    method: "PATCH",
   });
 }
 
 export async function markNotificationRead(source, id) {
   return request(`/notifications/${source}/${id}/read`, {
-    method: 'PATCH',
+    method: "PATCH",
   });
 }
 
@@ -1060,32 +1179,32 @@ export async function fetchActivityLogs({ limit = 50 } = {}) {
   return response?.data || [];
 }
 
-export async function fetchUsers({ limit = 100, search = '' } = {}) {
-  const q = search ? `&search=${encodeURIComponent(search)}` : '';
+export async function fetchUsers({ limit = 100, search = "" } = {}) {
+  const q = search ? `&search=${encodeURIComponent(search)}` : "";
   const response = await request(`/users?per_page=${limit}${q}`);
   return response?.data || [];
 }
 
 export async function createUser(payload) {
-  return request('/users', {
-    method: 'POST',
+  return request("/users", {
+    method: "POST",
     body: JSON.stringify(payload),
   });
 }
 
 export async function updateUser(id, payload) {
   return request(`/users/${id}`, {
-    method: 'PATCH',
+    method: "PATCH",
     body: JSON.stringify(payload),
   });
 }
 
 export async function deactivateUser(id) {
-  return request(`/users/${id}`, { method: 'DELETE' });
+  return request(`/users/${id}`, { method: "DELETE" });
 }
 
 export const pcmsApi = {
-  dashboard: () => request('/dashboard'),
+  dashboard: () => request("/dashboard"),
   notifications: () => fetchNotifications(),
   activityLogs: (opts) => fetchActivityLogs(opts),
   assignmentDashboard: () => fetchAssignmentDashboard(),
@@ -1102,15 +1221,21 @@ export const pcmsApi = {
   deleteAsset: (id) => deleteBackendAsset(id),
   assignments: (opts) => fetchAssignments(opts),
   assignment: (id) => fetchAssignment(id),
-  assignmentRecommendations: (payload) => fetchAssignmentRecommendations(payload),
+  fetchAssignment: (id) => fetchAssignment(id),
+  assignmentRecommendations: (payload) =>
+    fetchAssignmentRecommendations(payload),
   assignmentQrDetails: (id) => fetchAssignmentQrDetails(id),
   employeeAssetProfile: (userId) => fetchEmployeeAssetProfile(userId),
   assignmentUsers: () => fetchAssignmentUsers(),
   createAssignment: (payload) => createAssignment(payload),
-  acceptAssignment: (id, employeeSignature) => acceptAssignment(id, employeeSignature),
+  acceptAssignment: (id, employeeSignature) =>
+    acceptAssignment(id, employeeSignature),
   cancelAssignment: (id, reason) => cancelAssignment(id, reason),
-  returnAssignment: (id, notes, conditionAfter) => returnAssignment(id, notes, conditionAfter),
+  returnAssignment: (id, notes, conditionAfter) =>
+    returnAssignment(id, notes, conditionAfter),
   checkClearance: (userId) => checkClearance(userId),
+  finalizeClearance: (userId, decision, notes) =>
+    finalizeClearance(userId, decision, notes),
   assignmentExportUrl: () => assignmentExportUrl(),
   fetchSupplies: (opts) => fetchSupplies(opts),
   supplies: (opts) => fetchSupplies(opts),
@@ -1135,7 +1260,8 @@ export const pcmsApi = {
   maintenanceRecords: (opts) => fetchMaintenanceRecords(opts),
   fetchMaintenancePredictions: (opts) => fetchMaintenancePredictions(opts),
   createMaintenanceRecord: (payload) => createMaintenanceRecord(payload),
-  updateMaintenanceRecord: (id, payload) => updateMaintenanceRecord(id, payload),
+  updateMaintenanceRecord: (id, payload) =>
+    updateMaintenanceRecord(id, payload),
   fetchDamageReports: (opts) => fetchDamageReports(opts),
   damageReports: (opts) => fetchDamageReports(opts),
   createDamageReport: (payload) => createDamageReport(payload),
@@ -1159,7 +1285,8 @@ export const pcmsApi = {
   deletePurchaseRequest: (id) => deletePurchaseRequest(id),
   pendingApprovals: () => pendingApprovals(),
   recommendingReviewQueue: () => pendingApprovals(),
-  recommendingApproverDashboard: () => request('/recommending-approver/dashboard'),
+  recommendingApproverDashboard: () =>
+    request("/recommending-approver/dashboard"),
   recommendingApproverHistory: () => recommendingApproverHistory(),
   fetchOicReleaseQueue: () => fetchOicReleaseQueue(),
   oicReleaseQueue: () => fetchOicReleaseQueue(),
@@ -1180,25 +1307,33 @@ export const pcmsApi = {
   requesterItemSearch: (search, opts) => requesterItemSearch(search, opts),
   requesterGatePasses: (opts) => requesterGatePasses(opts),
   requesterTransfers: () => requesterTransfers(),
-  requesterCreatePurchaseRequest: (payload) => requesterCreatePurchaseRequest(payload),
-  createWalkInPurchaseRequest: (payload) => createWalkInPurchaseRequest(payload),
+  requesterCreatePurchaseRequest: (payload) =>
+    requesterCreatePurchaseRequest(payload),
+  createWalkInPurchaseRequest: (payload) =>
+    createWalkInPurchaseRequest(payload),
   verifyWalkInApproval: (id, payload) => verifyWalkInApproval(id, payload),
-  uploadWalkInApprovalDocument: (id, file) => uploadWalkInApprovalDocument(id, file),
+  uploadWalkInApprovalDocument: (id, file) =>
+    uploadWalkInApprovalDocument(id, file),
   updateWalkInDetails: (id, payload) => updateWalkInDetails(id, payload),
   createWalkInGatePass: (payload) => createWalkInGatePass(payload),
   walkInItemSearch: (search, opts) => walkInItemSearch(search, opts),
   walkInRequesterOptions: (search) => walkInRequesterOptions(search),
   requesterCreateGatePass: (payload) => requesterCreateGatePass(payload),
-  requesterConfirmReceipt: (id, payload) => requesterConfirmReceipt(id, payload),
+  requesterConfirmReceipt: (id, payload) =>
+    requesterConfirmReceipt(id, payload),
   requesterExportUrl: (type) => requesterExportUrl(type),
   departmentHeadApprovalQueue: () => departmentHeadApprovalQueue(),
   departmentHeadApprovalHistory: () => departmentHeadApprovalHistory(),
   departmentHeadDashboard: () => departmentHeadDashboard(),
   departmentHeadApprove: (type, id) => departmentHeadApprove(type, id),
-  departmentHeadReject: (type, id, reason) => departmentHeadReject(type, id, reason),
+  departmentHeadReject: (type, id, reason) =>
+    departmentHeadReject(type, id, reason),
   scanGatePass: (id) => scanGatePass(id),
   scanOcr: async (formData) => {
-    const response = await request('/ocr/scan', { method: 'POST', body: formData });
+    const response = await request("/ocr/scan", {
+      method: "POST",
+      body: formData,
+    });
     return normalizeOcrPayload(response);
   },
   ocrHistory: (opts) => fetchOcrHistory(opts),
@@ -1214,5 +1349,5 @@ export const pcmsApi = {
   users: (opts) => fetchUsers(opts),
   createUser: (payload) => createUser(payload),
   updateUser: (id, payload) => updateUser(id, payload),
-  deactivateUser: (id) => deactivateUser(id)
+  deactivateUser: (id) => deactivateUser(id),
 };

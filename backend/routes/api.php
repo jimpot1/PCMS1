@@ -112,6 +112,7 @@ Route::middleware(['auth'])->group(function () {
     Route::get('/assignments/employee-profile/{userId}', [\App\Http\Controllers\AssetAssignmentController::class, 'employeeProfile']);
     Route::get('/assignment-users', [\App\Http\Controllers\AssetAssignmentController::class, 'assignees']);
     Route::get('/assignments/clearance-check/{userId}', [\App\Http\Controllers\AssetAssignmentController::class, 'clearanceCheck']);
+    Route::post('/assignments/clearance/{userId}/finalize', [\App\Http\Controllers\AssetAssignmentController::class, 'finalizeClearance']);
     Route::patch('/assignments/{id}/accept', [\App\Http\Controllers\AssetAssignmentController::class, 'accept']);
     Route::patch('/assignments/{id}/cancel', [\App\Http\Controllers\AssetAssignmentController::class, 'cancel']);
     Route::patch('/assignments/{id}/return', [\App\Http\Controllers\AssetAssignmentController::class, 'returnAssignment']);

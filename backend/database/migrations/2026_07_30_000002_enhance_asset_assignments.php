@@ -115,6 +115,21 @@ return new class extends Migration
             });
         }
 
+        if (! Schema::hasTable('clearance_requests')) {
+            Schema::create('clearance_requests', function (Blueprint $table) {
+                $table->id();
+                $table->uuid('user_id');
+                $table->string('status', 40)->default('pending');
+                $table->string('decision', 40)->default('pending');
+                $table->json('missing_items')->nullable();
+                $table->json('verified_items')->nullable();
+                $table->text('notes')->nullable();
+                $table->uuid('finalized_by')->nullable();
+                $table->timestamp('finalized_at')->nullable();
+                $table->timestamps();
+            });
+        }
+
         if (Schema::hasTable('damage_reports')) {
             Schema::table('damage_reports', function (Blueprint $table) {
                 if (! Schema::hasColumn('damage_reports', 'asset_id')) {
@@ -143,6 +158,7 @@ return new class extends Migration
     {
         Schema::dropIfExists('return_records');
         Schema::dropIfExists('assignment_notifications');
+        Schema::dropIfExists('clearance_requests');
         Schema::dropIfExists('accountability_forms');
         Schema::dropIfExists('assignment_history');
     }
