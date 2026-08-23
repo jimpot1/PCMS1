@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(php -v)",
+      "Bash(php artisan *)",
+      "Bash(php -l app/Services/AnomalyDetectionService.php)"
+    ]
+  }
+}

@@ -218,9 +218,14 @@ class AssetAssignmentController extends Controller
             return response()->json(['message' => 'Not found.'], 404);
         }
 
+        $accountabilityForm = DB::table('accountability_forms')->where('assignment_id', $record->id)->first();
+        if ($accountabilityForm) {
+            $accountabilityForm->payload = json_decode($accountabilityForm->payload ?? '{}', true);
+        }
+
         return response()->json([
             'assignment' => $record,
-            'accountability_form' => DB::table('accountability_forms')->where('assignment_id', $record->id)->first(),
+            'accountability_form' => $accountabilityForm,
             'history' => DB::table('assignment_history')->where('assignment_id', $record->id)->orderByDesc('created_at')->get(),
             'available_quantity' => $record->asset ? $this->availableQuantity($record->asset) : 0,
         ]);
@@ -433,12 +438,174 @@ class AssetAssignmentController extends Controller
 
     public function clearanceCheck($userId): JsonResponse
     {
-        $rows = AssetAssignment::with('asset')
+        $this->authorize('clearance', AssetAssignment::class);
+
+        $activeAssignments = AssetAssignment::with('asset')
             ->where('status', 'active')
             ->where('assigned_to', $userId)
             ->get();
 
-        return response()->json(['data' => $rows]);
+        $missingItems = $activeAssignments->map(function (AssetAssignment $assignment) {
+            $asset = $assignment->asset;
+
+            return [
+                'assignment_id' => $assignment->id,
+                'asset_id' => $asset?->id,
+                'property_number' => $asset?->property_number,
+                'asset_name' => $asset?->name,
+                'status' => 'pending_return',
+                'required_action' => 'return_asset',
+                'message' => 'Asset is still active and must be checked in before clearance can be finalized.',
+            ];
+        })->values()->all();
+
+        $clearanceRecord = DB::table('clearance_requests')
+            ->where('user_id', $userId)
+            ->latest('created_at')
+            ->first();
+        $accountabilityFormIds = DB::table('accountability_forms')
+            ->whereIn('assignment_id', AssetAssignment::where('assigned_to', $userId)->pluck('id'))
+            ->pluck('id')
+            ->values()
+            ->all();
+
+        if (! $clearanceRecord) {
+            $clearanceId = DB::table('clearance_requests')->insertGetId([
+                'user_id' => $userId,
+                'status' => empty($missingItems) ? 'cleared' : 'pending',
+                'decision' => 'pending',
+                'missing_items' => json_encode($missingItems),
+                'verified_items' => json_encode([]),
+                'accountability_form_ids' => json_encode($accountabilityFormIds),
+                'notes' => null,
+                'finalized_by' => null,
+                'finalized_at' => null,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+
+            $clearanceRecord = DB::table('clearance_requests')->where('id', $clearanceId)->first();
+        } else {
+            DB::table('clearance_requests')
+                ->where('id', $clearanceRecord->id)
+                ->update([
+                    'missing_items' => json_encode($missingItems),
+                    'status' => empty($missingItems) ? 'cleared' : 'pending',
+                    'decision' => empty($missingItems) ? 'cleared' : 'pending',
+                    'accountability_form_ids' => json_encode($accountabilityFormIds),
+                    'updated_at' => now(),
+                ]);
+
+            $clearanceRecord = DB::table('clearance_requests')->where('id', $clearanceRecord->id)->first();
+        }
+
+        return response()->json([
+            'data' => [
+                'assignments' => $activeAssignments,
+                'clearance' => [
+                    'id' => $clearanceRecord?->id,
+                    'user_id' => $clearanceRecord?->user_id,
+                    'status' => $clearanceRecord?->status ?? 'pending',
+                    'decision' => $clearanceRecord?->decision ?? 'pending',
+                    'finalized_at' => $clearanceRecord?->finalized_at,
+                    'finalized_by' => $clearanceRecord?->finalized_by,
+                    'created_at' => $clearanceRecord?->created_at,
+                    'accountability_form_ids' => json_decode($clearanceRecord?->accountability_form_ids ?? '[]', true),
+                ],
+                'missing_items' => $missingItems,
+                'verified_items' => [],
+            ],
+        ]);
+    }
+
+    public function finalizeClearance(Request $request, $userId): JsonResponse
+    {
+        $this->authorize('clearance', AssetAssignment::class);
+
+        $validated = $request->validate([
+            'decision' => ['required', 'in:cleared,hold,partial'],
+            'notes' => ['nullable', 'string'],
+        ]);
+
+        $clearanceRecord = DB::table('clearance_requests')->where('user_id', $userId)->latest('created_at')->first();
+        $activeAssignments = AssetAssignment::where('assigned_to', $userId)
+            ->where('status', 'active')
+            ->get(['id', 'asset_id']);
+        if ($validated['decision'] === 'cleared' && $activeAssignments->isNotEmpty()) {
+            return response()->json([
+                'message' => 'Clearance cannot be finalized while active asset assignments remain.',
+                'missing_items' => $activeAssignments->pluck('id')->values(),
+            ], 422);
+        }
+
+        $accountabilityFormIds = DB::table('accountability_forms')
+            ->whereIn('assignment_id', AssetAssignment::where('assigned_to', $userId)->pluck('id'))
+            ->pluck('id')
+            ->values()
+            ->all();
+        $status = $validated['decision'] === 'cleared' ? 'cleared' : ($validated['decision'] === 'hold' ? 'hold' : 'partial');
+
+        if (! $clearanceRecord) {
+            $clearanceId = DB::table('clearance_requests')->insertGetId([
+                'user_id' => $userId,
+                'status' => $status,
+                'decision' => $validated['decision'],
+                'missing_items' => json_encode([]),
+                'verified_items' => json_encode([]),
+                'accountability_form_ids' => json_encode($accountabilityFormIds),
+                'notes' => $validated['notes'] ?? null,
+                'finalized_by' => optional($request->user())->id,
+                'finalized_at' => now(),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+
+            $clearanceRecord = DB::table('clearance_requests')->where('id', $clearanceId)->first();
+        } else {
+            DB::table('clearance_requests')->where('id', $clearanceRecord->id)->update([
+                'status' => $status,
+                'decision' => $validated['decision'],
+                'notes' => $validated['notes'] ?? $clearanceRecord->notes,
+                'accountability_form_ids' => json_encode($accountabilityFormIds),
+                'finalized_by' => optional($request->user())->id ?? $clearanceRecord->finalized_by,
+                'finalized_at' => now(),
+                'updated_at' => now(),
+            ]);
+
+            $clearanceRecord = DB::table('clearance_requests')->where('id', $clearanceRecord->id)->first();
+        }
+
+        DB::table('activity_logs')->insert([
+            'action' => 'clearance_decision_recorded',
+            'payload' => json_encode([
+                'action' => 'clearance_decision_recorded',
+                'clearance_id' => $clearanceRecord->id,
+                'user_id' => $userId,
+                'decision' => $validated['decision'],
+                'status' => $status,
+                'accountability_form_ids' => $accountabilityFormIds,
+                'performed_by' => optional($request->user())->id,
+                'ip' => $request->ip(),
+            ]),
+            'status' => 'active',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        return response()->json([
+            'data' => [
+                'clearance' => [
+                    'id' => $clearanceRecord->id,
+                    'user_id' => $clearanceRecord->user_id,
+                    'status' => $clearanceRecord->status,
+                    'decision' => $clearanceRecord->decision,
+                    'finalized_at' => $clearanceRecord->finalized_at,
+                    'finalized_by' => $clearanceRecord->finalized_by,
+                    'notes' => $clearanceRecord->notes,
+                    'accountability_form_ids' => json_decode($clearanceRecord->accountability_form_ids ?? '[]', true),
+                ],
+            ],
+        ]);
     }
 
     public function export(Request $request): StreamedResponse
@@ -642,25 +809,41 @@ class AssetAssignmentController extends Controller
         });
     }
 
-    protected function createAccountabilityForm(AssetAssignment $assignment, Asset $asset, User $employee): void
+    public function generateParForAssignment(AssetAssignment $assignment, Asset $asset, User $employee): void
     {
+        if (DB::table('accountability_forms')->where('assignment_id', $assignment->id)->exists()) {
+            return;
+        }
+
+        $employeeName = $employee->full_name ?: trim(($employee->first_name ?? '') . ' ' . ($employee->last_name ?? '')) ?: 'Employee';
+        $accountabilityStatement = sprintf(
+            "I, %s, acknowledge receipt of %s with property number %s and serial number %s. I understand that I am accountable for its safekeeping, proper use, and return or clearance upon request.",
+            $employeeName,
+            $asset->name,
+            $asset->property_number ?? 'N/A',
+            $asset->serial_number ?? 'N/A'
+        );
+
         DB::table('accountability_forms')->insert([
             'assignment_id' => $assignment->id,
-            'form_number' => sprintf('AF-%s-%06d', now()->format('Y'), $assignment->id),
+            'form_number' => sprintf('PAR-%s-%06d', now()->format('Y'), $assignment->id),
             'payload' => json_encode([
+                'par_number' => sprintf('PAR-%s-%06d', now()->format('Y'), $assignment->id),
                 'employee' => [
                     'id' => $employee->id,
                     'employee_id' => $employee->employee_id,
-                    'name' => $employee->full_name ?: trim(($employee->first_name ?? '') . ' ' . ($employee->last_name ?? '')),
+                    'name' => $employeeName,
                     'department' => $employee->department,
                     'role' => $employee->role,
                 ],
                 'asset' => [
                     'id' => $asset->id,
                     'property_number' => $asset->property_number,
+                    'serial_number' => $asset->serial_number,
                     'name' => $asset->name,
                     'brand' => $asset->brand,
                     'model' => $asset->model,
+                    'acquisition_cost' => (float) ($asset->purchase_cost ?? 0),
                     'qr_code_path' => $asset->qr_code_path,
                     'location' => $asset->location,
                     'warranty_until' => $asset->warranty_until,
@@ -672,11 +855,18 @@ class AssetAssignmentController extends Controller
                     'due_date' => $assignment->due_date,
                     'purpose' => $assignment->purpose,
                 ],
+                'accountability_statement' => $accountabilityStatement,
+                'custodian_accountability_statement' => "Custodian acknowledges the assignment and the employee's responsibility for the proper care and return of the asset.",
             ]),
             'generated_at' => now(),
             'created_at' => now(),
             'updated_at' => now(),
         ]);
+    }
+
+    protected function createAccountabilityForm(AssetAssignment $assignment, Asset $asset, User $employee): void
+    {
+        $this->generateParForAssignment($assignment, $asset, $employee);
     }
 
     protected function recordHistory(AssetAssignment $assignment, string $eventType, Request $request, array $payload = []): void

@@ -16,6 +16,7 @@ class AuditScan extends Model
         'asset_id',
         'found_department_id',
         'result',
+        'ocr_scan_id',
         'scanned_at',
     ];
 

@@ -2034,6 +2034,7 @@ HTML;
                     'approval_status' => 'approved',
                     'notes' => trim(($assignment->notes ? $assignment->notes . "\n" : '') . "Created from {$purchaseRequest->request_number}.") ?: "Created from {$purchaseRequest->request_number}.",
                 ]);
+                $assignment = $assignment->fresh();
             } else {
                 $assignment = AssetAssignment::create([
                     'asset_id' => $asset->id,
@@ -2057,6 +2058,12 @@ HTML;
                     'assigned_to' => $assignment->assigned_to,
                     'quantity' => $assignment->quantity,
                 ]);
+            }
+
+            $requester = User::find($purchaseRequest->requested_by);
+            if ($requester) {
+                $assetAssignmentController = new AssetAssignmentController();
+                $assetAssignmentController->generateParForAssignment($assignment, $asset, $requester);
             }
 
             $assigned = AssetAssignment::where('asset_id', $asset->id)

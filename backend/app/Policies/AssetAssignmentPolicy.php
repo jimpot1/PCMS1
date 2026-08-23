@@ -14,6 +14,12 @@ class AssetAssignmentPolicy
             || in_array($user->role, ['Property Custodian', 'PPMO Staff', 'Department Head'], true);
     }
 
+    public function clearance(User $user): bool
+    {
+        return $this->isSystemAdministrator($user)
+            || in_array($user->role, ['Property Custodian', 'PPMO Staff', 'OIC'], true);
+    }
+
     public function view(User $user, AssetAssignment $assignment): bool
     {
         if ($this->isSystemAdministrator($user)) {
@@ -24,11 +30,9 @@ class AssetAssignmentPolicy
             return true;
         }
 
-        if ($user->role === 'Department Head') {
-            return $this->sameDepartment($user, $assignment->department_id);
-        }
-
-        return in_array($user->role, ['Property Custodian', 'PPMO Staff'], true);
+        // Keep the detail view consistent with the list (viewAny): the roles
+        // allowed to see assignments in the list can also open the details.
+        return in_array($user->role, ['Property Custodian', 'PPMO Staff', 'Department Head'], true);
     }
 
     public function create(User $user): bool

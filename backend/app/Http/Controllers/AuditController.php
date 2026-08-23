@@ -3,7 +3,9 @@
 namespace App\Http\Controllers;
 
 use App\Models\Asset;
+use App\Models\AssetTransfer;
 use App\Models\AuditScan;
+use App\Models\DamageReport;
 use App\Models\PhysicalAudit;
 use App\Services\AnomalyDetectionService;
 use Illuminate\Http\JsonResponse;
@@ -12,6 +14,11 @@ use Illuminate\Support\Facades\DB;
 
 class AuditController extends Controller
 {
+    public function __construct()
+    {
+        $this->authorizeResource(PhysicalAudit::class, 'audit');
+    }
+
     public function index(Request $request): JsonResponse
     {
         $searchOperator = DB::connection()->getDriverName() === 'pgsql' ? 'ilike' : 'like';
@@ -107,6 +114,7 @@ class AuditController extends Controller
         $validated = $request->validate([
             'asset_id' => ['required', 'exists:assets,id'],
             'found_department_id' => ['required', 'exists:departments,id'],
+            'ocr_scan_id' => ['nullable', 'exists:ocr_scans,id'],
         ]);
 
         $asset = Asset::findOrFail($validated['asset_id']);
@@ -118,6 +126,27 @@ class AuditController extends Controller
             $result = 'wrong_department';
             // Detect untracked transfer
             AnomalyDetectionService::detectUntrackedTransfer($asset->id, $foundDepartmentId);
+
+            $existingTransfer = AssetTransfer::query()
+                ->where('asset_id', $asset->id)
+                ->where('from_department_id', $asset->department_id)
+                ->where('to_department_id', $foundDepartmentId)
+                ->whereIn('status', ['transfer_requested', 'department_approved', 'ready_for_transfer'])
+                ->exists();
+
+            if (! $existingTransfer) {
+                AssetTransfer::create([
+                    'transfer_number' => $this->generateTransferNumber(),
+                    'asset_id' => $asset->id,
+                    'from_department_id' => $asset->department_id,
+                    'to_department_id' => $foundDepartmentId,
+                    'requested_by' => $request->user()?->id,
+                    'status' => 'transfer_requested',
+                    'reason' => "Physical audit found asset in department {$foundDepartmentId}.",
+                    'quantity' => (int) ($asset->quantity ?? 1),
+                    'transfer_type' => 'permanent',
+                ]);
+            }
         }
 
         $scan = AuditScan::create([
@@ -125,6 +154,7 @@ class AuditController extends Controller
             'asset_id' => $asset->id,
             'found_department_id' => $foundDepartmentId,
             'result' => $result,
+            'ocr_scan_id' => $validated['ocr_scan_id'] ?? null,
         ]);
 
         $this->logActivity('audit_scan_recorded', $scan, $request);
@@ -155,6 +185,22 @@ class AuditController extends Controller
                         'asset_id' => $assetId,
                         'result' => 'missing',
                     ]);
+
+                    $alreadyReported = DamageReport::query()
+                        ->where('asset_id', $assetId)
+                        ->where('description', 'like', "Physical audit {$audit->audit_number}%")
+                        ->exists();
+
+                    if (! $alreadyReported) {
+                        DamageReport::create([
+                            'asset_id' => $assetId,
+                            'reported_by' => $request->user()?->id,
+                            'department_id' => $audit->department_id,
+                            'severity' => 'critical',
+                            'description' => "Physical audit {$audit->audit_number} could not verify this asset.",
+                            'status' => 'submitted',
+                        ]);
+                    }
                 }
 
                 $audit->load('auditScans');
@@ -190,6 +236,11 @@ class AuditController extends Controller
     {
         $sequence = PhysicalAudit::count() + 1;
         return sprintf('AUD-%s-%06d', now()->format('Y'), $sequence);
+    }
+
+    protected function generateTransferNumber(): string
+    {
+        return sprintf('TR-%s-%06d', now()->format('Y'), AssetTransfer::count() + 1);
     }
 
     protected function logActivity(string $action, $model, Request $request): void
