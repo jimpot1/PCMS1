@@ -50,7 +50,8 @@ class GoogleVisionOcrService
                 ? (array_sum($confidences) / count($confidences)) * 100
                 : 0;
 
-            $fields = self::extractFields($rawText);
+            $layoutLines = self::extractLayoutLines($fullTextAnnotation);
+            $fields = self::extractFields($layoutLines !== [] ? implode("\n", $layoutLines) : $rawText);
 
             return [
                 'success' => true,
@@ -108,13 +109,26 @@ class GoogleVisionOcrService
 
             $fieldKey = self::detectField($line);
 
+            // OCR may return a sequence of labels without values. Never use a
+            // label-only line as the value of the preceding pending field.
+            if ($fieldKey !== null && self::isLabelOnly($line, $fieldKey)) {
+                if ($openField === 'description') {
+                    $flushDescription();
+                    $openField = null;
+                }
+                $pendingFields = [$fieldKey];
+                continue;
+            }
+
             if ($fieldKey !== null && $pendingFields !== [] && ! preg_match('/^[^:]{1,80}:\s*/', $line)) {
                 $fieldKey = null;
             }
 
             // Description values may contain words that are also field labels.
             // Only a colon-delimited label should close the multiline value.
-            if ($openField === 'description' && ($fieldKey === null || ! preg_match('/^[^:]{1,80}:\s*/', $line))) {
+            $hasInlineValue = $fieldKey !== null && self::extractInlineValue($line, $fieldKey) !== null;
+            $isLabelOnly = $fieldKey !== null && self::isLabelOnly($line, $fieldKey);
+            if ($openField === 'description' && ! $hasInlineValue && ! $isLabelOnly) {
                 $descriptionLines[] = $line;
                 continue;
             }
@@ -130,6 +144,10 @@ class GoogleVisionOcrService
                 if ($inlineValue !== null && $inlineValue !== '') {
                     // "Label: value" on the same line — fill immediately, nothing queued.
                     $fields[$fieldKey] = self::normalizeValue($fieldKey, $inlineValue);
+                    if ($fieldKey === 'description') {
+                        $openField = 'description';
+                        $descriptionLines = [$inlineValue];
+                    }
                     continue;
                 }
 
@@ -197,6 +215,84 @@ class GoogleVisionOcrService
         }
 
         return array_filter($fields, fn ($value) => $value !== null && $value !== '');
+    }
+
+    protected static function isLabelOnly(string $line, string $fieldKey): bool
+    {
+        $normalized = strtolower(trim(self::normalizeLine($line)));
+        $normalized = preg_replace('/[\s:：#.-]+$/u', '', $normalized) ?? $normalized;
+        $labels = [
+            'property_number' => ['property number', 'property no', 'property no#', 'property #'],
+            'asset_name' => ['asset name', 'item name', 'equipment'],
+            'brand' => ['brand'],
+            'manufacturer' => ['manufacturer', 'mfr', 'mfg'],
+            'model' => ['model'],
+            'serial_number' => ['serial number', 'serial no', 'serial', 'sn'],
+            'description' => ['description'],
+            'department' => ['department'],
+            'location' => ['location'],
+            'purchase_date' => ['purchase date', 'date acquired'],
+            'purchase_cost' => ['purchase cost', 'cost', 'amount'],
+            'quantity' => ['quantity'],
+            'warranty_until' => ['warranty until', 'warranty expiry', 'warranty end', 'warranty'],
+            'condition' => ['condition'],
+        ];
+
+        return in_array($normalized, $labels[$fieldKey] ?? [], true);
+    }
+
+    protected static function extractLayoutLines($annotation): array
+    {
+        $words = [];
+        foreach ($annotation?->getPages() ?? [] as $page) {
+            foreach ($page->getBlocks() as $block) {
+                foreach ($block->getParagraphs() as $paragraph) {
+                    foreach ($paragraph->getWords() as $word) {
+                        $text = self::clean(implode('', array_map(
+                            fn ($symbol) => $symbol->getText(),
+                            iterator_to_array($word->getSymbols())
+                        )));
+                        $vertices = iterator_to_array($word->getBoundingBox()?->getVertices() ?? []);
+                        if ($text === null || $vertices === []) {
+                            continue;
+                        }
+
+                        $x = min(array_map(fn ($vertex) => $vertex->getX(), $vertices));
+                        $y = min(array_map(fn ($vertex) => $vertex->getY(), $vertices));
+                        $height = max(array_map(fn ($vertex) => $vertex->getY(), $vertices)) - $y;
+                        $words[] = ['text' => $text, 'x' => $x, 'y' => $y, 'height' => max(1, $height)];
+                    }
+                }
+            }
+        }
+
+        usort($words, fn ($left, $right) => $left['y'] <=> $right['y'] ?: $left['x'] <=> $right['x']);
+        $rows = [];
+        foreach ($words as $word) {
+            $rowIndex = null;
+            foreach ($rows as $index => $row) {
+                $threshold = max(6, min($word['height'], $row['height']) * 0.7);
+                if (abs($word['y'] - $row['y']) <= $threshold) {
+                    $rowIndex = $index;
+                    break;
+                }
+            }
+
+            if ($rowIndex === null) {
+                $rows[] = ['y' => $word['y'], 'height' => $word['height'], 'words' => [$word]];
+            } else {
+                $rows[$rowIndex]['words'][] = $word;
+                $rows[$rowIndex]['y'] = min($rows[$rowIndex]['y'], $word['y']);
+                $rows[$rowIndex]['height'] = max($rows[$rowIndex]['height'], $word['height']);
+            }
+        }
+
+        usort($rows, fn ($left, $right) => $left['y'] <=> $right['y']);
+
+        return array_values(array_map(function ($row) {
+            usort($row['words'], fn ($left, $right) => $left['x'] <=> $right['x']);
+            return implode(' ', array_column($row['words'], 'text'));
+        }, $rows));
     }
 
     protected static function emptyFields(): array
@@ -290,7 +386,24 @@ class GoogleVisionOcrService
             return null;
         }
 
-        if (! preg_match('/^[^:]+:\s*(.*)$/', $normalizedLine, $matches)) {
+        $labelPattern = match ($fieldKey) {
+            'property_number' => '(?:property\\s*(?:number|no|#))',
+            'asset_name' => '(?:asset\\s*name|item\\s*name|equipment)',
+            'brand' => '(?:brand|manufacturer|mfr|mfg)',
+            'model' => 'model',
+            'serial_number' => '(?:serial\\s*(?:number|no)?|sn)',
+            'description' => 'description',
+            'department' => 'department',
+            'location' => 'location',
+            'purchase_date' => '(?:purchase\\s*date|date\\s*acquired)',
+            'purchase_cost' => '(?:purchase\\s*cost|cost|amount)',
+            'quantity' => 'quantity',
+            'warranty_until' => '(?:warranty\\s*(?:until|expiry|end)?|warranty)',
+            'condition' => 'condition',
+            default => null,
+        };
+
+        if ($labelPattern === null || ! preg_match('/^' . $labelPattern . '(?:\\s*[:：-]\\s*|\\s+)(.*)$/iu', $normalizedLine, $matches)) {
             return null;
         }
 

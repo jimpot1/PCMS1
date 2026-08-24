@@ -3,6 +3,7 @@
 use App\Http\Controllers\ActivityLogController;
 use App\Http\Controllers\AnomalyController;
 use App\Http\Controllers\AssetController;
+use App\Http\Controllers\AssetUnitController;
 use App\Http\Controllers\AuditController;
 use App\Http\Controllers\DamageReportController;
 use App\Http\Controllers\DashboardController;
@@ -58,6 +59,8 @@ Route::middleware(['auth'])->group(function () {
     Route::get('/assets/export', [AssetController::class, 'export']);
     Route::get('/assets/statistics', [AssetController::class, 'statistics']);
     Route::get('/assets/{asset}/history', [AssetController::class, 'history']);
+    Route::get('/assets/{asset}/units', [AssetUnitController::class, 'index']);
+    Route::post('/assets/{asset}/units', [AssetUnitController::class, 'store']);
     Route::post('/assets/{asset}/restore', [AssetController::class, 'restore']);
     Route::apiResource('assets', AssetController::class);
     Route::get('/transfers/dashboard', [TransferController::class, 'dashboard']);

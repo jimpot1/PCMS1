@@ -299,6 +299,11 @@ export async function fetchAssetHistory(id) {
   return request(`/assets/${id}/history`);
 }
 
+export async function fetchAssetUnits(id) {
+  const response = await request(`/assets/${encodeURIComponent(id)}/units`);
+  return response?.data || [];
+}
+
 export async function fetchAssignments({
   limit = 200,
   search = "",
@@ -353,7 +358,7 @@ export async function createAssignment(payload) {
   if (hasPhoto) {
     Object.entries(payload).forEach(([key, value]) => {
       if (value !== undefined && value !== null && value !== "") {
-        body.append(key, value);
+        body.append(key, typeof value === "boolean" ? (value ? "1" : "0") : value);
       }
     });
   }
@@ -493,6 +498,7 @@ export async function fetchTransferRecommendations(payload = {}) {
 export async function createTransfer(payload) {
   const record = {
     asset_id: payload.asset_id,
+    asset_unit_id: payload.asset_unit_id || null,
     to_department_id: payload.to_department_id,
     to_custodian_id: payload.to_custodian_id,
     quantity: Number(payload.quantity || 1),
@@ -640,6 +646,10 @@ export async function fetchAudits({ limit = 200 } = {}) {
   return response?.data || [];
 }
 
+export async function fetchAudit(id) {
+  return request(`/audits/${id}`);
+}
+
 export async function createAudit(payload) {
   const record = {
     area: payload.name || payload.area,
@@ -650,6 +660,25 @@ export async function createAudit(payload) {
   return request("/audits", {
     method: "POST",
     body: JSON.stringify(record),
+  });
+}
+
+export async function updateAudit(id, payload) {
+  const record = {
+    area: payload.name || payload.area,
+    department_id: payload.department_id || null,
+    scheduled_at: payload.scheduled_date || payload.scheduled_at,
+  };
+
+  return request(`/audits/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(record),
+  });
+}
+
+export async function deleteAudit(id) {
+  return request(`/audits/${id}`, {
+    method: "DELETE",
   });
 }
 
@@ -1216,6 +1245,7 @@ export const pcmsApi = {
   markNotificationRead: (source, id) => markNotificationRead(source, id),
   asset: (id) => fetchBackendAsset(id),
   assetHistory: (id) => fetchAssetHistory(id),
+  assetUnits: (id) => fetchAssetUnits(id),
   createAsset: (payload) => createBackendAsset(payload),
   updateAsset: (id, payload) => updateBackendAsset(id, payload),
   deleteAsset: (id) => deleteBackendAsset(id),
@@ -1268,7 +1298,10 @@ export const pcmsApi = {
   updateDamageReport: (id, payload) => updateDamageReport(id, payload),
   fetchAudits: (opts) => fetchAudits(opts),
   audits: (opts) => fetchAudits(opts),
+  fetchAudit: (id) => fetchAudit(id),
   createAudit: (payload) => createAudit(payload),
+  updateAudit: (id, payload) => updateAudit(id, payload),
+  deleteAudit: (id) => deleteAudit(id),
   scanAuditAsset: (auditId, payload) => scanAuditAsset(auditId, payload),
   completeAudit: (auditId) => completeAudit(auditId),
   fetchPurchaseRequests: (opts) => fetchPurchaseRequests(opts),

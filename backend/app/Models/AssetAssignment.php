@@ -11,6 +11,7 @@ class AssetAssignment extends Model
 
     protected $fillable = [
         'asset_id',
+        'asset_unit_id',
         'assigned_to',
         'assigned_by',
         'department_id',
@@ -43,6 +44,11 @@ class AssetAssignment extends Model
     public function asset(): BelongsTo
     {
         return $this->belongsTo(Asset::class);
+    }
+
+    public function assetUnit(): BelongsTo
+    {
+        return $this->belongsTo(AssetUnit::class);
     }
 
     public function assignedTo(): BelongsTo

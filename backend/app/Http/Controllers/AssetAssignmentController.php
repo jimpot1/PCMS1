@@ -4,7 +4,9 @@ namespace App\Http\Controllers;
 
 use App\Models\Asset;
 use App\Models\AssetAssignment;
+use App\Models\AssetUnit;
 use App\Models\User;
+use App\Services\AssetUnitService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -21,7 +23,7 @@ class AssetAssignmentController extends Controller
     public function index(Request $request): JsonResponse
     {
         $query = AssetAssignment::query()
-            ->with('asset', 'assignedTo', 'assignedBy')
+            ->with('asset', 'assetUnit', 'assignedTo', 'assignedBy')
             ->orderBy('created_at', 'desc');
 
         if ($request->filled('user_id')) {
@@ -88,7 +90,7 @@ class AssetAssignmentController extends Controller
             'assets_due_for_return' => (clone $activeAssignments)->whereBetween('due_date', [$today, now()->addDays(7)->toDateString()])->count(),
             'overdue_assignments' => (clone $activeAssignments)->whereDate('due_date', '<', $today)->count(),
             'total_available_quantity' => Asset::query()->sum(DB::raw('COALESCE(available_quantity, quantity, 1)')),
-            'recently_assigned_assets' => AssetAssignment::with('asset', 'assignedTo')->latest('assigned_at')->limit(5)->get(),
+            'recently_assigned_assets' => AssetAssignment::with('asset', 'assetUnit', 'assignedTo')->latest('assigned_at')->limit(5)->get(),
             'assignment_trends' => AssetAssignment::query()
                 ->selectRaw('DATE(created_at) as date, COUNT(*) as total')
                 ->where('created_at', '>=', now()->subDays(30))
@@ -126,6 +128,7 @@ class AssetAssignmentController extends Controller
     {
         $validated = $request->validate([
             'asset_id' => ['required', 'exists:assets,id'],
+            'asset_unit_id' => ['nullable', 'integer', 'exists:asset_units,id'],
             'assigned_to' => ['bail', 'required', 'uuid', 'exists:users,id'],
             'assigned_by' => ['bail', 'nullable', 'uuid', 'exists:users,id'],
             'assignment_type' => ['nullable', 'in:permanent,temporary,borrowed'],
@@ -175,8 +178,17 @@ class AssetAssignmentController extends Controller
         $status = $request->boolean('accept_now') || ! empty($validated['employee_signature']) ? 'active' : 'pending_acceptance';
 
         $assignment = DB::transaction(function () use ($validated, $request, $asset, $employee, $quantity, $photoPath, $status) {
+            $unit = null;
+            if ($quantity === 1) {
+                $unit = app(AssetUnitService::class)->allocate($asset, $validated['asset_unit_id'] ?? null);
+                if (! $unit && ! empty($validated['asset_unit_id'])) {
+                    throw new \RuntimeException('No identifiable available unit exists for this asset.');
+                }
+            }
+
             $assignment = AssetAssignment::create([
                 'asset_id' => $asset->id,
+                'asset_unit_id' => $unit?->id,
                 'assigned_to' => $employee->id,
                 'assigned_by' => $validated['assigned_by'] ?? optional($request->user())->id ?? null,
                 'department_id' => $asset->department_id,
@@ -196,6 +208,19 @@ class AssetAssignmentController extends Controller
             ]);
 
             $this->syncAssetInventory($asset->fresh(), $status === 'active' ? $assignment : null);
+            if ($unit && $status === 'active') {
+                $unit->update([
+                    'status' => 'assigned',
+                    'department_id' => $asset->department_id,
+                    'custodian_id' => $employee->id,
+                ]);
+                app(AssetUnitService::class)->recordMovement($unit, 'assignment', [
+                    'to_department_id' => $asset->department_id,
+                    'to_custodian_id' => $employee->id,
+                    'reference_type' => 'asset_assignment',
+                    'reference_id' => $assignment->id,
+                ]);
+            }
             $this->createAccountabilityForm($assignment, $asset, $employee);
             $this->recordHistory($assignment, 'created', $request, [
                 'quantity' => $quantity,
@@ -208,12 +233,12 @@ class AssetAssignmentController extends Controller
             return $assignment;
         });
 
-        return response()->json($assignment->fresh()->load('asset', 'assignedTo', 'assignedBy'), 201);
+        return response()->json($assignment->fresh()->load('asset', 'assetUnit', 'assignedTo', 'assignedBy'), 201);
     }
 
     public function show($id): JsonResponse
     {
-        $record = AssetAssignment::with('asset', 'assignedTo', 'assignedBy')->find($id);
+        $record = AssetAssignment::with('asset', 'assetUnit', 'assignedTo', 'assignedBy')->find($id);
         if (! $record) {
             return response()->json(['message' => 'Not found.'], 404);
         }
@@ -257,6 +282,17 @@ class AssetAssignmentController extends Controller
             'employee_signature' => $validated['employee_signature'] ?? $record->employee_signature,
         ]);
 
+        if ($record->asset_unit_id) {
+            $unit = AssetUnit::whereKey($record->asset_unit_id)->lockForUpdate()->firstOrFail();
+            $unit->update(['status' => 'assigned', 'department_id' => $record->department_id, 'custodian_id' => $record->assigned_to]);
+            app(AssetUnitService::class)->recordMovement($unit, 'assignment', [
+                'to_department_id' => $record->department_id,
+                'to_custodian_id' => $record->assigned_to,
+                'reference_type' => 'asset_assignment',
+                'reference_id' => $record->id,
+            ]);
+        }
+
         if ($record->asset) {
             $this->syncAssetInventory($record->asset->fresh(), $record);
         }
@@ -264,7 +300,7 @@ class AssetAssignmentController extends Controller
         $this->logActivity('assignment_accepted', $record, $request);
         $this->notifyAssignment($record, 'assignment_approved', $request);
 
-        return response()->json($record->fresh()->load('asset', 'assignedTo', 'assignedBy'));
+        return response()->json($record->fresh()->load('asset', 'assetUnit', 'assignedTo', 'assignedBy'));
     }
 
     public function update(Request $request, $id): JsonResponse
@@ -327,6 +363,19 @@ class AssetAssignmentController extends Controller
             if ($record->asset) {
                 $this->syncAssetInventory($record->asset->fresh());
             }
+
+            if ($record->asset_unit_id && $record->status === 'cancelled') {
+                $unit = AssetUnit::whereKey($record->asset_unit_id)->lockForUpdate()->first();
+                if ($unit && $record->getOriginal('status') === 'active') {
+                    $unit->update(['status' => 'available', 'custodian_id' => null]);
+                    app(AssetUnitService::class)->recordMovement($unit, 'return', [
+                        'from_department_id' => $unit->department_id,
+                        'from_custodian_id' => $record->assigned_to,
+                        'reference_type' => 'asset_assignment',
+                        'reference_id' => $record->id,
+                    ]);
+                }
+            }
             $this->recordHistory($record, 'cancelled', $request, ['reason' => $request->input('reason')]);
             $this->logActivity('assignment_cancelled', $record, $request);
             $this->notifyAssignment($record, 'assignment_cancelled', $request);
@@ -351,6 +400,25 @@ class AssetAssignmentController extends Controller
                 'status' => 'cancelled',
                 'notes' => trim(implode("\n", array_filter([$record->notes, 'Cancelled through delete action.']))) ?: null,
             ]);
+
+            if ($record->asset_unit_id) {
+                $unit = AssetUnit::whereKey($record->asset_unit_id)->lockForUpdate()->first();
+                if ($unit) {
+                    $fromDepartmentId = $unit->department_id;
+                    $unit->update([
+                        'status' => in_array($conditionAfter, ['needs_repair', 'damaged'], true) ? ($conditionAfter === 'damaged' ? 'damaged' : 'maintenance') : 'available',
+                        'custodian_id' => null,
+                        'condition' => $conditionAfter,
+                    ]);
+                    app(AssetUnitService::class)->recordMovement($unit, 'return', [
+                        'from_department_id' => $fromDepartmentId,
+                        'from_custodian_id' => $record->assigned_to,
+                        'reference_type' => 'asset_assignment',
+                        'reference_id' => $record->id,
+                        'remarks' => $validated['notes'] ?? null,
+                    ]);
+                }
+            }
 
             if ($record->asset) {
                 $this->syncAssetInventory($record->asset->fresh());
@@ -390,6 +458,27 @@ class AssetAssignmentController extends Controller
                 'return_notes' => $validated['notes'] ?? null,
                 'notes' => trim(implode("\n", array_filter([$record->notes, $validated['notes'] ?? null ? "Return notes: {$validated['notes']}" : null]))) ?: null,
             ]);
+
+            if ($record->asset_unit_id) {
+                $unit = AssetUnit::whereKey($record->asset_unit_id)->lockForUpdate()->first();
+                if ($unit) {
+                    $unit->update([
+                        'status' => $conditionAfter === 'damaged'
+                            ? 'damaged'
+                            : ($conditionAfter === 'needs_repair' ? 'maintenance' : 'available'),
+                        'department_id' => null,
+                        'custodian_id' => null,
+                        'condition' => $conditionAfter,
+                    ]);
+                    app(AssetUnitService::class)->recordMovement($unit, 'return', [
+                        'from_department_id' => $unit->department_id,
+                        'from_custodian_id' => $record->assigned_to,
+                        'reference_type' => 'asset_assignment',
+                        'reference_id' => $record->id,
+                        'remarks' => $validated['notes'] ?? null,
+                    ]);
+                }
+            }
 
             DB::table('return_records')->insert([
                 'assignment_id' => $record->id,
@@ -758,6 +847,15 @@ class AssetAssignmentController extends Controller
 
     protected function availableQuantity(Asset $asset): int
     {
+        if (in_array($asset->status, ['maintenance', 'damaged', 'disposed'], true)) {
+            return 0;
+        }
+
+        $unitQuery = AssetUnit::where('asset_id', $asset->id);
+        if ($unitQuery->exists()) {
+            return $unitQuery->where('status', 'available')->count();
+        }
+
         $assigned = AssetAssignment::where('asset_id', $asset->id)
             ->where('status', 'active')
             ->sum('quantity');

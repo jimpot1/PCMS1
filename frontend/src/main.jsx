@@ -905,7 +905,7 @@ function App() {
                 path="monitoring"
                 element={<MonitoringPage currentUser={currentUser} />}
               />
-              <Route path="audit" element={<AuditPage />} />
+              <Route path="audit" element={<AuditPage currentUser={currentUser} />} />
               <Route
                 path="notifications"
                 element={
@@ -960,7 +960,7 @@ function App() {
               <Route path="damage" element={<DamagePage />} />
               <Route path="purchases" element={<PurchasePage />} />
               <Route path="gatepass" element={<GatePassPage />} />
-              <Route path="audit" element={<AuditPage />} />
+              <Route path="audit" element={<AuditPage currentUser={currentUser} />} />
               <Route path="walk-in-request" element={<WalkInRequest />} />
               <Route
                 path="approved-release-queue"
@@ -2247,20 +2247,13 @@ function renderPage(page, onNavigate, currentUser) {
     departments: <DepartmentsPage />,
     assignments: <EnhancedAssignmentsPage />,
     transfers: <TransferPage />,
-    returns: (
-      <WorkflowPage
-        title="Asset Return"
-        icon={PackageCheck}
-        items={transfers.filter((item) => item.type === "Return")}
-        statusLabel="Return Pending"
-      />
-    ),
+    returns: <AssetReturnPage />,
     maintenance: <MaintenancePage />,
     damage: <DamagePage />,
     supplies: <SuppliesPage />,
     purchases: <PurchasePage />,
     gatepass: <GatePassPage />,
-    audit: <AuditPage />,
+    audit: <AuditPage currentUser={currentUser} />,
     ocr: <OcrPage />,
     monitoring: <MonitoringPage currentUser={currentUser} />,
     reports: <ReportsPage />,
@@ -3604,6 +3597,90 @@ function WorkflowPage({ title, icon: Icon, items, statusLabel, onPrimary }) {
   );
 }
 
+function AssetReturnPage() {
+  const [assignments, setAssignments] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [message, setMessage] = useState(null);
+  const [returnAssignment, setReturnAssignment] = useState(null);
+  const [returnValues, setReturnValues] = useState({ condition_after: "good", notes: "" });
+  const [saving, setSaving] = useState(false);
+
+  const loadReturns = async () => {
+    setLoading(true);
+    try {
+      const records = await pcmsApi.assignments({ limit: 200 });
+      setAssignments(records || []);
+      setError(null);
+    } catch (err) {
+      setError(err?.message || "Unable to load asset return records.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { loadReturns(); }, []);
+
+  const openReturn = (assignment) => {
+    setMessage(null);
+    setError(null);
+    setReturnValues({ condition_after: "good", notes: "" });
+    setReturnAssignment(assignment);
+  };
+
+  const submitReturn = async (event) => {
+    event.preventDefault();
+    if (!returnAssignment) return;
+    setSaving(true);
+    try {
+      await pcmsApi.returnAssignment(returnAssignment.id, returnValues.notes, returnValues.condition_after);
+      setReturnAssignment(null);
+      setMessage("Asset returned successfully and inventory was updated.");
+      await loadReturns();
+    } catch (err) {
+      setError(err?.message || "Unable to record the asset return.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const active = assignments.filter((item) => ["active", "pending_acceptance"].includes(item.status));
+  const returned = assignments.filter((item) => item.status === "returned");
+  const unitNumber = (assignment) => {
+    const unit = assignment.assetUnit || assignment.asset_unit;
+    return unit?.unit_code?.match(/-(\d{3})$/)?.[1] || "N/A";
+  };
+  const employeeName = (assignment) => formatAssignmentUser(assignment.assigned_to || assignment.assignedTo || {});
+
+  return (
+    <ModulePage title="Asset Return" subtitle="Inspect assigned property, record its condition, and return it to available inventory." primary="Start Return" icon={PackageCheck} onPrimary={() => active[0] && openReturn(active[0])}>
+      {error && <div className="form-message error">{error}</div>}
+      {message && <div className="form-message success">{message}</div>}
+      <section className="metric-grid compact">
+        <StatCard label="Awaiting Return" value={active.length} change="Active assignments" icon={Timer} tone="orange" />
+        <StatCard label="Returned" value={returned.length} change="Completed check-ins" icon={PackageCheck} tone="green" />
+        <StatCard label="Total Records" value={assignments.length} change="Assignment history" icon={History} tone="blue" />
+      </section>
+      <section className="panel role-panel">
+        <PanelHeader title="Assets Awaiting Return" subtitle="Select an assignment to complete the inspection and check-in." />
+        {loading ? <div className="loading-card">Loading return records...</div> : active.length === 0 ? <p className="empty-state">No active assets are waiting for return.</p> : (
+          <div className="approval-list">{active.map((assignment) => (
+            <article className="approval-card" key={assignment.id}>
+              <div><strong>{assignment.asset?.name || `Asset #${assignment.asset_id}`}</strong><p>{assignment.asset?.property_number || "No property number"} · Physical Unit {unitNumber(assignment)}</p><small>{employeeName(assignment)} · Assigned {formatAssignmentDate(assignment.assigned_at)}</small></div>
+              <button className="primary-button" type="button" onClick={() => openReturn(assignment)}><PackageCheck size={16} /> Inspect & Return</button>
+            </article>
+          ))}</div>
+        )}
+      </section>
+      <section className="panel role-panel">
+        <PanelHeader title="Return History" subtitle="Previously checked-in assets and their recorded condition." />
+        {returned.length === 0 ? <p className="empty-state">No completed returns yet.</p> : <div className="table-card"><table><thead><tr><th>Asset</th><th>Employee</th><th>Physical Unit</th><th>Returned</th><th>Condition</th></tr></thead><tbody>{returned.map((assignment) => <tr key={assignment.id}><td><strong>{assignment.asset?.name || `Asset #${assignment.asset_id}`}</strong><span>{assignment.asset?.property_number || "N/A"}</span></td><td>{employeeName(assignment)}</td><td>{unitNumber(assignment)}</td><td>{formatAssignmentDate(assignment.returned_at)}</td><td><span className="status success">{assignment.condition_after || "good"}</span></td></tr>)}</tbody></table></div>}
+      </section>
+      {returnAssignment && <div className="modal-overlay" role="dialog" aria-modal="true"><div className="modal-card"><div className="modal-header"><h3>Inspect & Return Asset</h3><button className="icon-button" type="button" onClick={() => setReturnAssignment(null)} aria-label="Close"><X size={18} /></button></div><div className="asset-description-card"><strong>{returnAssignment.asset?.name || `Asset #${returnAssignment.asset_id}`}</strong><p>Property No.: {returnAssignment.asset?.property_number || "N/A"}</p><p>Physical Unit: {unitNumber(returnAssignment)}</p><p>Assigned to: {employeeName(returnAssignment)}</p></div><form className="register-form" onSubmit={submitReturn}><label>Condition After Return<select value={returnValues.condition_after} onChange={(event) => setReturnValues((current) => ({ ...current, condition_after: event.target.value }))}><option value="excellent">Excellent</option><option value="good">Good</option><option value="fair">Fair</option><option value="needs_repair">Needs Repair</option><option value="damaged">Damaged</option></select></label><label>Inspection Notes<textarea rows={3} value={returnValues.notes} onChange={(event) => setReturnValues((current) => ({ ...current, notes: event.target.value }))} placeholder="Record inspection findings or return notes" /></label><div className="modal-actions"><button className="secondary-button" type="button" onClick={() => setReturnAssignment(null)}>Cancel</button><button className="primary-button" type="submit" disabled={saving}>{saving ? "Recording..." : "Confirm Return"}</button></div></form></div></div>}
+    </ModulePage>
+  );
+}
+
 function EnhancedAssignmentsPage() {
   const makeEmptyForm = () => ({
     asset_id: "",
@@ -3623,6 +3700,7 @@ function EnhancedAssignmentsPage() {
   const [assignmentsData, setAssignmentsData] = useState([]);
   const [dashboardData, setDashboardData] = useState(null);
   const [assetsList, setAssetsList] = useState([]);
+  const [assetUnits, setAssetUnits] = useState([]);
   const [usersList, setUsersList] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
@@ -3632,6 +3710,7 @@ function EnhancedAssignmentsPage() {
   const [actionError, setActionError] = useState(null);
   const [actionSuccess, setActionSuccess] = useState(null);
   const [selectedAssignment, setSelectedAssignment] = useState(null);
+  const [verificationAssignment, setVerificationAssignment] = useState(null);
   const [clearanceOpen, setClearanceOpen] = useState(false);
   const [clearanceUserId, setClearanceUserId] = useState("");
   const [clearanceData, setClearanceData] = useState(null);
@@ -3692,6 +3771,16 @@ function EnhancedAssignmentsPage() {
       : date.toLocaleDateString();
   };
 
+  const formatPhysicalUnitNumber = (assignment) => {
+    const unit = assignment?.assetUnit || assignment?.asset_unit || {};
+    const unitCode = unit.unit_code || "";
+    const sequence = unitCode.match(/-(\d{3})$/)?.[1];
+    return sequence || "N/A";
+  };
+
+  const getAssignmentUnit = (assignment) =>
+    assignment?.assetUnit || assignment?.asset_unit || {};
+
   const loadAssignments = async (nextFilters = filters) => {
     const [assignments, dashboard] = await Promise.allSettled([
       pcmsApi.assignments({ ...nextFilters, limit: 200 }),
@@ -3745,11 +3834,13 @@ function EnhancedAssignmentsPage() {
     [assignmentsData],
   );
   const getAvailableQuantity = (asset) =>
-    Math.max(
-      0,
-      Number(asset?.quantity || 1) -
-        Number(activeQuantityByAsset[asset?.id] || 0),
-    );
+    String(asset?.id) === String(formValues.asset_id) && assetUnits.length > 0
+      ? assetUnits.filter((unit) => unit.status === "available").length
+      : Math.max(
+          0,
+          Number(asset?.quantity || 1) -
+            Number(activeQuantityByAsset[asset?.id] || 0),
+        );
   const selectedAsset = assetsList.find(
     (asset) => String(asset.id) === String(formValues.asset_id),
   );
@@ -3825,6 +3916,21 @@ function EnhancedAssignmentsPage() {
     };
   }, [formValues.assigned_to]);
 
+  useEffect(() => {
+    let ignore = false;
+    if (!formValues.asset_id) {
+      setAssetUnits([]);
+      return;
+    }
+    setAssetUnits([]);
+    pcmsApi.assetUnits(formValues.asset_id).then((units) => {
+      if (!ignore) setAssetUnits(units || []);
+    }).catch(() => {
+      if (!ignore) setAssetUnits([]);
+    });
+    return () => { ignore = true; };
+  }, [formValues.asset_id]);
+
   const openCreateDialog = () => {
     setCreateError(null);
     setCreateSuccess(null);
@@ -3833,6 +3939,7 @@ function EnhancedAssignmentsPage() {
     setShowAssetSuggestions(false);
     setRecommendations([]);
     setEmployeeProfile(null);
+    setAssetUnits([]);
     setShowCreateDialog(true);
   };
 
@@ -3912,6 +4019,20 @@ function EnhancedAssignmentsPage() {
         _detailsLoading: false,
         _detailsError: isAuthError ? null : message,
       });
+    }
+  };
+
+  const handleVerifyClick = async (assignment) => {
+    setVerificationAssignment({ ...assignment, _detailsLoading: true });
+    try {
+      const details = await pcmsApi.fetchAssignment(assignment.id);
+      setVerificationAssignment({
+        ...(details.assignment || assignment),
+        _details: details,
+        _detailsLoading: false,
+      });
+    } catch {
+      setVerificationAssignment({ ...assignment, _detailsLoading: false });
     }
   };
 
@@ -4117,6 +4238,7 @@ function EnhancedAssignmentsPage() {
           <p>${asset.property_number || ""} ${asset.brand ? "- " + asset.brand : ""} ${asset.model || ""}</p>
           <p>Location: ${asset.location || "N/A"}</p>
           <p>Serial Number: ${payload.asset?.serial_number || asset.serial_number || "N/A"}</p>
+          <p>Physical Unit No.: ${formatPhysicalUnitNumber(assignment)}</p>
           <p>Acquisition Cost: ${formatCurrency(payload.asset?.acquisition_cost || asset.purchase_cost || 0)}</p>
           <p>Quantity: ${assignment.quantity || 1}</p>
           <p>Assigned: ${formatAssignmentDate(assignment.assigned_at)}</p>
@@ -4349,6 +4471,7 @@ function EnhancedAssignmentsPage() {
                 <th>Employee</th>
                 <th>Type</th>
                 <th>Qty</th>
+                <th>Physical Unit No.</th>
                 <th>Dates</th>
                 <th>Status</th>
                 <th>Actions</th>
@@ -4359,7 +4482,7 @@ function EnhancedAssignmentsPage() {
                 <TableSkeleton columns={7} rows={5} />
               ) : assignmentsData.length === 0 ? (
                 <tr>
-                  <td colSpan="7">No assignments found.</td>
+                  <td colSpan="8">No assignments found.</td>
                 </tr>
               ) : (
                 assignmentsData.map((assignment) => {
@@ -4389,6 +4512,12 @@ function EnhancedAssignmentsPage() {
                       <td>{assignment.assignment_type || "permanent"}</td>
                       <td>{assignment.quantity || 1}</td>
                       <td>
+                        {formatPhysicalUnitNumber(assignment)}
+                        {getAssignmentUnit(assignment).serial_number && (
+                          <span>SN {getAssignmentUnit(assignment).serial_number}</span>
+                        )}
+                      </td>
+                      <td>
                         <span>
                           {formatAssignmentDate(assignment.assigned_at)}
                         </span>
@@ -4411,6 +4540,13 @@ function EnhancedAssignmentsPage() {
                             onClick={() => handleViewAssignment(assignment)}
                           >
                             <Eye size={14} /> View
+                          </button>
+                          <button
+                            className="small-button"
+                            type="button"
+                            onClick={() => handleVerifyClick(assignment)}
+                          >
+                            <Shield size={14} /> Verify
                           </button>
                           {assignment.status === "pending_acceptance" && (
                             <button
@@ -4663,6 +4799,34 @@ function EnhancedAssignmentsPage() {
                     required
                   />
                 </label>
+                {Number(formValues.quantity || 1) === 1 && (
+                  <label>
+                    Physical Unit
+                    <select
+                      value={formValues.asset_unit_id || ""}
+                      onChange={(event) =>
+                        updateField("asset_unit_id", event.target.value)
+                      }
+                      disabled={!selectedAsset || assetUnits.length === 0}
+                    >
+                      <option value="">
+                        {assetUnits.length
+                          ? "Auto-select available unit"
+                          : "No unit records available"}
+                      </option>
+                      {assetUnits
+                        .filter((unit) => unit.status === "available")
+                        .map((unit) => (
+                          <option key={unit.id} value={unit.id}>
+                            ID {unit.id} - {unit.unit_code || "No unit code"}
+                            {unit.serial_number
+                              ? ` - SN ${unit.serial_number}`
+                              : ""}
+                          </option>
+                        ))}
+                    </select>
+                  </label>
+                )}
                 <label>
                   Condition Before Assignment
                   <select
@@ -4751,6 +4915,11 @@ function EnhancedAssignmentsPage() {
                     - Warranty{" "}
                     {formatAssignmentDate(selectedAsset.warranty_until)}
                   </p>
+                  {Number(formValues.quantity || 1) === 1 && (
+                    <p style={{ margin: "6px 0 0" }}>
+                      Unit ID: {formValues.asset_unit_id || "Auto-selected on save"} - Unit Code: {assetUnits.find((unit) => String(unit.id) === String(formValues.asset_unit_id))?.unit_code || "N/A"}
+                    </p>
+                  )}
                   {selectedAsset.qr_code_path && (
                     <img
                       src={assetQrCodeUrl(selectedAsset.qr_code_path)}
@@ -4879,6 +5048,9 @@ function EnhancedAssignmentsPage() {
                     )}
                   </p>
                   <p>Quantity: {selectedAssignment.quantity || 1}</p>
+                  <p>
+                    Physical Unit No.: {formatPhysicalUnitNumber(selectedAssignment)}
+                  </p>
                   <p>
                     Purpose:{" "}
                     {selectedAssignment.purpose ||
@@ -5038,6 +5210,53 @@ function EnhancedAssignmentsPage() {
                 type="button"
                 className="primary-button"
                 onClick={() => setSelectedAssignment(null)}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {verificationAssignment && (
+        <div className="modal-overlay" role="dialog" aria-modal="true">
+          <div className="modal-card" style={{ maxWidth: 620 }}>
+            <div className="modal-header">
+              <h3>Assignment Verification</h3>
+              <button
+                className="icon-button"
+                onClick={() => setVerificationAssignment(null)}
+                aria-label="Close"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            {verificationAssignment._detailsLoading ? (
+              <div className="loading-card">Loading verification details...</div>
+            ) : (
+              <div className="asset-description-card">
+                <div className="inline-actions" style={{ justifyContent: "space-between" }}>
+                  <strong>Verify assigned property</strong>
+                  <span className="status success">Ready to verify</span>
+                </div>
+                <p><strong>Asset:</strong> {verificationAssignment.asset?.name || "N/A"}</p>
+                <p><strong>Property Number:</strong> {verificationAssignment.asset?.property_number || verificationAssignment.asset?.asset_id || "N/A"}</p>
+                <p><strong>Physical Unit No.:</strong> {formatPhysicalUnitNumber(verificationAssignment)}</p>
+                <p><strong>Employee:</strong> {formatAssignmentUser(verificationAssignment.assigned_to || verificationAssignment.assignedTo || {})}</p>
+                <p><strong>Department:</strong> {(verificationAssignment.assigned_to || verificationAssignment.assignedTo || {}).department || "N/A"}</p>
+                <p><strong>Quantity:</strong> {verificationAssignment.quantity || 1}</p>
+                <p><strong>Assignment Date:</strong> {formatAssignmentDate(verificationAssignment.assigned_at)}</p>
+                <p><strong>Expected Return:</strong> {formatAssignmentDate(verificationAssignment.due_date)}</p>
+                <p><strong>Condition:</strong> {verificationAssignment.condition_before || "N/A"}</p>
+                <p><strong>Employee Signature:</strong> {verificationAssignment.employee_signature || "Pending"}</p>
+                <p><strong>Custodian Signature:</strong> {verificationAssignment.custodian_signature || "Pending"}</p>
+              </div>
+            )}
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => setVerificationAssignment(null)}
               >
                 Close
               </button>
@@ -6685,6 +6904,7 @@ function TransferPage() {
   const [transfers, setTransfers] = useState([]);
   const [dashboard, setDashboard] = useState(null);
   const [assetsList, setAssetsList] = useState([]);
+  const [assetUnits, setAssetUnits] = useState([]);
   const [departmentsList, setDepartmentsList] = useState([]);
   const [usersList, setUsersList] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -6764,6 +6984,29 @@ function TransferPage() {
   useEffect(() => {
     let ignore = false;
     if (!formData.asset_id) {
+      setAssetUnits([]);
+      return;
+    }
+    pcmsApi.assetUnits(formData.asset_id).then((units) => {
+      if (!ignore) setAssetUnits(units || []);
+    }).catch(() => {
+      if (!ignore) setAssetUnits([]);
+    });
+    return () => { ignore = true; };
+  }, [formData.asset_id]);
+  const selectedDestinationDepartment = departmentsList.find(
+    (department) => String(department.id) === String(formData.to_department_id),
+  );
+  const destinationUsers = usersList.filter(
+    (user) => user.status === "active" &&
+      selectedDestinationDepartment &&
+      String(user.department || "").toLowerCase() ===
+        String(selectedDestinationDepartment.name || "").toLowerCase(),
+  );
+
+  useEffect(() => {
+    let ignore = false;
+    if (!formData.asset_id) {
       setRecommendations([]);
       return;
     }
@@ -6792,6 +7035,7 @@ function TransferPage() {
       setSuccess("Transfer request submitted for Department Head review.");
       setFormData({
         asset_id: "",
+        asset_unit_id: "",
         to_department_id: "",
         to_custodian_id: "",
         quantity: "1",
@@ -6957,6 +7201,33 @@ function TransferPage() {
       : date.toLocaleDateString();
   };
 
+  const printTransfer = (transfer) => {
+    const unit = transfer.assetUnit || {};
+    const printWindow = window.open("", "_blank", "width=720,height=860");
+    if (!printWindow) return;
+    printWindow.document.write(`
+      <html><head><title>Asset Transfer ${transfer.transfer_number || transfer.id}</title></head>
+      <body style="font-family:Arial,sans-serif;padding:32px;color:#111827;">
+        <h1 style="font-size:22px;margin:0 0 4px;">Asset Transfer Record</h1>
+        <p style="color:#6b7280;">Transfer No.: ${transfer.transfer_number || transfer.id}</p>
+        <h2 style="font-size:15px;">Asset Identity</h2>
+        <p><strong>${transfer.asset?.name || "Asset"}</strong></p>
+        <p>Property Number: ${transfer.asset?.property_number || "N/A"}</p>
+        <p>Asset Unit ID: ${transfer.asset_unit_id || unit.id || "N/A"}</p>
+        <p>Unit Code: ${unit.unit_code || "N/A"}</p>
+        <p>Serial Number: ${unit.serial_number || transfer.asset?.serial_number || "N/A"}</p>
+        <p>Quantity: ${transfer.actual_quantity || transfer.quantity || 1}</p>
+        <p>From: ${formatDepartment(transfer.from_department) || "N/A"}</p>
+        <p>To: ${formatDepartment(transfer.to_department) || "N/A"}</p>
+        <p>Transfer Date: ${formatTransferDate(transfer.transfer_date)}</p>
+        <p>Status: ${String(transfer.status || "").replaceAll("_", " ")}</p>
+        <p>Reason: ${transfer.reason || "N/A"}</p>
+        <script>window.print();<\/script>
+      </body></html>
+    `);
+    printWindow.document.close();
+  };
+
   return (
     <ModulePage
       title="Asset Transfer"
@@ -7082,7 +7353,11 @@ function TransferPage() {
               <select
                 value={formData.to_department_id}
                 onChange={(e) =>
-                  setFormData({ ...formData, to_department_id: e.target.value })
+                  setFormData({
+                    ...formData,
+                    to_department_id: e.target.value,
+                    to_custodian_id: "",
+                  })
                 }
                 required
               >
@@ -7104,7 +7379,7 @@ function TransferPage() {
                 required
               >
                 <option value="">Select custodian</option>
-                {usersList.map((user) => (
+                {destinationUsers.map((user) => (
                   <option key={user.id} value={user.id}>
                     {formatAssignmentUser(user)}
                   </option>
@@ -7124,6 +7399,28 @@ function TransferPage() {
                 required
               />
             </div>
+            {Number(formData.quantity || 1) === 1 && (
+              <div className="field-row">
+                <label>Physical Unit</label>
+                <select
+                  value={formData.asset_unit_id || ""}
+                  onChange={(e) =>
+                    setFormData({ ...formData, asset_unit_id: e.target.value })
+                  }
+                  disabled={!selectedAsset || assetUnits.length === 0}
+                >
+                  <option value="">
+                    {assetUnits.length ? "Auto-select unit" : "No unit records available"}
+                  </option>
+                  {assetUnits.map((unit) => (
+                    <option key={unit.id} value={unit.id}>
+                      ID {unit.id} - {unit.unit_code || "No unit code"}
+                      {unit.serial_number ? ` - SN ${unit.serial_number}` : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
             <div className="field-row">
               <label>Transfer Type</label>
               <select
@@ -7181,6 +7478,11 @@ function TransferPage() {
                   Quantity {selectedAsset.quantity || 1} - Condition{" "}
                   {selectedAsset.condition || "good"}
                 </p>
+                {Number(formData.quantity || 1) === 1 && (
+                  <p style={{ margin: "6px 0 0" }}>
+                    Unit ID: {formData.asset_unit_id || "Auto-selected on save"} - Unit Code: {assetUnits.find((unit) => String(unit.id) === String(formData.asset_unit_id))?.unit_code || "N/A"}
+                  </p>
+                )}
               </div>
             )}
             {recommendations.length > 0 && (
@@ -7262,6 +7564,7 @@ function TransferPage() {
               <th>From</th>
               <th>To</th>
               <th>Type / Qty</th>
+              <th>Unit ID</th>
               <th>Status</th>
               <th>Actions</th>
             </tr>
@@ -7271,7 +7574,7 @@ function TransferPage() {
               <TableSkeleton columns={7} rows={5} />
             ) : transfers.length === 0 ? (
               <tr>
-                <td colSpan="7">No transfers yet</td>
+                <td colSpan="8">No transfers yet</td>
               </tr>
             ) : (
               transfers.map((item) => (
@@ -7308,6 +7611,12 @@ function TransferPage() {
                     <span>
                       Qty {item.actual_quantity || item.quantity || 1}
                     </span>
+                  </td>
+                  <td>
+                    {item.assetUnit?.unit_code || item.asset_unit_id || "N/A"}
+                    {(item.assetUnit?.unit_code || item.assetUnit?.serial_number) && (
+                      <span>{item.assetUnit?.unit_code || item.assetUnit?.serial_number}</span>
+                    )}
                   </td>
                   <td>
                     <span
@@ -7446,6 +7755,9 @@ function TransferPage() {
                   1}
               </p>
               <p>
+                Asset Unit ID: {selectedTransfer.assetUnit?.unit_code || selectedTransfer.asset_unit_id || "N/A"}
+              </p>
+              <p>
                 From:{" "}
                 {formatDepartment(selectedTransfer.from_department) || "N/A"} to{" "}
                 {formatDepartment(selectedTransfer.to_department) || "N/A"}
@@ -7494,6 +7806,13 @@ function TransferPage() {
               </div>
             )}
             <div className="modal-actions">
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => printTransfer(selectedTransfer)}
+              >
+                <Printer size={16} /> Print Transfer
+              </button>
               <button
                 type="button"
                 className="primary-button"
@@ -10373,7 +10692,7 @@ function GatePassPage() {
   );
 }
 
-function AuditPage() {
+function AuditPage({ currentUser }) {
   const [audits, setAudits] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -10383,6 +10702,10 @@ function AuditPage() {
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
   const [selectedAudit, setSelectedAudit] = useState(null);
+  const [auditDetails, setAuditDetails] = useState(null);
+  const [editAudit, setEditAudit] = useState(null);
+  const [deleteAudit, setDeleteAudit] = useState(null);
+  const [actionLoading, setActionLoading] = useState(false);
   const [formData, setFormData] = useState({
     name: "",
     department_id: "",
@@ -10476,6 +10799,57 @@ function AuditPage() {
     } catch (err) {
       setError(err.message);
     }
+  };
+
+  const canEditDelete = currentUser?.role === ROLES.SYSTEM_ADMIN;
+
+  const handleViewAudit = async (audit) => {
+    setError(null);
+    try {
+      setAuditDetails(await pcmsApi.fetchAudit(audit.id));
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const handleUpdateAudit = async (e) => {
+    e.preventDefault();
+    setActionLoading(true);
+    try {
+      await pcmsApi.updateAudit(editAudit.id, editAudit);
+      setSuccess("Audit updated successfully");
+      setEditAudit(null);
+      await loadAudits();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleDeleteAudit = async () => {
+    if (!deleteAudit) return;
+    setActionLoading(true);
+    try {
+      await pcmsApi.deleteAudit(deleteAudit.id);
+      setSuccess("Audit deleted successfully");
+      setDeleteAudit(null);
+      await loadAudits();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const printAudit = (audit, details = {}) => {
+    const printWindow = window.open("", "_blank", "width=900,height=760");
+    if (!printWindow) return;
+    const scans = details.audit?.audit_scans || audit.audit_scans || audit.auditScans || [];
+    const summary = details.summary || {};
+    const rows = scans.map((scan) => `<tr><td>${scan.asset?.property_number || scan.asset_id || "-"}</td><td>${scan.asset?.name || "-"}</td><td>${scan.found_department?.name || scan.foundDepartment?.name || scan.found_department_id || "-"}</td><td>${scan.result || "-"}</td></tr>`).join("");
+    printWindow.document.write(`<!doctype html><html><head><title>${audit.audit_number || "Audit"}</title><style>body{font:14px Arial,sans-serif;color:#172033;margin:36px}h1{margin:0}p{margin:6px 0 20px;color:#64748b}.meta{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin:20px 0}.meta b{display:block;color:#64748b;font-size:11px;text-transform:uppercase}table{width:100%;border-collapse:collapse}th,td{border:1px solid #d8dee9;padding:8px;text-align:left}th{background:#f1f5f9;font-size:11px;text-transform:uppercase}</style></head><body><h1>Physical Audit</h1><p>${audit.audit_number || "-"}</p><div class="meta"><div><b>Area</b>${audit.area || "-"}</div><div><b>Department</b>${audit.department?.name || audit.department_name || audit.department_id || "-"}</div><div><b>Scheduled</b>${audit.scheduled_at ? new Date(audit.scheduled_at).toLocaleDateString() : "-"}</div><div><b>Status</b>${audit.status || "-"}</div><div><b>Verified</b>${summary.verified ?? scans.filter((scan) => scan.result === "verified").length}</div><div><b>Wrong Department</b>${summary.wrong_department ?? scans.filter((scan) => scan.result === "wrong_department").length}</div></div><table><thead><tr><th>Property No.</th><th>Asset</th><th>Found Department</th><th>Result</th></tr></thead><tbody>${rows || '<tr><td colspan="4">No scans recorded.</td></tr>'}</tbody></table><script>window.print();</script></body></html>`);
+    printWindow.document.close();
   };
 
   return (
@@ -10744,6 +11118,54 @@ function AuditPage() {
                     </td>
                     <td>
                       <div className="inline-actions small">
+                        <button
+                          className="icon-button"
+                          type="button"
+                          title="View audit verification"
+                          aria-label={`View ${item.audit_number}`}
+                          onClick={() => handleViewAudit(item)}
+                        >
+                          <Eye size={14} />
+                        </button>
+                        <button
+                          className="icon-button"
+                          type="button"
+                          title="Print audit"
+                          aria-label={`Print ${item.audit_number}`}
+                          onClick={() => printAudit(item)}
+                        >
+                          <Printer size={14} />
+                        </button>
+                        {canEditDelete && item.status !== "completed" && (
+                          <button
+                            className="icon-button"
+                            type="button"
+                            title="Edit audit"
+                            aria-label={`Edit ${item.audit_number}`}
+                            onClick={() =>
+                              setEditAudit({
+                                ...item,
+                                name: item.area || "",
+                                scheduled_date: item.scheduled_at
+                                  ? item.scheduled_at.slice(0, 10)
+                                  : "",
+                              })
+                            }
+                          >
+                            <Pencil size={14} />
+                          </button>
+                        )}
+                        {canEditDelete && item.status !== "completed" && (
+                          <button
+                            className="icon-button danger-action"
+                            type="button"
+                            title="Delete audit"
+                            aria-label={`Delete ${item.audit_number}`}
+                            onClick={() => setDeleteAudit(item)}
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        )}
                         {item.status !== "completed" && (
                           <>
                             <button
@@ -10786,7 +11208,60 @@ function AuditPage() {
           </table>
         </div>
       )}
+
+      {auditDetails && (
+        <AuditVerificationModal
+          details={auditDetails}
+          onClose={() => setAuditDetails(null)}
+          onPrint={() => printAudit(auditDetails.audit, auditDetails)}
+        />
+      )}
+
+      {editAudit && (
+        <div className="modal-overlay" role="dialog" aria-modal="true">
+          <div className="modal-card">
+            <div className="modal-header">
+              <h3>Edit Audit</h3>
+              <button className="icon-button" type="button" onClick={() => setEditAudit(null)} aria-label="Close">
+                <X size={18} />
+              </button>
+            </div>
+            <form className="register-form" onSubmit={handleUpdateAudit}>
+              <label>Audit Name<input value={editAudit.name || editAudit.area || ""} onChange={(e) => setEditAudit({ ...editAudit, name: e.target.value })} required /></label>
+              <label>Department<select value={editAudit.department_id || ""} onChange={(e) => setEditAudit({ ...editAudit, department_id: e.target.value })} required><option value="">Select department</option>{departments.map((dept) => <option key={dept.id} value={dept.id}>{dept.name}</option>)}</select></label>
+              <label>Scheduled Date<input type="date" value={editAudit.scheduled_date || ""} onChange={(e) => setEditAudit({ ...editAudit, scheduled_date: e.target.value })} required /></label>
+              <div className="modal-actions"><button className="secondary-button" type="button" onClick={() => setEditAudit(null)} disabled={actionLoading}>Cancel</button><button className="primary-button" type="submit" disabled={actionLoading}>{actionLoading ? "Saving..." : "Save Changes"}</button></div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {deleteAudit && (
+        <div className="modal-overlay" role="dialog" aria-modal="true">
+          <div className="modal-card confirm-dialog">
+            <div className="modal-header"><h3>Delete Audit?</h3><button className="icon-button" type="button" onClick={() => setDeleteAudit(null)} aria-label="Close"><X size={18} /></button></div>
+            <p>Delete audit <strong>{deleteAudit.audit_number}</strong>? This action cannot be undone.</p>
+            <div className="modal-actions"><button className="secondary-button" type="button" onClick={() => setDeleteAudit(null)} disabled={actionLoading}>Cancel</button><button className="danger-button" type="button" onClick={handleDeleteAudit} disabled={actionLoading}><Trash2 size={15} /> {actionLoading ? "Deleting..." : "Delete Audit"}</button></div>
+          </div>
+        </div>
+      )}
     </ModulePage>
+  );
+}
+
+function AuditVerificationModal({ details, onClose, onPrint }) {
+  const audit = details.audit || {};
+  const scans = audit.audit_scans || audit.auditScans || [];
+  const summary = details.summary || {};
+  return (
+    <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="audit-verification-title">
+      <div className="modal-card wide-modal">
+        <div className="modal-header"><h3 id="audit-verification-title">Audit Verification</h3><button className="icon-button" type="button" onClick={onClose} aria-label="Close"><X size={18} /></button></div>
+        <div className="asset-detail-grid"><div><span className="asset-detail-label">Audit No.</span><strong>{audit.audit_number || "-"}</strong></div><div><span className="asset-detail-label">Area</span><strong>{audit.area || "-"}</strong></div><div><span className="asset-detail-label">Status</span><strong>{audit.status || "-"}</strong></div><div><span className="asset-detail-label">Verified</span><strong>{summary.verified ?? 0}</strong></div><div><span className="asset-detail-label">Wrong Department</span><strong>{summary.wrong_department ?? 0}</strong></div><div><span className="asset-detail-label">Missing</span><strong>{summary.missing ?? 0}</strong></div></div>
+        <div className="table-card" style={{ marginTop: 16, maxHeight: 320, overflow: "auto" }}><table><thead><tr><th>Property No.</th><th>Asset</th><th>Found Department</th><th>Result</th></tr></thead><tbody>{scans.length === 0 ? <tr><td colSpan="4">No scans recorded.</td></tr> : scans.map((scan) => <tr key={scan.id}><td>{scan.asset?.property_number || scan.asset_id || "-"}</td><td>{scan.asset?.name || "-"}</td><td>{scan.found_department?.name || scan.foundDepartment?.name || scan.found_department_id || "-"}</td><td><span className={`status ${scan.result === "verified" ? "success" : "warning"}`}>{scan.result || "-"}</span></td></tr>)}</tbody></table></div>
+        <div className="modal-actions"><button className="secondary-button" type="button" onClick={onClose}>Close</button><button className="primary-button" type="button" onClick={onPrint}><Printer size={15} /> Print Verification</button></div>
+      </div>
+    </div>
   );
 }
 
@@ -11599,6 +12074,7 @@ function MonitoringPage({ currentUser }) {
   const [analysisRunning, setAnalysisRunning] = useState(false);
   const [explaining, setExplaining] = useState({});
   const [selectedAnomaly, setSelectedAnomaly] = useState(null);
+  const [resolutionResult, setResolutionResult] = useState(null);
 
   useEffect(() => {
     loadAnomalies();
@@ -11635,8 +12111,13 @@ function MonitoringPage({ currentUser }) {
 
   const handleResolveAnomaly = async (id) => {
     try {
-      await pcmsApi.resolveAnomaly(id);
-      setSuccess("Anomaly marked as resolved");
+      const anomaly = anomalies.find((item) => String(item.id) === String(id));
+      const response = await pcmsApi.resolveAnomaly(id);
+      setResolutionResult({
+        anomaly: { ...anomaly, status: "resolved" },
+        nextAction: response?.next_action || getNextProcess(anomaly),
+      });
+      setSuccess(response?.message || "Anomaly marked as resolved.");
       await loadAnomalies();
       setSelectedAnomaly((current) =>
         current?.id === id ? { ...current, status: "resolved" } : current,
@@ -11695,9 +12176,19 @@ function MonitoringPage({ currentUser }) {
   const isQuantityAnomaly = (flag) => flag.source_type === "quantity_anomaly";
   const isLowStockAlert = (flag) => flag.source_type === "low_stock";
   const supplyName = (flag) =>
+    flag.asset_name ||
+    (flag?.source_type === "untracked_transfer"
+      ? `Asset #${flag.source_id || "Unknown"}`
+      : null) ||
     flag.supply ||
     parseLowStockSupplyName(flag.reason) ||
     `Supply #${flag.source_id || "Unknown"}`;
+  const anomalyLabel = (flag) => {
+    if (flag?.source_type === "untracked_transfer") {
+      return `${flag.asset_name} found in ${flag.found_department || "another department"} but recorded in ${flag.recorded_department || "a different department"}.`;
+    }
+    return flag?.reason || "No description provided.";
+  };
   const riskTone = (priority) =>
     priority === "high" ? "danger" : priority === "medium" ? "warning" : "info";
   const formatValue = (value) =>
@@ -11779,6 +12270,57 @@ function MonitoringPage({ currentUser }) {
       .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
       .join(" ");
 
+  const getNextProcess = (flag) => {
+    if (!flag) return "Review the monitoring center for remaining alerts.";
+    if (isLowStockAlert(flag)) {
+      return "Check the supply balance and create a stock-in or purchase request if restocking is needed.";
+    }
+    if (isQuantityAnomaly(flag)) {
+      return "Review the related stock movement and confirm the request was authorized.";
+    }
+    if (flag.source_type === "untracked_transfer") {
+      return "Verify the asset department and update the transfer record if the movement was authorized.";
+    }
+    if (flag.source_type === "repeat_repair") {
+      return "Inspect the asset and schedule maintenance or replacement if the condition remains unsafe.";
+    }
+    return "Review the recommended action and monitor the related record for recurrence.";
+  };
+
+  const downloadMonitoringExcel = () => {
+    const columns = [
+      ["Alert ID", (flag) => flag.id],
+      ["Type", (flag) => formatAnomalyType(flag.source_type)],
+      ["Asset / Supply", (flag) => flag.asset_name || supplyName(flag)],
+      ["Source ID", (flag) => flag.source_id],
+      ["Department", (flag) => flag.department || flag.found_department || ""],
+      ["Recorded Department", (flag) => flag.recorded_department || ""],
+      ["Current Stock", (flag) => flag.current_stock],
+      ["Minimum Stock", (flag) => flag.minimum_stock],
+      ["Current Quantity", (flag) => flag.quantity],
+      ["Historical Average", (flag) => flag.historical_average],
+      ["Risk Level", (flag) => flag.priority],
+      ["Risk Score", (flag) => flag.risk_score],
+      ["Status", (flag) => flag.status],
+      ["Reason", anomalyLabel],
+      ["Recommended Action", (flag) => flag.recommended_action],
+      ["Created At", (flag) => flag.created_at],
+      ["Updated At", (flag) => flag.updated_at],
+    ];
+    const escapeCell = (value) => String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const rows = anomalies.map((flag) =>
+      `<tr>${columns.map(([, value]) => `<td>${escapeCell(value(flag))}</td>`).join("")}</tr>`,
+    ).join("");
+    const html = `<table><thead><tr>${columns.map(([label]) => `<th>${escapeCell(label)}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table>`;
+    const blob = new Blob([`<html><head><meta charset="utf-8"></head><body>${html}</body></html>`], { type: "application/vnd.ms-excel" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `inventory-monitoring-${new Date().toISOString().slice(0, 10)}.xls`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
   const canUseAiExplanation = [
     "System Administrator",
     "Property Custodian",
@@ -11825,19 +12367,49 @@ function MonitoringPage({ currentUser }) {
       primary={analysisRunning ? "Running..." : "Run Analysis"}
       icon={Sparkles}
       actions={
-        <button
-          className="primary-button"
-          type="button"
-          onClick={handleRunAnalysis}
-          disabled={analysisRunning}
-        >
-          <Sparkles size={16} />{" "}
-          {analysisRunning ? "Running..." : "Run Analysis"}
-        </button>
+        <div className="inline-actions">
+          <button className="secondary-button" type="button" onClick={downloadMonitoringExcel}>
+            <Download size={16} /> Download Excel
+          </button>
+          <button className="primary-button" type="button" onClick={handleRunAnalysis} disabled={analysisRunning}>
+            <Sparkles size={16} /> {analysisRunning ? "Running..." : "Run Analysis"}
+          </button>
+        </div>
       }
     >
       {error && <div className="form-message error">{error}</div>}
       {success && <div className="form-message success">{success}</div>}
+      {resolutionResult && (
+        <div className="asset-description-card" style={{ marginBottom: 16 }}>
+          <div className="inline-actions" style={{ justifyContent: "space-between" }}>
+            <strong>Resolution recorded</strong>
+            <span className="status success">Resolved</span>
+          </div>
+          <p>
+            {resolutionResult.anomaly
+              ? `${formatAnomalyType(resolutionResult.anomaly.source_type)}: ${supplyName(resolutionResult.anomaly)}`
+              : "The monitoring alert was resolved."}
+          </p>
+          <p><strong>Next process:</strong> {resolutionResult.nextAction}</p>
+          <div className="inline-actions">
+            <button
+              className="small-button"
+              type="button"
+              onClick={() => setFilters((current) => ({ ...current, status: "resolved" }))}
+            >
+              <Eye size={14} /> Show Resolved Alerts
+            </button>
+            <button
+              className="small-button"
+              type="button"
+              onClick={handleRunAnalysis}
+              disabled={analysisRunning}
+            >
+              <RotateCcw size={14} /> Run Follow-up Analysis
+            </button>
+          </div>
+        </div>
+      )}
 
       <section className="inventory-risk-summary">
         <StatCard
@@ -11953,11 +12525,14 @@ function MonitoringPage({ currentUser }) {
                     <span className={`status ${riskTone(flag.priority)}`}>
                       {flag.priority || "risk"}
                     </span>
+                    {flag.status === "resolved" && (
+                      <span className="status success">resolved</span>
+                    )}
                   </div>
                   <p>
                     {isQuantityAnomaly(flag)
                       ? "Unusual supply consumption detected"
-                      : flag.reason}
+                      : anomalyLabel(flag)}
                   </p>
                   <h3>{supplyName(flag)}</h3>
                   {isQuantityAnomaly(flag) && (
@@ -12010,6 +12585,9 @@ function MonitoringPage({ currentUser }) {
                   {flag.recommended_action && (
                     <small>Recommended: {flag.recommended_action}</small>
                   )}
+                  {flag.status === "resolved" && (
+                    <small>Next process: {getNextProcess(flag)}</small>
+                  )}
                 </div>
                 <div className="card-actions monitoring-actions">
                   <button
@@ -12052,7 +12630,9 @@ function MonitoringPage({ currentUser }) {
                 <h3>
                   {isQuantityAnomaly(selectedAnomaly)
                     ? "Supply Stock Anomaly"
-                    : "Low Stock Alert"}
+                    : isLowStockAlert(selectedAnomaly)
+                      ? "Low Stock Alert"
+                      : formatAnomalyType(selectedAnomaly.source_type)}
                 </h3>
                 <p>{supplyName(selectedAnomaly)}</p>
               </div>
@@ -12221,7 +12801,7 @@ function MonitoringPage({ currentUser }) {
                       <strong>{formatDate(selectedAnomaly.created_at)}</strong>
                     </div>
                   </div>
-                  <p>{selectedAnomaly.reason}</p>
+                  <p>{anomalyLabel(selectedAnomaly)}</p>
                   {selectedAnomaly.recommended_action && (
                     <p>
                       <strong>Recommended:</strong>{" "}
@@ -13675,6 +14255,12 @@ function AssetTable({
                       Not generated
                     </span>
                   )}
+                {selectedAnomaly.status === "resolved" && (
+                  <div className="zscore-note">
+                    <strong>Next process</strong>
+                    <p>{getNextProcess(selectedAnomaly)}</p>
+                  </div>
+                )}
                 </td>
                 <td className="actions-column">
                   <div className="inline-actions asset-actions">

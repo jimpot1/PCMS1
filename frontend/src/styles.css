@@ -4235,6 +4235,25 @@ td span:not(.status):not(.risk) {
   max-height: calc(100vh - 48px);
 }
 
+.modal-card.wide-modal {
+  max-height: calc(100vh - 32px);
+}
+
+.modal-card.wide-modal > form.register-form {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.modal-card.wide-modal > form.register-form > .modal-actions {
+  position: sticky;
+  bottom: -28px;
+  z-index: 2;
+  margin: 0 -30px -28px;
+  padding: 14px 30px 28px;
+  background: rgba(255, 255, 255, 0.98);
+  border-top: 1px solid #e5e7eb;
+}
+
 .modal-card.large-review-modal {
   width: min(1000px, 90vw);
   max-height: 90vh;

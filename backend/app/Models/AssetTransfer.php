@@ -12,6 +12,7 @@ class AssetTransfer extends Model
     protected $fillable = [
         'transfer_number',
         'asset_id',
+        'asset_unit_id',
         'from_department_id',
         'to_department_id',
         'to_custodian_id',
@@ -50,6 +51,11 @@ class AssetTransfer extends Model
     public function asset(): BelongsTo
     {
         return $this->belongsTo(Asset::class);
+    }
+
+    public function assetUnit(): BelongsTo
+    {
+        return $this->belongsTo(AssetUnit::class);
     }
 
     public function fromDepartment(): BelongsTo

@@ -82,6 +82,8 @@ class AuditController extends Controller
 
         $validated = $request->validate([
             'area' => ['sometimes', 'string', 'max:180'],
+            'department_id' => ['sometimes', 'nullable', 'exists:departments,id'],
+            'scheduled_at' => ['sometimes', 'date'],
         ]);
 
         $audit->update($validated);
@@ -96,7 +98,10 @@ class AuditController extends Controller
             return response()->json(['message' => 'Cannot delete a completed audit.'], 400);
         }
 
-        $audit->delete();
+        DB::transaction(function () use ($audit): void {
+            $audit->auditScans()->delete();
+            $audit->delete();
+        });
         $this->logActivity('audit_cancelled', $audit, $request);
 
         return response()->json(['message' => 'Audit cancelled.']);
@@ -119,6 +124,7 @@ class AuditController extends Controller
 
         $asset = Asset::findOrFail($validated['asset_id']);
         $foundDepartmentId = $validated['found_department_id'];
+        $auditDepartmentId = $audit->department_id ?? $asset->department_id;
 
         // Determine result
         $result = 'verified';
@@ -129,7 +135,7 @@ class AuditController extends Controller
 
             $existingTransfer = AssetTransfer::query()
                 ->where('asset_id', $asset->id)
-                ->where('from_department_id', $asset->department_id)
+                ->where('from_department_id', $auditDepartmentId)
                 ->where('to_department_id', $foundDepartmentId)
                 ->whereIn('status', ['transfer_requested', 'department_approved', 'ready_for_transfer'])
                 ->exists();
@@ -138,7 +144,7 @@ class AuditController extends Controller
                 AssetTransfer::create([
                     'transfer_number' => $this->generateTransferNumber(),
                     'asset_id' => $asset->id,
-                    'from_department_id' => $asset->department_id,
+                    'from_department_id' => $auditDepartmentId,
                     'to_department_id' => $foundDepartmentId,
                     'requested_by' => $request->user()?->id,
                     'status' => 'transfer_requested',
