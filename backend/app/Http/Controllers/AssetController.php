@@ -45,8 +45,8 @@ class AssetController extends Controller
             'purchase_cost' => ['nullable', 'numeric', 'min:0'],
             'quantity' => ['required', 'integer', 'min:1'],
             'warranty_until' => ['nullable', 'date'],
-            'condition' => ['nullable', 'in:good,needs_repair,damaged,under_inspection'],
-            'status' => ['nullable', 'in:available,assigned,transferred,maintenance,damaged,disposed'],
+            'condition' => ['nullable', 'in:good,needs_repair,damaged,under_inspection,lost,unserviceable'],
+            'status' => ['nullable', 'in:available,assigned,transferred,maintenance,damaged,lost,unserviceable,disposed'],
             'remarks' => ['nullable', 'string'],
             'ocr_scan_id' => ['nullable', 'exists:ocr_scans,id'],
         ]);
@@ -123,8 +123,8 @@ class AssetController extends Controller
             'purchase_cost' => ['sometimes', 'nullable', 'numeric', 'min:0'],
             'quantity' => ['sometimes', 'required', 'integer', 'min:1'],
             'warranty_until' => ['sometimes', 'nullable', 'date'],
-            'condition' => ['sometimes', 'in:good,needs_repair,damaged,under_inspection'],
-            'status' => ['sometimes', 'in:available,assigned,transferred,maintenance,damaged,disposed'],
+            'condition' => ['sometimes', 'in:good,needs_repair,damaged,under_inspection,lost,unserviceable'],
+            'status' => ['sometimes', 'in:available,assigned,transferred,maintenance,damaged,lost,unserviceable,disposed'],
             'remarks' => ['sometimes', 'nullable', 'string'],
         ]);
 

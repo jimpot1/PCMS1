@@ -13,6 +13,8 @@ class PurchaseRequest extends Model
         'request_number',
         'requested_by',
         'department_id',
+        'replenishment_supply_id',
+        'auto_generated',
         'current_stage',
         'status',
         'rejection_reason',
@@ -57,6 +59,7 @@ class PurchaseRequest extends Model
         'verified_at' => 'datetime',
         'is_walk_in' => 'boolean',
         'walk_in_has_account' => 'boolean',
+        'auto_generated' => 'boolean',
     ];
 
     public function department(): BelongsTo

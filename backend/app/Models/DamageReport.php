@@ -13,10 +13,21 @@ class DamageReport extends Model
         'asset_id',
         'reported_by',
         'department_id',
+        'incident_type',
         'severity',
         'description',
+        'assessment_notes',
+        'assessed_by',
+        'assessed_at',
         'photo_path',
         'status',
+        'disposal_reference',
+        'resolved_at',
+    ];
+
+    protected $casts = [
+        'assessed_at' => 'datetime',
+        'resolved_at' => 'datetime',
     ];
 
     public function asset(): BelongsTo

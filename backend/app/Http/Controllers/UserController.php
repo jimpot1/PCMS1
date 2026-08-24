@@ -16,6 +16,7 @@ class UserController
         'PPMO Staff',
         'OIC',
         'Department Head',
+        'Recommending Approver',
         'Requester',
         'President',
         'CEO',

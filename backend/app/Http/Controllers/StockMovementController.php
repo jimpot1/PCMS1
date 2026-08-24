@@ -6,6 +6,7 @@ use App\Models\Supply;
 use App\Models\StockMovement;
 use App\Services\AnomalyDetectionService;   // ADD THIS LINE
 use App\Services\LlmAnomalyExplanationService;
+use App\Services\LowStockRequisitionService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -18,7 +19,7 @@ class StockMovementController extends Controller
         'supply_id' => ['required', 'exists:supplies,id'],
         'movement_type' => ['required', 'in:in,out'],
         'quantity' => ['required', 'integer', 'min:1'],
-        'department_id' => ['nullable', 'exists:departments,id'],
+        'department_id' => ['required', 'exists:departments,id'],
         'notes' => ['nullable', 'string'],
     ]);
 
@@ -32,6 +33,13 @@ if (! $supply) {
 
     return response()->json(['message' => 'Supply not found.'], 404);
 }
+        if ($validated['department_id'] && (int) $supply->department_id !== (int) $validated['department_id']) {
+            DB::rollBack();
+
+            return response()->json([
+                'message' => 'The selected supply does not belong to the selected department.',
+            ], 422);
+        }
         // Guard against stock-out driving stock negative
         if ($validated['movement_type'] === 'out' && $supply->stock < $validated['quantity']) {
             DB::rollBack();
@@ -58,6 +66,7 @@ if (! $supply) {
             : -$validated['quantity'];
 
         $supply->update(['stock' => $supply->stock + $quantityChange]);
+        $supply->refresh();
 
         // Check if stock is below minimum (skip if already flagged and still open)
         if ($supply->stock <= $supply->minimum_stock) {
@@ -83,6 +92,8 @@ if (! $supply) {
         } else {
             $this->resolveStaleLowStockAlert($supply);
         }
+
+        app(LowStockRequisitionService::class)->sync($supply);
 
         // Flag quantity anomalies for outbound department requests (Story 27)
         $quantityAnomalyId = null;

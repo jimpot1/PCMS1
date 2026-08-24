@@ -11,6 +11,8 @@ use App\Models\User;
 use App\Models\Department;
 use App\Services\AnomalyDetectionService;
 use App\Services\LlmAnomalyExplanationService;
+use App\Services\LowStockRequisitionService;
+use App\Http\Controllers\SystemSettingController;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Crypt;
@@ -187,7 +189,7 @@ class PurchaseRequestController extends Controller
 
         $assets = Asset::query()
             ->with('category')
-            ->whereNotIn('status', ['maintenance', 'disposed', 'damaged'])
+            ->whereNotIn('status', ['maintenance', 'disposed', 'damaged', 'lost', 'unserviceable'])
             ->where('quantity', '>', 0)
             ->when($search !== '', function ($query) use ($search, $searchOperator) {
                 $query->where(function ($query) use ($search, $searchOperator) {
@@ -1148,6 +1150,11 @@ class PurchaseRequestController extends Controller
             }
 
             $supply = Supply::query()->whereKey($validated['supply_id'])->lockForUpdate()->firstOrFail();
+            if ((int) $supply->department_id !== (int) $lockedRequest->department_id) {
+                throw ValidationException::withMessages([
+                    'supply_id' => 'The selected supply does not belong to the request department.',
+                ]);
+            }
             if ((int) $supply->stock < $validated['quantity']) {
                 throw ValidationException::withMessages(['quantity' => "Insufficient stock. Only {$supply->stock} unit(s) available."]);
             }
@@ -1168,6 +1175,7 @@ class PurchaseRequestController extends Controller
                 'notes' => $validated['notes'] ?: "Released through {$lockedRequest->request_number}.",
             ]);
             $supply->update(['stock' => (int) $supply->stock - (int) $validated['quantity']]);
+            app(LowStockRequisitionService::class)->sync($supply->fresh());
 
             $allSupplyLinesReleased = $items->filter(fn ($item) => ($item['source_type'] ?? $item['type'] ?? null) === 'supply')
                 ->every(fn ($item) => (int) ($item['remaining_qty'] ?? ((int) ($item['approved_qty'] ?? $item['qty'] ?? $item['quantity'] ?? 0) - (int) ($item['released_qty'] ?? 0))) === 0);
@@ -1381,9 +1389,12 @@ class PurchaseRequestController extends Controller
 
     protected function workflowStagesForValues(?string $requestType, ?string $workflowDestination): array
     {
-        return $requestType === 'request' && in_array($workflowDestination, ['asset_assignment', 'supplies_inventory_release'], true)
+        $stages = $requestType === 'request' && in_array($workflowDestination, ['asset_assignment', 'supplies_inventory_release'], true)
             ? self::INVENTORY_REQUEST_STAGES
             : self::PURCHASE_STAGES;
+        return SystemSettingController::bool('recommending_approver_enabled', true)
+            ? $stages
+            : array_values(array_filter($stages, fn ($stage) => $stage !== 'recommending_approver'));
     }
 
     protected function generateRequestNumber(string $requestType = 'purchase_order'): string
@@ -1704,7 +1715,7 @@ HTML;
             'description' => $asset->description,
             'status' => $this->displayStatus($asset->status, $available),
             'current_stock' => (int) ($asset->quantity ?? 1),
-            'available_quantity' => in_array($asset->status, ['maintenance', 'disposed', 'damaged'], true) ? 0 : $available,
+            'available_quantity' => in_array($asset->status, ['maintenance', 'disposed', 'damaged', 'lost', 'unserviceable'], true) ? 0 : $available,
             'assigned_quantity' => (int) $assigned,
             'reserved_quantity' => 0,
             'warehouse' => $asset->location,
@@ -1713,7 +1724,7 @@ HTML;
             'condition' => $asset->condition,
             'warranty' => optional($asset->warranty_until)->toDateString(),
             'unit_cost' => (float) ($asset->purchase_cost ?? 0),
-            'workflow_destination' => $available > 0 && ! in_array($asset->status, ['maintenance', 'disposed', 'damaged'], true) ? 'asset_assignment' : 'purchase_workflow',
+            'workflow_destination' => $available > 0 && ! in_array($asset->status, ['maintenance', 'disposed', 'damaged', 'lost', 'unserviceable'], true) ? 'asset_assignment' : 'purchase_workflow',
         ];
     }
 
@@ -1937,6 +1948,7 @@ HTML;
             }
 
             $supply->decrement('stock', $qty);
+            app(LowStockRequisitionService::class)->sync($supply->fresh());
             $movement = StockMovement::create([
                 'supply_id' => $supply->id,
                 'movement_type' => 'out',

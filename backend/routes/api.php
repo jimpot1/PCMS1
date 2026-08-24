@@ -17,6 +17,7 @@ use App\Http\Controllers\StockMovementController;
 use App\Http\Controllers\SupplyController;
 use App\Http\Controllers\TransferController;
 use App\Http\Controllers\UserController;
+use App\Http\Controllers\SystemSettingController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/purchase-requests/{purchaseRequest}/receipt/view', [PurchaseRequestController::class, 'receiptDocument']);
@@ -118,6 +119,8 @@ Route::middleware(['auth'])->group(function () {
     Route::patch('/assignments/{id}/return', [\App\Http\Controllers\AssetAssignmentController::class, 'returnAssignment']);
     Route::apiResource('assignments', \App\Http\Controllers\AssetAssignmentController::class);
     Route::apiResource('users', UserController::class)->middleware('role:System Administrator');
+    Route::get('/system-settings', [SystemSettingController::class, 'index'])->middleware('role:System Administrator');
+    Route::patch('/system-settings', [SystemSettingController::class, 'update'])->middleware('role:System Administrator');
 
     Route::get('/ocr/history', [OcrController::class, 'history'])->middleware('role:System Administrator,Property Custodian,PPMO Staff');
     Route::post('/ocr/scan', [OcrController::class, 'scan'])->middleware('role:System Administrator,Property Custodian,PPMO Staff');
