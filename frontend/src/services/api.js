@@ -235,6 +235,7 @@ export async function createBackendAsset(payload) {
     property_number: payload.property_number || undefined,
     serial_number: payload.serial_number || null,
     name: payload.name,
+    unit: payload.unit || "pieces",
     brand: payload.brand || null,
     model: payload.model || null,
     description: payload.description || null,
@@ -405,10 +406,17 @@ export async function finalizeClearance(userId, decision, notes = "") {
   });
 }
 
-export async function fetchSupplies({ limit = 200, search = "" } = {}) {
+export async function fetchSupplies({
+  limit = 200,
+  search = "",
+  department_id = "",
+} = {}) {
   const q = search ? `&search=${encodeURIComponent(search)}` : "";
+  const department = department_id
+    ? `&department_id=${encodeURIComponent(department_id)}`
+    : "";
   const response = await request(
-    `/supplies?per_page=${limit}&sort_by=created_at&sort_order=desc${q}`,
+    `/supplies?per_page=${limit}&sort_by=created_at&sort_order=desc${q}${department}`,
   );
   return response?.data || [];
 }
@@ -417,6 +425,7 @@ export async function createSupply(payload) {
   const record = {
     sku: payload.sku,
     name: payload.name,
+    unit: payload.unit || "pieces",
     category: payload.category || null,
     description: payload.description || null,
     stock: payload.quantity || payload.stock || 0,
@@ -424,6 +433,7 @@ export async function createSupply(payload) {
     unit_price: payload.unit_price ?? 0,
     expiration_date: payload.expiration_date || null,
     supplier_id: payload.supplier_id || null,
+    department_id: payload.department_id || null,
   };
 
   return request("/supplies", {
@@ -456,8 +466,15 @@ export async function recordStockMovement(payload) {
   });
 }
 
-export async function fetchStockMovements({ limit = 200 } = {}) {
-  const response = await request(`/stock-movements?per_page=${limit}`);
+export async function fetchStockMovements({
+  limit = 200,
+  department_id = "",
+  movement_type = "",
+} = {}) {
+  const params = new URLSearchParams({ per_page: String(limit) });
+  if (department_id) params.set("department_id", department_id);
+  if (movement_type) params.set("movement_type", movement_type);
+  const response = await request(`/stock-movements?${params.toString()}`);
   return response?.data || [];
 }
 
@@ -619,9 +636,14 @@ export async function fetchDamageReports({ limit = 200 } = {}) {
 }
 
 export async function createDamageReport(payload) {
+  if (payload instanceof FormData) {
+    return request("/damage-reports", { method: "POST", body: payload });
+  }
+
   const formData = new FormData();
   formData.append("asset_id", payload.asset_id || "");
   formData.append("ocr_scan_id", payload.ocr_scan_id || "");
+  formData.append("incident_type", payload.incident_type || "damaged");
   formData.append("severity", payload.severity);
   formData.append("description", payload.description);
   if (payload.photo instanceof File) {
@@ -1156,8 +1178,11 @@ export async function analyzeAnomalies() {
 }
 
 export async function generateReport(reportType) {
-  return request(`/reports/export?type=${reportType}`);
+  return request(`/reports/${encodeURIComponent(reportType)}`);
 }
+
+export async function fetchSystemSettings() { return request("/system-settings"); }
+export async function updateSystemSettings(payload) { return request("/system-settings", { method: "PATCH", body: JSON.stringify(payload) }); }
 
 export async function fetchSupabaseDepartments() {
   const data = await request("/departments");
@@ -1383,4 +1408,6 @@ export const pcmsApi = {
   createUser: (payload) => createUser(payload),
   updateUser: (id, payload) => updateUser(id, payload),
   deactivateUser: (id) => deactivateUser(id),
+  systemSettings: () => fetchSystemSettings(),
+  updateSystemSettings: (payload) => updateSystemSettings(payload),
 };

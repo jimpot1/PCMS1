@@ -58,6 +58,7 @@ import RequesterQuickActionCard from "./components/QuickActionCard.jsx";
 import RequesterRequestForm from "./components/RequesterRequestForm.jsx";
 import RequesterItemTable from "./components/RequesterItemTable.jsx";
 import RequesterNotificationPanel from "./components/NotificationPanel.jsx";
+import { exportElementToPdf } from "./utils/pdfExport.js";
 import DepartmentHeadLayout from "./components/DepartmentHeadLayout.jsx";
 import DepartmentHeadHeader from "./components/DepartmentHeadHeader.jsx";
 import UserNotificationsPage from "./components/UserNotificationsPage.jsx";
@@ -8405,11 +8406,9 @@ function DamagePage() {
   const [photoPreview, setPhotoPreview] = useState(null);
   const [formData, setFormData] = useState({
     asset_id: "",
-    damage_type: "",
-    severity: "medium",
+    incident_type: "damaged",
+    severity: "moderate",
     description: "",
-    reported_by: "",
-    status: "pending",
   });
 
   useEffect(() => {
@@ -8440,11 +8439,9 @@ function DamagePage() {
     try {
       const submitData = {
         asset_id: parseInt(formData.asset_id),
-        damage_type: formData.damage_type,
+        incident_type: formData.incident_type,
         severity: formData.severity,
         description: formData.description,
-        reported_by: formData.reported_by,
-        status: formData.status,
       };
 
       if (photoFile) {
@@ -8461,11 +8458,9 @@ function DamagePage() {
       setSuccess("Damage report submitted successfully");
       setFormData({
         asset_id: "",
-        damage_type: "",
-        severity: "medium",
+        incident_type: "damaged",
+        severity: "moderate",
         description: "",
-        reported_by: "",
-        status: "pending",
       });
       setPhotoFile(null);
       setPhotoPreview(null);
@@ -8536,18 +8531,17 @@ function DamagePage() {
               </label>
             </div>
             <div className="field-row">
-              <label>Damage Type</label>
+              <label>Incident Type</label>
               <select
-                value={formData.damage_type}
+                value={formData.incident_type}
                 onChange={(e) =>
-                  setFormData({ ...formData, damage_type: e.target.value })
+                  setFormData({ ...formData, incident_type: e.target.value })
                 }
                 required
               >
-                <option value="">Select type</option>
-                <option value="physical">Physical</option>
-                <option value="functional">Functional</option>
-                <option value="cosmetic">Cosmetic</option>
+                <option value="damaged">Damaged</option>
+                <option value="lost">Lost</option>
+                <option value="unserviceable">Unserviceable</option>
               </select>
             </div>
             <div className="field-row">
@@ -8559,9 +8553,9 @@ function DamagePage() {
                 }
                 required
               >
-                <option value="low">Low</option>
-                <option value="medium">Medium</option>
-                <option value="high">High</option>
+                <option value="minor">Minor</option>
+                <option value="moderate">Moderate</option>
+                <option value="severe">Severe</option>
                 <option value="critical">Critical</option>
               </select>
             </div>
@@ -8573,16 +8567,6 @@ function DamagePage() {
                   setFormData({ ...formData, description: e.target.value })
                 }
                 rows={3}
-                required
-              />
-            </div>
-            <div className="field-row">
-              <label>Reported By</label>
-              <input
-                value={formData.reported_by}
-                onChange={(e) =>
-                  setFormData({ ...formData, reported_by: e.target.value })
-                }
                 required
               />
             </div>
@@ -8618,34 +8602,30 @@ function DamagePage() {
                 </div>
                 <strong>Asset {report.asset_id}</strong>
                 <p>
-                  {report.damage_type} · Severity: {report.severity}
+                  {report.incident_type} · Severity: {report.severity}
                 </p>
                 <p className="small-text">{report.description}</p>
                 <div className="inline-actions small">
                   <span
-                    className={`status ${report.status === "resolved" ? "success" : report.status === "in_progress" ? "warning" : "info"}`}
+                    className={`status ${["repaired", "disposed"].includes(report.status) ? "success" : report.status === "under_repair" ? "warning" : "info"}`}
                   >
                     {report.status}
                   </span>
-                  {report.status === "pending" && (
+                  {report.status === "submitted" && (
+                    <button className="small-button" onClick={() => handleUpdateStatus(report.id, "in_review")}>Review</button>
+                  )}
+                  {report.status === "in_review" && (
                     <>
-                      <button
-                        className="small-button"
-                        onClick={() =>
-                          handleUpdateStatus(report.id, "in_progress")
-                        }
-                      >
-                        Start Repair
-                      </button>
+                      <button className="small-button" onClick={() => handleUpdateStatus(report.id, "under_repair")}>Start Repair</button>
+                      <button className="small-button" onClick={() => handleUpdateStatus(report.id, "declared_lost")}>Declare Lost</button>
+                      <button className="small-button" onClick={() => handleUpdateStatus(report.id, "declared_unserviceable")}>Unserviceable</button>
                     </>
                   )}
-                  {report.status === "in_progress" && (
-                    <button
-                      className="small-button success"
-                      onClick={() => handleUpdateStatus(report.id, "resolved")}
-                    >
-                      Resolve
-                    </button>
+                  {report.status === "under_repair" && (
+                    <button className="small-button success" onClick={() => handleUpdateStatus(report.id, "repaired")}>Mark Repaired</button>
+                  )}
+                  {report.status === "declared_unserviceable" && (
+                    <button className="small-button danger-action" onClick={() => handleUpdateStatus(report.id, "disposed")}>Record Disposal</button>
                   )}
                 </div>
               </div>
@@ -8660,6 +8640,8 @@ function DamagePage() {
 function SuppliesPage() {
   const [supplies, setSupplies] = useState([]);
   const [supplyRequests, setSupplyRequests] = useState([]);
+  const [departments, setDepartments] = useState([]);
+  const [allocations, setAllocations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [requestsLoading, setRequestsLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -8669,6 +8651,7 @@ function SuppliesPage() {
   const [requestDetails, setRequestDetails] = useState(null);
   const [releaseRequest, setReleaseRequest] = useState(null);
   const [releaseQuantity, setReleaseQuantity] = useState(0);
+  const [releaseDepartmentId, setReleaseDepartmentId] = useState("");
   const [releaseSaving, setReleaseSaving] = useState(false);
   const [printingSupplyRequests, setPrintingSupplyRequests] = useState(false);
   const [requestFilters, setRequestFilters] = useState({
@@ -8676,11 +8659,15 @@ function SuppliesPage() {
     status: "",
     department_id: "",
   });
+  const [selectedDepartmentId, setSelectedDepartmentId] = useState("");
+  const [addDepartmentId, setAddDepartmentId] = useState("");
+  const [movementDepartmentId, setMovementDepartmentId] = useState("");
+  const [generatedSupplySku, setGeneratedSupplySku] = useState("");
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
   const [formData, setFormData] = useState({
     name: "",
-    sku: "",
+    unit: "pieces",
     category: "",
     quantity: 0,
     minimum_quantity: 0,
@@ -8705,7 +8692,9 @@ function SuppliesPage() {
   const [editFormData, setEditFormData] = useState({
     name: "",
     sku: "",
+    unit: "pieces",
     category: "",
+    department_id: "",
     minimum_stock: 0,
     unit_price: 0,
   });
@@ -8714,8 +8703,16 @@ function SuppliesPage() {
   const [deleteSaving, setDeleteSaving] = useState(false);
 
   useEffect(() => {
-    loadSupplies();
-    loadSupplyRequests();
+    // Inventory is deliberately empty until a department is selected.
+    // This prevents a cross-department/general supplies table from appearing.
+    setSupplies([]);
+    setLoading(false);
+    loadSupplyRequests({ ...requestFilters, department_id: "" });
+    pcmsApi
+      .departments()
+      .then(setDepartments)
+      .catch(() => {});
+    loadAllocations("");
   }, []);
 
   useEffect(() => {
@@ -8729,10 +8726,18 @@ function SuppliesPage() {
     };
   }, [printingSupplyRequests]);
 
-  const loadSupplies = async () => {
+  const loadSupplies = async (departmentId = selectedDepartmentId) => {
+    if (!departmentId) {
+      setSupplies([]);
+      setLoading(false);
+      return;
+    }
+
     try {
       setLoading(true);
-      const response = await pcmsApi.fetchSupplies();
+      const response = await pcmsApi.fetchSupplies({
+        department_id: departmentId,
+      });
       setSupplies(response || []);
     } catch (err) {
       setError(err.message);
@@ -8756,16 +8761,45 @@ function SuppliesPage() {
     }
   };
 
+  const loadAllocations = async (
+    departmentId = requestFilters.department_id,
+  ) => {
+    try {
+      const movements = await pcmsApi.fetchStockMovements({
+        limit: 200,
+        department_id: departmentId,
+        movement_type: "out",
+      });
+      setAllocations(movements || []);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
   const handleAddSupply = async (e) => {
     e.preventDefault();
     setAddSaving(true);
     setError(null);
     try {
-      await pcmsApi.createSupply(formData);
-      setSuccess("Supply added successfully");
+      if (!addDepartmentId) throw new Error("Select a department first.");
+      const response = await pcmsApi.createSupply({
+        ...formData,
+        department_id: addDepartmentId,
+      });
+      setGeneratedSupplySku(response?.sku || "");
+      setSelectedDepartmentId(addDepartmentId);
+      setRequestFilters((current) => ({
+        ...current,
+        department_id: addDepartmentId,
+      }));
+      setSuccess(
+        response?.sku
+          ? `Supply added successfully. SKU: ${response.sku}`
+          : "Supply added successfully",
+      );
       setFormData({
         name: "",
-        sku: "",
+        unit: "pieces",
         category: "",
         quantity: 0,
         minimum_quantity: 0,
@@ -8774,7 +8808,14 @@ function SuppliesPage() {
         description: "",
       });
       setShowForm(false);
-      await Promise.all([loadSupplies(), loadSupplyRequests()]);
+      await Promise.all([
+        loadSupplies(addDepartmentId),
+        loadSupplyRequests({
+          ...requestFilters,
+          department_id: addDepartmentId,
+        }),
+        loadAllocations(addDepartmentId),
+      ]);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -8782,7 +8823,23 @@ function SuppliesPage() {
     }
   };
 
+  const openAddSupplyForm = () => {
+    if (!selectedDepartmentId) {
+      setError("Select a department first.");
+      return;
+    }
+    setError(null);
+    setAddDepartmentId(selectedDepartmentId);
+    setGeneratedSupplySku("");
+    setShowForm(true);
+  };
+
   const openMovementForm = (type) => {
+    if (!selectedDepartmentId) {
+      setError("Select a department first.");
+      return;
+    }
+    setMovementDepartmentId(selectedDepartmentId);
     if (type === "out") {
       const eligibleRequest = supplyRequests.find(
         (request) =>
@@ -8791,6 +8848,7 @@ function SuppliesPage() {
       );
       if (eligibleRequest) {
         setReleaseQuantity(0);
+        setReleaseDepartmentId(selectedDepartmentId);
         setReleaseRequest(eligibleRequest);
         return;
       }
@@ -8813,6 +8871,7 @@ function SuppliesPage() {
     setMovementSaving(true);
     setError(null);
     try {
+      if (!movementDepartmentId) throw new Error("Select a department first.");
       const selectedSupply = supplies.find(
         (item) => String(item.id) === String(movementData.supply_id),
       );
@@ -8824,6 +8883,7 @@ function SuppliesPage() {
         throw new Error("Use an approved supply request to issue supplies.");
       await pcmsApi.recordStockMovement({
         ...movementData,
+        department_id: movementDepartmentId,
         notes: [
           movementData.reference_no,
           movementData.supplier_source,
@@ -8841,7 +8901,14 @@ function SuppliesPage() {
       });
       setSupplyQuery("");
       setShowMovement(false);
-      await loadSupplies();
+      await Promise.all([
+        loadSupplies(movementDepartmentId),
+        loadSupplyRequests({
+          ...requestFilters,
+          department_id: movementDepartmentId,
+        }),
+        loadAllocations(movementDepartmentId),
+      ]);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -8897,11 +8964,24 @@ function SuppliesPage() {
       ? "Approved"
       : "Pending";
   };
+  const visibleSupplies = selectedDepartmentId
+    ? supplies.filter(
+        (supply) =>
+          String(supply.department_id) === String(selectedDepartmentId),
+      )
+    : [];
   const handleReleaseRequest = async (event) => {
     event.preventDefault();
     const quantities = requestQuantities(releaseRequest);
     const supply = requestSupply(releaseRequest);
     const quantity = Number(releaseQuantity);
+    if (
+      !releaseDepartmentId ||
+      String(releaseDepartmentId) !== String(releaseRequest.department_id)
+    ) {
+      setError("Select the request department before releasing supplies.");
+      return;
+    }
     if (
       quantity <= 0 ||
       quantity > quantities.remaining ||
@@ -8921,7 +9001,14 @@ function SuppliesPage() {
       );
       setSuccess("Supply release recorded successfully.");
       setReleaseRequest(null);
-      await Promise.all([loadSupplies(), loadSupplyRequests()]);
+      await Promise.all([
+        loadSupplies(selectedDepartmentId),
+        loadSupplyRequests({
+          ...requestFilters,
+          department_id: selectedDepartmentId,
+        }),
+        loadAllocations(selectedDepartmentId),
+      ]);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -8930,7 +9017,12 @@ function SuppliesPage() {
   };
 
   const handleExport = () => {
-    exportRowsToCsv("supplies-inventory.csv", supplies, [
+    if (!selectedDepartmentId) {
+      setError("Select a department before exporting its inventory.");
+      return;
+    }
+
+    exportRowsToCsv("supplies-inventory.csv", visibleSupplies, [
       { label: "Supply", value: (item) => item.name },
       { label: "Category", value: (item) => item.category },
       { label: "SKU", value: (item) => item.sku },
@@ -8985,7 +9077,9 @@ function SuppliesPage() {
     setEditFormData({
       name: item.name || "",
       sku: item.sku || "",
+      unit: item.unit || "pieces",
       category: item.category || "",
+      department_id: item.department_id || "",
       minimum_stock: item.minimum_stock || 0,
       unit_price: item.unit_price ?? 0,
     });
@@ -9029,10 +9123,35 @@ function SuppliesPage() {
       icon={Archive}
       actions={
         <>
+          <select
+            aria-label="Inventory department"
+            value={selectedDepartmentId}
+            onChange={(event) => {
+              const departmentId = event.target.value;
+              const filters = {
+                ...requestFilters,
+                department_id: departmentId,
+              };
+              setSelectedDepartmentId(departmentId);
+              setRequestFilters(filters);
+              loadSupplies(departmentId);
+              loadSupplyRequests(filters);
+              loadAllocations(departmentId);
+            }}
+          >
+            <option value="">Select department</option>
+            {departments.map((department) => (
+              <option key={department.id} value={department.id}>
+                {department.name}
+              </option>
+            ))}
+          </select>
           <button
             className="secondary-button"
             type="button"
-            onClick={() => setShowForm(!showForm)}
+            onClick={() =>
+              showForm ? setShowForm(false) : openAddSupplyForm()
+            }
           >
             <Package size={16} /> Add Supply
           </button>
@@ -9082,6 +9201,26 @@ function SuppliesPage() {
               </button>
             </div>
             <form onSubmit={handleRecordMovement}>
+              <div className="field-row">
+                <label>Department</label>
+                <select
+                  value={movementDepartmentId}
+                  onChange={(e) => {
+                    const departmentId = e.target.value;
+                    setMovementDepartmentId(departmentId);
+                    setSelectedDepartmentId(departmentId);
+                    loadSupplies(departmentId);
+                  }}
+                  required
+                >
+                  <option value="">Select department</option>
+                  {departments.map((department) => (
+                    <option key={department.id} value={department.id}>
+                      {department.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
               <div className="field-row">
                 <label>Supply</label>
                 <div style={{ position: "relative" }}>
@@ -9226,7 +9365,12 @@ function SuppliesPage() {
                       </strong>
                     </p>
                   )}
-                <label>Quantity</label>
+                <label>
+                  Quantity per {supplies.find(
+                    (item) =>
+                      String(item.id) === String(movementData.supply_id),
+                  )?.unit || "piece"}
+                </label>
                 <input
                   type="number"
                   value={movementData.quantity}
@@ -9288,108 +9432,148 @@ function SuppliesPage() {
                 <X size={18} />
               </button>
             </div>
-            <form onSubmit={handleAddSupply}>
-              <div className="field-row">
-                <label>Supply Name</label>
-                <input
-                  value={formData.name}
-                  onChange={(e) =>
-                    setFormData({ ...formData, name: e.target.value })
-                  }
-                  required
-                />
-              </div>
-              <div className="field-row">
-                <label>SKU</label>
-                <input
-                  value={formData.sku}
-                  onChange={(e) =>
-                    setFormData({ ...formData, sku: e.target.value })
-                  }
-                  required
-                />
-              </div>
-              <div className="field-row">
-                <label>Category</label>
-                <input
-                  value={formData.category}
-                  onChange={(e) =>
-                    setFormData({ ...formData, category: e.target.value })
-                  }
-                />
-              </div>
-              <div className="field-row">
-                <label>Initial Quantity</label>
-                <input
-                  type="number"
-                  value={formData.quantity}
-                  min="0"
-                  onChange={(e) =>
-                    setFormData({
-                      ...formData,
-                      quantity: parseInt(e.target.value) || 0,
-                    })
-                  }
-                  required
-                />
-              </div>
-              <div className="field-row">
-                <label>Minimum Quantity</label>
-                <input
-                  type="number"
-                  value={formData.minimum_quantity}
-                  min="0"
-                  onChange={(e) =>
-                    setFormData({
-                      ...formData,
-                      minimum_quantity: parseInt(e.target.value) || 0,
-                    })
-                  }
-                  required
-                />
-              </div>
-              <div className="field-row">
-                <label>Unit Price</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={formData.unit_price}
-                  min="0"
-                  onChange={(e) =>
-                    setFormData({
-                      ...formData,
-                      unit_price: parseFloat(e.target.value) || 0,
-                    })
-                  }
-                />
-              </div>
-              <div className="field-row">
-                <label>Description</label>
-                <textarea
-                  value={formData.description}
-                  onChange={(e) =>
-                    setFormData({ ...formData, description: e.target.value })
-                  }
-                  rows={3}
-                />
-              </div>
-              <div className="inline-actions">
-                <button
-                  className="primary-button"
-                  type="submit"
-                  disabled={addSaving}
-                >
-                  {addSaving ? "Adding Supply..." : "Add Supply"}
-                </button>
-                <button
-                  className="secondary-button"
-                  type="button"
-                  onClick={() => setShowForm(false)}
-                >
-                  Cancel
-                </button>
-              </div>
-            </form>
+              <form onSubmit={handleAddSupply}>
+                <div className="field-row">
+                  <label>Department</label>
+                  <select
+                    value={addDepartmentId}
+                    onChange={(e) => {
+                      const departmentId = e.target.value;
+                      setAddDepartmentId(departmentId);
+                      setSelectedDepartmentId(departmentId);
+                    }}
+                    required
+                  >
+                    <option value="">Select department</option>
+                    {departments.map((department) => (
+                      <option key={department.id} value={department.id}>
+                        {department.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="field-row">
+                  <label>Supply Name</label>
+                  <input
+                    value={formData.name}
+                    onChange={(e) =>
+                      setFormData({ ...formData, name: e.target.value })
+                    }
+                    required
+                  />
+                </div>
+                <div className="field-row">
+                  <label>SKU</label>
+                  <input
+                    value={generatedSupplySku || "Generated automatically"}
+                    readOnly
+                    placeholder="Generated automatically"
+                  />
+                </div>
+                <div className="field-row">
+                  <label>Quantity Unit</label>
+                  <select
+                    value={formData.unit}
+                    onChange={(e) =>
+                      setFormData({ ...formData, unit: e.target.value })
+                    }
+                    required
+                  >
+                    <option value="pieces">Pieces</option>
+                    <option value="packs">Packs</option>
+                    <option value="boxes">Boxes</option>
+                    <option value="bundles">Bundles</option>
+                    <option value="reams">Reams</option>
+                    <option value="bottles">Bottles</option>
+                    <option value="rolls">Rolls</option>
+                    <option value="sets">Sets</option>
+                  </select>
+                </div>
+                <div className="field-row">
+                  <label>Category</label>
+                  <input
+                    value={formData.category}
+                    onChange={(e) =>
+                      setFormData({ ...formData, category: e.target.value })
+                    }
+                  />
+                </div>
+                <div className="field-row">
+                  <label>Initial Quantity ({formData.unit || "pieces"})</label>
+                  <input
+                    type="number"
+                    value={formData.quantity}
+                    min="0"
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        quantity: parseInt(e.target.value) || 0,
+                      })
+                    }
+                    required
+                  />
+                </div>
+                <div className="field-row">
+                  <label>Minimum Quantity ({formData.unit || "pieces"})</label>
+                  <input
+                    type="number"
+                    value={formData.minimum_quantity}
+                    min="0"
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        minimum_quantity: parseInt(e.target.value) || 0,
+                      })
+                    }
+                    required
+                  />
+                </div>
+                <div className="field-row">
+                  <label>Unit Price (PHP)</label>
+                  <input
+                    type="number"
+                    value={formData.unit_price}
+                    min="0"
+                    step="0.01"
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        unit_price: parseFloat(e.target.value) || 0,
+                      })
+                    }
+                    required
+                  />
+                </div>
+                <div className="field-row">
+                  <label>Description</label>
+                  <textarea
+                    value={formData.description}
+                    onChange={(e) =>
+                      setFormData({ ...formData, description: e.target.value })
+                    }
+                    rows={3}
+                  />
+                </div>
+                <div className="inline-actions">
+                  <button
+                    className="primary-button"
+                    type="submit"
+                    disabled={addSaving}
+                  >
+                    {addSaving ? "Adding Supply..." : "Add Supply"}
+                  </button>
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    onClick={() => {
+                      setShowForm(false);
+                      setGeneratedSupplySku("");
+                    }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </form>
           </div>
         </div>
       )}
@@ -9439,12 +9623,16 @@ function SuppliesPage() {
                   </td>
                 </tr>
               ))
-            ) : supplies.length === 0 ? (
+            ) : !selectedDepartmentId ? (
               <tr>
-                <td colSpan="6">No supplies added yet</td>
+                <td colSpan="7">Select a department to view its inventory.</td>
+              </tr>
+            ) : visibleSupplies.length === 0 ? (
+              <tr>
+                <td colSpan="7">No supplies added yet for this department.</td>
               </tr>
             ) : (
-              supplies.map((item) => (
+              visibleSupplies.map((item) => (
                 <tr key={item.id}>
                   <td>
                     <strong>{item.name}</strong>
@@ -9540,6 +9728,27 @@ function SuppliesPage() {
             <option value="approved">Approved</option>
             <option value="partially_released">Partially Released</option>
             <option value="released">Released</option>
+          </select>
+          <select
+            value={requestFilters.department_id}
+            onChange={(event) => {
+              const filters = {
+                ...requestFilters,
+                department_id: event.target.value,
+              };
+              setSelectedDepartmentId(event.target.value);
+              setRequestFilters(filters);
+              loadSupplies(event.target.value);
+              loadSupplyRequests(filters);
+              loadAllocations(filters.department_id);
+            }}
+          >
+            <option value="">All departments</option>
+            {departments.map((department) => (
+              <option key={department.id} value={department.id}>
+                {department.name}
+              </option>
+            ))}
           </select>
         </div>
         <div className="table-card supply-request-table-wrap">
@@ -9689,6 +9898,51 @@ function SuppliesPage() {
         </div>
       </section>
 
+      <section className="supply-requests-section">
+        <div className="supply-section-heading">
+          <div>
+            <h3>Department Allocation History</h3>
+            <p>Supplies issued to departments through approved requests.</p>
+          </div>
+        </div>
+        <div className="table-card supply-request-table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Department</th>
+                <th>Supply</th>
+                <th>Quantity Issued</th>
+                <th>Reference</th>
+              </tr>
+            </thead>
+            <tbody>
+              {allocations.length === 0 ? (
+                <tr>
+                  <td colSpan="5">
+                    No allocations found for the selected department.
+                  </td>
+                </tr>
+              ) : (
+                allocations.map((movement) => (
+                  <tr key={movement.id}>
+                    <td>
+                      {movement.created_at
+                        ? new Date(movement.created_at).toLocaleDateString()
+                        : "N/A"}
+                    </td>
+                    <td>{movement.department?.name || "N/A"}</td>
+                    <td>{movement.supply?.name || "Supply"}</td>
+                    <td>{movement.quantity}</td>
+                    <td>{movement.notes || "Approved supply request"}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
       <div className="supply-request-print-report" aria-hidden="true">
         <header className="supply-print-header">
           <div>
@@ -9800,6 +10054,23 @@ function SuppliesPage() {
                   className="supply-release-form"
                   onSubmit={handleReleaseRequest}
                 >
+                  <label>
+                    Department
+                    <select
+                      value={releaseDepartmentId}
+                      onChange={(event) =>
+                        setReleaseDepartmentId(event.target.value)
+                      }
+                      required
+                    >
+                      <option value="">Select department</option>
+                      {departments.map((department) => (
+                        <option key={department.id} value={department.id}>
+                          {department.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
                   <div className="supply-release-grid">
                     <div>
                       <span>Request No.</span>
@@ -9846,7 +10117,7 @@ function SuppliesPage() {
                     </div>
                   </div>
                   <label>
-                    Quantity to Release
+                    Quantity to Release ({supply.unit || "pieces"})
                     <input
                       type="number"
                       min="1"
@@ -10053,6 +10324,45 @@ function SuppliesPage() {
                     }
                     required
                   />
+                </label>
+                <label>
+                  Department
+                  <select
+                    value={editFormData.department_id}
+                    onChange={(e) =>
+                      setEditFormData({
+                        ...editFormData,
+                        department_id: e.target.value,
+                      })
+                    }
+                    required
+                  >
+                    <option value="">Select department</option>
+                    {departments.map((department) => (
+                      <option key={department.id} value={department.id}>
+                        {department.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Quantity Unit
+                  <select
+                    value={editFormData.unit}
+                    onChange={(e) =>
+                      setEditFormData({ ...editFormData, unit: e.target.value })
+                    }
+                    required
+                  >
+                    <option value="pieces">Pieces</option>
+                    <option value="packs">Packs</option>
+                    <option value="boxes">Boxes</option>
+                    <option value="bundles">Bundles</option>
+                    <option value="reams">Reams</option>
+                    <option value="bottles">Bottles</option>
+                    <option value="rolls">Rolls</option>
+                    <option value="sets">Sets</option>
+                  </select>
                 </label>
                 <label>
                   SKU
@@ -12848,6 +13158,7 @@ function ReportsPage() {
   const [success, setSuccess] = useState(null);
   const [reportData, setReportData] = useState(null);
   const [selectedReport, setSelectedReport] = useState(null);
+  const reportRef = useRef(null);
 
   const reports = [
     {
@@ -12868,6 +13179,11 @@ function ReportsPage() {
       icon: Sparkles,
       description: "Detected anomalies and resolutions",
     },
+    { id: "asset-inventory-summary", name: "Asset Inventory", icon: Package, description: "Asset ledger by department, condition, and status" },
+    { id: "supplies-inventory-summary", name: "Supplies Inventory", icon: Archive, description: "Department supplies, stock levels, and low-stock items" },
+    { id: "maintenance-summary", name: "Maintenance Summary", icon: Wrench, description: "Scheduled, completed, and overdue maintenance records" },
+    { id: "assignment-summary", name: "Assignment Summary", icon: UserCheck, description: "Asset accountability and return status" },
+    { id: "transfer-summary", name: "Transfer Summary", icon: Truck, description: "Department transfers and approval status" },
   ];
 
   const handleGenerateReport = async (reportType) => {
@@ -12885,16 +13201,23 @@ function ReportsPage() {
     }
   };
 
-  const handleDownload = (format) => {
-    if (!reportData) return;
+  const reportRows = () => {
+    const collection = Object.values(reportData || {}).find((value) => Array.isArray(value));
+    return collection || [];
+  };
 
-    const dataStr = JSON.stringify(reportData, null, 2);
-    const dataBlob = new Blob([dataStr], { type: "application/json" });
-    const url = URL.createObjectURL(dataBlob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `${selectedReport}_${new Date().toISOString().split("T")[0]}.${format === "pdf" ? "json" : format}`;
-    link.click();
+  const handleDownload = async (format) => {
+    if (!reportData) return;
+    if (format === "pdf") {
+      await exportElementToPdf(reportRef.current, `${selectedReport}.pdf`);
+      return;
+    }
+    const rows = reportRows();
+    const headers = [...new Set(rows.flatMap((row) => Object.keys(row || {})))];
+    const escapeCsv = (value) => `"${String(value ?? "").replaceAll('"', '""')}"`;
+    const csv = [headers.map(escapeCsv).join(","), ...rows.map((row) => headers.map((key) => escapeCsv(row[key])).join(","))].join("\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const link = document.createElement("a"); link.href = url; link.download = `${selectedReport}.csv`; link.click(); URL.revokeObjectURL(url);
   };
 
   return (
@@ -12939,19 +13262,16 @@ function ReportsPage() {
           <div className="inline-actions">
             <button
               className="primary-button"
-              onClick={() => handleDownload("json")}
-            >
-              <Download size={16} /> Download JSON
-            </button>
-            <button
-              className="secondary-button"
               onClick={() => handleDownload("csv")}
             >
               <Download size={16} /> Download CSV
             </button>
+            <button className="secondary-button" onClick={() => handleDownload("pdf")}><Printer size={16} /> Download PDF</button>
           </div>
 
-          <div className="report-content">
+          <div className="report-content" ref={reportRef}>
+            <h2>{reportData.report_type}</h2>
+            <p>Generated: {new Date(reportData.generated_at).toLocaleString()}</p>
             <pre
               style={{
                 maxHeight: "500px",
@@ -13661,33 +13981,43 @@ function ActivityPage() {
 }
 
 function SettingsPage() {
+  const [values, setValues] = useState(null);
+  const [message, setMessage] = useState(null);
+  const [error, setError] = useState(null);
+  useEffect(() => { pcmsApi.systemSettings().then((response) => setValues(response.data)).catch((err) => setError(err.message)); }, []);
+  const save = async () => {
+    try { setError(null); const response = await pcmsApi.updateSystemSettings(values); setValues(response.data); setMessage("System settings saved."); }
+    catch (err) { setError(err.message); }
+  };
+  if (!values) return <ModulePage title="Settings" subtitle="Loading system configuration…" icon={Settings}><div className="loading-card">Loading settings…</div></ModulePage>;
   return (
     <ModulePage
       title="Settings"
       subtitle="Subsystem configuration, numbering rules, integrations, and approval policies."
       primary="Save Changes"
       icon={Settings}
+      onPrimary={save}
     >
+      {error && <div className="form-message error">{error}</div>}
+      {message && <div className="form-message success">{message}</div>}
       <div className="settings-grid">
         {[
-          "Asset ID Format",
-          "Supabase Authentication",
-          "OCR Confidence Threshold",
-          "Anomaly Risk Threshold",
-          "Email Notifications",
-          "Approval Routing",
-        ].map((setting) => (
-          <div className="setting-row" key={setting}>
+          ["Use recommending approver", "recommending_approver_enabled", "Adds the Recommending Approver stage to request approvals."],
+          ["Automatic low-stock requisitions", "low_stock_auto_requisition_enabled", "Creates a procurement request when a department supply reaches minimum stock."],
+        ].map(([label, key, description]) => (
+          <div className="setting-row" key={key}>
             <div>
-              <strong>{setting}</strong>
-              <p>Configured for Bestlink College of the Philippines PPMO.</p>
+              <strong>{label}</strong><p>{description}</p>
             </div>
             <label className="switch">
-              <input type="checkbox" defaultChecked />
+              <input type="checkbox" checked={Boolean(values[key])} onChange={(event) => setValues({ ...values, [key]: event.target.checked })} />
               <span />
             </label>
           </div>
         ))}
+        <label className="field-row"><strong>Maintenance reminder window (days)</strong><select value={values.maintenance_reminder_days} onChange={(event) => setValues({ ...values, maintenance_reminder_days: Number(event.target.value) })}><option value={1}>1 day</option><option value={3}>3 days</option><option value={7}>7 days</option><option value={14}>14 days</option></select></label>
+        <label className="field-row"><strong>OCR confidence threshold (%)</strong><input type="number" min="0" max="100" value={values.ocr_confidence_threshold} onChange={(event) => setValues({ ...values, ocr_confidence_threshold: Number(event.target.value) })} /></label>
+        <label className="field-row"><strong>Anomaly risk threshold</strong><input type="number" min="1" max="10" value={values.anomaly_risk_threshold} onChange={(event) => setValues({ ...values, anomaly_risk_threshold: Number(event.target.value) })} /></label>
       </div>
     </ModulePage>
   );
