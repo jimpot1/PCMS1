@@ -19,6 +19,7 @@ class AnomalyController extends Controller
             'id',
             'source_type',
             'source_id',
+            'found_department_id',
             'risk_score',
             'priority',
             'reason',
@@ -269,6 +270,21 @@ class AnomalyController extends Controller
 
     protected function withPublicMonitoringDetails(object $anomaly): object
     {
+        if ($anomaly->source_type === 'untracked_transfer') {
+            $anomaly->found_department = DB::table('departments')->where('id', $anomaly->found_department_id)->value('name') ?: $anomaly->found_department_id;
+            $asset = DB::table('assets')->find($anomaly->source_id);
+            if ($asset) {
+                $anomaly->asset_name = $asset->name;
+                $anomaly->recorded_department = DB::table('departments')->where('id', $asset->department_id)->value('name') ?: $asset->department_id;
+            } else {
+                $anomaly->asset_name = "Deleted asset #{$anomaly->source_id}";
+                preg_match('/recorded in department (\d+)/i', $anomaly->reason, $matches);
+                $anomaly->recorded_department = isset($matches[1])
+                    ? (DB::table('departments')->where('id', $matches[1])->value('name') ?: $matches[1])
+                    : 'an unknown department';
+            }
+        }
+
         if ($anomaly->source_type === 'low_stock') {
             $supply = DB::table('supplies')->find($anomaly->source_id);
 

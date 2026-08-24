@@ -3,8 +3,10 @@
 namespace App\Http\Controllers;
 
 use App\Models\Asset;
+use App\Models\AssetUnit;
 use App\Models\AssetTransfer;
 use App\Models\User;
+use App\Services\AssetUnitService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -13,7 +15,7 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class TransferController extends Controller
 {
-    protected array $relations = ['asset', 'fromDepartment', 'toDepartment', 'requester', 'fromCustodian', 'toCustodian', 'approvedBy'];
+    protected array $relations = ['asset', 'assetUnit', 'fromDepartment', 'toDepartment', 'requester', 'fromCustodian', 'toCustodian', 'approvedBy'];
 
     public function __construct()
     {
@@ -81,6 +83,7 @@ class TransferController extends Controller
     {
         $validated = $request->validate([
             'asset_id' => ['required', 'exists:assets,id'],
+            'asset_unit_id' => ['nullable', 'integer', 'exists:asset_units,id'],
             'to_department_id' => ['required', 'exists:departments,id'],
             'to_custodian_id' => ['required', 'uuid', 'exists:users,id'],
             'quantity' => ['nullable', 'integer', 'min:1'],
@@ -92,6 +95,10 @@ class TransferController extends Controller
         $asset = Asset::findOrFail($validated['asset_id']);
         $quantity = (int) ($validated['quantity'] ?? 1);
         $toCustodian = User::findOrFail($validated['to_custodian_id']);
+
+        if ($quantity === 1 && ! empty($validated['asset_unit_id']) && ! app(AssetUnitService::class)->selectForTransfer($asset, $validated['asset_unit_id'])) {
+            return response()->json(['message' => 'No identifiable available unit exists for this asset.'], 422);
+        }
 
         $validationError = $this->validateTransferRequest($asset, $quantity, $request);
         if ($validationError) {
@@ -106,6 +113,7 @@ class TransferController extends Controller
             $transfer = AssetTransfer::create([
                 'transfer_number' => $this->generateTransferNumber(),
                 'asset_id' => $asset->id,
+                'asset_unit_id' => $validated['asset_unit_id'] ?? null,
                 'from_department_id' => $asset->department_id,
                 'to_department_id' => $validated['to_department_id'],
                 'from_custodian_id' => $asset->current_holder_id ?: $asset->custodian_id,
@@ -300,6 +308,11 @@ class TransferController extends Controller
 
         $asset = Asset::findOrFail($transfer->asset_id);
         $actualQuantity = (int) ($validated['actual_quantity'] ?? $transfer->quantity ?? 1);
+        $destinationCustodianId = $transfer->to_custodian_id ?: $this->destinationCustodianId($transfer->to_department_id);
+
+        if (! $destinationCustodianId) {
+            return response()->json(['message' => 'Assign an active receiving employee to the destination department before executing this transfer.'], 422);
+        }
 
         if ($actualQuantity > (int) $transfer->quantity) {
             return response()->json(['message' => 'Actual quantity cannot exceed the approved transfer quantity.'], 422);
@@ -308,7 +321,7 @@ class TransferController extends Controller
         $photoBefore = $request->hasFile('photo_before') ? $request->file('photo_before')->store('transfer-photos', 'public') : null;
         $photoAfter = $request->hasFile('photo_after') ? $request->file('photo_after')->store('transfer-photos', 'public') : null;
 
-        DB::transaction(function () use ($transfer, $asset, $request, $validated, $actualQuantity, $photoBefore, $photoAfter) {
+        DB::transaction(function () use ($transfer, $asset, $request, $validated, $actualQuantity, $photoBefore, $photoAfter, $destinationCustodianId) {
             $previous = [
                 'department_id' => $asset->department_id,
                 'custodian_id' => $asset->custodian_id,
@@ -318,6 +331,7 @@ class TransferController extends Controller
 
             $transfer->update([
                 'status' => 'transfer_completed',
+                'to_custodian_id' => $destinationCustodianId,
                 'transfer_date' => $validated['transfer_date'] ?? now(),
                 'actual_quantity' => $actualQuantity,
                 'condition_before' => $validated['condition_before'] ?? $asset->condition,
@@ -332,8 +346,8 @@ class TransferController extends Controller
 
             $assetUpdates = [
                 'department_id' => $transfer->to_department_id,
-                'custodian_id' => $transfer->to_custodian_id,
-                'current_holder_id' => $transfer->to_custodian_id,
+                'custodian_id' => $destinationCustodianId,
+                'current_holder_id' => $destinationCustodianId,
                 'last_transfer_at' => now(),
                 'location' => optional($transfer->toDepartment)->location ?: $asset->location,
             ];
@@ -344,6 +358,32 @@ class TransferController extends Controller
             }
 
             $asset->update($assetUpdates);
+
+            if ($actualQuantity === 1) {
+                $unit = app(AssetUnitService::class)->selectForTransfer($asset, $transfer->asset_unit_id);
+                if ($transfer->asset_unit_id && ! $unit) {
+                    throw new \RuntimeException('The selected asset unit is no longer available for transfer.');
+                }
+
+                if ($unit) {
+                    $unit->update([
+                    'status' => in_array($transfer->condition_after, ['needs_repair', 'damaged', 'lost_parts'], true) ? ($transfer->condition_after === 'damaged' ? 'damaged' : 'maintenance') : 'assigned',
+                    'department_id' => $transfer->to_department_id,
+                    'custodian_id' => $destinationCustodianId,
+                    'condition' => $transfer->condition_after,
+                    'location' => optional($transfer->toDepartment)->location ?: $unit->location,
+                    ]);
+                    app(AssetUnitService::class)->recordMovement($unit, 'transfer', [
+                    'from_department_id' => $previous['department_id'],
+                    'to_department_id' => $transfer->to_department_id,
+                    'from_custodian_id' => $previous['current_holder_id'] ?: $previous['custodian_id'],
+                    'to_custodian_id' => $destinationCustodianId,
+                    'reference_type' => 'asset_transfer',
+                    'reference_id' => $transfer->id,
+                    'remarks' => $validated['remarks'] ?? null,
+                    ]);
+                }
+            }
 
             DB::table('asset_assignments')
                 ->where('asset_id', $asset->id)
@@ -411,13 +451,16 @@ class TransferController extends Controller
 
         return new StreamedResponse(function () use ($query) {
             $handle = fopen('php://output', 'w');
-            fputcsv($handle, ['Transfer No', 'Asset', 'Property Number', 'Quantity', 'Type', 'From Department', 'To Department', 'From Custodian', 'To Custodian', 'Requested By', 'Approved By', 'Transfer Date', 'Status', 'Remarks']);
+            fputcsv($handle, ['Transfer No', 'Asset', 'Property Number', 'Asset Unit ID', 'Unit Code', 'Serial Number', 'Quantity', 'Type', 'From Department', 'To Department', 'From Custodian', 'To Custodian', 'Requested By', 'Approved By', 'Transfer Date', 'Status', 'Remarks']);
 
             $query->cursor()->each(function ($transfer) use ($handle) {
                 fputcsv($handle, [
                     $transfer->transfer_number,
                     optional($transfer->asset)->name,
                     optional($transfer->asset)->property_number,
+                    $transfer->asset_unit_id,
+                    optional($transfer->assetUnit)->unit_code,
+                    optional($transfer->assetUnit)->serial_number ?: optional($transfer->asset)->serial_number,
                     $transfer->actual_quantity ?: $transfer->quantity,
                     $transfer->transfer_type,
                     optional($transfer->fromDepartment)->name,
@@ -437,6 +480,38 @@ class TransferController extends Controller
             'Content-Type' => 'text/csv',
             'Content-Disposition' => "attachment; filename=\"{$filename}\"",
         ]);
+    }
+
+    protected function destinationCustodianId(?int $departmentId): ?string
+    {
+        if (! $departmentId) {
+            return null;
+        }
+
+        $department = DB::table('departments')->find($departmentId);
+        if (! $department) {
+            return null;
+        }
+
+        if ($department->custodian_user_id && User::query()
+            ->whereKey($department->custodian_user_id)
+            ->where('status', 'active')
+            ->exists()) {
+            return $department->custodian_user_id;
+        }
+
+        return User::query()
+            ->where('status', 'active')
+            ->where(function ($query) use ($department) {
+                $query->where(function ($query) use ($department) {
+                    $query->where('role', 'Department Head')
+                        ->where('department', $department->name);
+                })->orWhere(function ($query) use ($department) {
+                    $query->where('role', 'Property Custodian')
+                        ->where('department', $department->name);
+                });
+            })
+            ->value('id');
     }
 
     protected function validateTransferRequest(Asset $asset, int $quantity, Request $request, ?int $ignoreTransferId = null): ?string

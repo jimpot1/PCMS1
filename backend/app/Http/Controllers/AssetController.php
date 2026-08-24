@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Asset;
 use App\Services\AssetQrCodeService;
+use App\Services\AssetUnitService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -22,8 +23,14 @@ class AssetController extends Controller
     {
         $assets = $this->buildAssetQuery($request)
             ->with(['category', 'department'])
+            ->withCount([
+                'units',
+                'units as available_units_count' => fn ($query) => $query->where('status', 'available'),
+            ])
             ->orderBy($request->input('sort_by', 'created_at'), $request->input('sort_order', 'desc'))
             ->paginate($request->integer('per_page', 15));
+
+        $assets->getCollection()->transform(fn (Asset $asset) => $this->withUnitAvailability($asset));
 
         return response()->json($assets);
     }
@@ -65,6 +72,7 @@ class AssetController extends Controller
 
             $asset = Asset::create($validated);
             $asset->update(['qr_code_path' => AssetQrCodeService::generate($asset)]);
+            app(AssetUnitService::class)->createForAsset($asset);
             $this->logActivity('asset_registered', $asset, $request);
 
             if ($ocrScanId) {
@@ -85,7 +93,23 @@ class AssetController extends Controller
 
     public function show(Asset $asset): JsonResponse
     {
-        return response()->json($asset->load(['category', 'department', 'maintenanceRecords', 'assignments.assignedTo']));
+        return response()->json($this->withUnitAvailability(
+            $asset->load(['category', 'department', 'maintenanceRecords', 'assignments.assignedTo'])
+        ));
+    }
+
+    protected function withUnitAvailability(Asset $asset): Asset
+    {
+        $unitCount = $asset->units_count ?? $asset->units()->count();
+        if ($unitCount > 0) {
+            $availableUnitCount = $asset->available_units_count
+                ?? $asset->units()->where('status', 'available')->count();
+            $asset->available_quantity = $availableUnitCount;
+        }
+
+        unset($asset->units_count, $asset->available_units_count);
+
+        return $asset;
     }
 
     public function history(Asset $asset): JsonResponse

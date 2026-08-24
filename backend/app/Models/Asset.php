@@ -65,4 +65,9 @@ class Asset extends Model
     {
         return $this->hasOne(AssetAssignment::class)->where('status', 'active')->latestOfMany();
     }
+
+    public function units(): HasMany
+    {
+        return $this->hasMany(AssetUnit::class);
+    }
 }

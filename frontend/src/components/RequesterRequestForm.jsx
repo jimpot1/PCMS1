@@ -37,6 +37,10 @@ export default function RequesterRequestForm({ currentUser, onSubmitted, summary
   const searchTimers = useRef({});
 
   useEffect(() => {
+    updateField('department', currentUser?.department || '');
+  }, [currentUser?.department]);
+
+  useEffect(() => {
     pcmsApi.departments().then(setDepartmentsList).catch(() => {});
     pcmsApi.requesterItemSearch('', { limit: 200 })
       .then((results) => {
@@ -281,9 +285,8 @@ export default function RequesterRequestForm({ currentUser, onSubmitted, summary
               <>
                 <div className="requester-field-group">
                   <label>Department</label>
-                  <select value={form.department} onChange={(event) => updateField('department', event.target.value)} required>
-                    <option value="">Select department</option>
-                    {departmentsList.map((dept) => <option key={dept.id} value={dept.name}>{dept.name}</option>)}
+                  <select value={currentUser?.department || form.department} disabled={!currentUser?.department} required>
+                    <option value={currentUser?.department || ''}>{currentUser?.department || 'Loading department...'}</option>
                   </select>
                 </div>
                 <div className="requester-field-group">
