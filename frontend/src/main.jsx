@@ -940,17 +940,7 @@ function App() {
               <Route path="categories" element={<CategoryPage />} />
               <Route path="assignments" element={<EnhancedAssignmentsPage />} />
               <Route path="transfers" element={<TransferPage />} />
-              <Route
-                path="returns"
-                element={
-                  <WorkflowPage
-                    title="Asset Return"
-                    icon={PackageCheck}
-                    items={transfers.filter((item) => item.type === "Return")}
-                    statusLabel="Return Pending"
-                  />
-                }
-              />
+              <Route path="returns" element={<AssetReturnPage />} />
               <Route path="supplies" element={<SuppliesPage />} />
               <Route path="departments" element={<DepartmentsPage />} />
               <Route
@@ -3606,6 +3596,14 @@ function AssetReturnPage() {
   const [returnAssignment, setReturnAssignment] = useState(null);
   const [returnValues, setReturnValues] = useState({ condition_after: "good", notes: "" });
   const [saving, setSaving] = useState(false);
+
+  const formatAssignmentDate = (value) => {
+    if (!value) return "N/A";
+    const date = new Date(value);
+    return Number.isNaN(date.getTime())
+      ? String(value)
+      : date.toLocaleDateString();
+  };
 
   const loadReturns = async () => {
     setLoading(true);
@@ -14585,12 +14583,6 @@ function AssetTable({
                       Not generated
                     </span>
                   )}
-                {selectedAnomaly.status === "resolved" && (
-                  <div className="zscore-note">
-                    <strong>Next process</strong>
-                    <p>{getNextProcess(selectedAnomaly)}</p>
-                  </div>
-                )}
                 </td>
                 <td className="actions-column">
                   <div className="inline-actions asset-actions">

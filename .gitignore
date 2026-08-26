@@ -39,3 +39,4 @@ frontend/vite-dev*.log
 .DS_Store
 Thumbs.db
 CAPSTONE/
+pcms.env
