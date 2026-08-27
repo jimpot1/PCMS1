@@ -1,4 +1,5 @@
 const CURRENT_USER_KEY = 'pcms_current_user';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
 
 function normalizeProfile(profile = {}) {
   const fullName = profile.full_name || profile.name || profile.email || '';
@@ -39,7 +40,7 @@ export function getStoredUser() {
 }
 
 export async function signInWithEmail(email, password) {
-  const response = await fetch('/api/auth/login', {
+  const response = await fetch(`${API_BASE_URL}/auth/login`, {
     method: 'POST',
     credentials: 'include',
     headers: {
@@ -68,7 +69,7 @@ export async function signInWithEmail(email, password) {
 }
 
 export async function signOut() {
-  await fetch('/api/auth/logout', {
+  await fetch(`${API_BASE_URL}/auth/logout`, {
     method: 'POST',
     credentials: 'include',
     headers: {
@@ -81,7 +82,7 @@ export async function signOut() {
 }
 
 export async function getCurrentSession() {
-  const response = await fetch('/api/auth/me', {
+  const response = await fetch(`${API_BASE_URL}/auth/me`, {
     method: 'GET',
     credentials: 'include',
     headers: {
