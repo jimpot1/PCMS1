@@ -40,3 +40,4 @@ frontend/vite-dev*.log
 Thumbs.db
 CAPSTONE/
 pcms.env
+backend/login-test.json

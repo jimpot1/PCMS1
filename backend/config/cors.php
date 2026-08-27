@@ -20,6 +20,8 @@ return [
     ],
 
     'allowed_origins_patterns' => [
+        '#^https://([a-z0-9-]+\.)?hostforgeplatforms?\.com$#',
+        '#^https://([a-z0-9-]+\.)?hostforgeplatform\.cloud$#',
         '#^https://.*\.hostinger\.com$#',
         '#^https://.*\.hostingersite\.com$#',
     ],
