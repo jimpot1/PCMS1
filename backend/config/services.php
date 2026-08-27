@@ -8,6 +8,7 @@ return [
 
     'google_vision' => [
         'credentials_path' => env('GOOGLE_VISION_CREDENTIALS_PATH', storage_path('app/private/google/vision-credentials.json')),
+        'credentials_base64' => env('GOOGLE_VISION_CREDENTIALS_BASE64'),
     ],
 
     'openai' => [

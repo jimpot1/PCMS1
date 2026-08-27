@@ -9,6 +9,7 @@ use App\Services\RepairFrequencyService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 
 class NotificationController
@@ -93,7 +94,15 @@ class NotificationController
         // Operational alerts (anomalies, low stock, maintenance, audits) are
         // not part of the approval chain's per-recipient tables above, so
         // they're filtered by role here instead of by recipient_id.
-        $notifications = $notifications->merge($this->globalNotifications($user));
+        try {
+            $notifications = $notifications->merge($this->globalNotifications($user));
+        } catch (\Throwable $exception) {
+            Log::error('Optional notification sources failed', [
+                'user_id' => $user?->id,
+                'role' => $user?->role,
+                'error' => $exception->getMessage(),
+            ]);
+        }
 
         return $notifications->sortByDesc(fn ($n) => strtotime((string) $n['time']))->values();
     }
