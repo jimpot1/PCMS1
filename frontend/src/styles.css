@@ -6334,6 +6334,42 @@ body:has(.modal-overlay) {
   color: #64748b;
   font-size: 11px;
 }
+
+.modal-card.confirm-dialog {
+  width: min(420px, calc(100vw - 48px));
+  max-width: 420px;
+}
+
+.modal-card.confirm-dialog .modal-actions {
+  flex-wrap: wrap;
+}
+
+@media (max-width: 640px) {
+  .modal-card.confirm-dialog {
+    width: 100%;
+    max-width: none;
+    height: auto;
+    max-height: none;
+    align-self: center;
+  }
+
+  .modal-card.confirm-dialog .modal-header {
+    padding: 16px 18px 14px;
+  }
+
+  .modal-card.confirm-dialog .confirm-dialog-body {
+    padding: 18px;
+  }
+
+  .modal-card.confirm-dialog .modal-actions {
+    gap: 10px;
+  }
+
+  .modal-card.confirm-dialog .modal-actions button {
+    flex: 1 1 120px;
+    min-height: 42px;
+  }
+}
 .supply-request-summary strong {
   color: #172033;
   font-size: 19px;

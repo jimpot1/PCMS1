@@ -941,7 +941,7 @@ function App() {
               <Route path="assignments" element={<EnhancedAssignmentsPage />} />
               <Route path="transfers" element={<TransferPage />} />
               <Route path="returns" element={<AssetReturnPage />} />
-              <Route path="supplies" element={<SuppliesPage />} />
+              <Route path="supplies" element={<SuppliesPage currentUser={currentUser} />} />
               <Route path="departments" element={<DepartmentsPage />} />
               <Route
                 path="monitoring"
@@ -949,7 +949,7 @@ function App() {
               />
               <Route path="maintenance" element={<MaintenancePage />} />
               <Route path="damage" element={<DamagePage />} />
-              <Route path="purchases" element={<PurchasePage />} />
+              <Route path="purchases" element={<PurchasePage currentUser={currentUser} />} />
               <Route path="gatepass" element={<GatePassPage />} />
               <Route path="audit" element={<AuditPage currentUser={currentUser} />} />
               <Route path="walk-in-request" element={<WalkInRequest />} />
@@ -1848,7 +1848,7 @@ function RequesterTable({ title, records, loading, error, onView }) {
                           <Pencil size={15} />
                         </button>
                       )}
-                      {canModify(record) && (
+                      {isSystemAdmin && canModify(record) && (
                         <button
                           className="requester-action-icon-button destructive"
                           type="button"
@@ -2241,8 +2241,8 @@ function renderPage(page, onNavigate, currentUser) {
     returns: <AssetReturnPage />,
     maintenance: <MaintenancePage />,
     damage: <DamagePage />,
-    supplies: <SuppliesPage />,
-    purchases: <PurchasePage />,
+    supplies: <SuppliesPage currentUser={currentUser} />,
+    purchases: <PurchasePage currentUser={currentUser} />,
     gatepass: <GatePassPage />,
     audit: <AuditPage currentUser={currentUser} />,
     ocr: <OcrPage />,
@@ -2715,6 +2715,7 @@ function AssetRegistry({ currentUser }) {
   const [actionSuccess, setActionSuccess] = useState(null);
   const [editValues, setEditValues] = useState(null);
   const canManageAssets = hasPermission(currentUser?.role, "canManageAssets");
+  const canDeleteRecords = currentUser?.role === ROLES.SYSTEM_ADMIN;
   const [registerValues, setRegisterValues] = useState({
     property_number: "",
     serial_number: "",
@@ -3032,6 +3033,7 @@ function AssetRegistry({ currentUser }) {
         loading={isLoadingAssets}
         error={assetError}
         canManageAssets={canManageAssets}
+        canDeleteRecords={canDeleteRecords}
         onView={openViewAsset}
         onEdit={openEditAsset}
         onDelete={openDeleteAsset}
@@ -8635,7 +8637,8 @@ function DamagePage() {
   );
 }
 
-function SuppliesPage() {
+function SuppliesPage({ currentUser }) {
+  const canDeleteRecords = currentUser?.role === ROLES.SYSTEM_ADMIN;
   const [supplies, setSupplies] = useState([]);
   const [supplyRequests, setSupplyRequests] = useState([]);
   const [departments, setDepartments] = useState([]);
@@ -9659,7 +9662,7 @@ function SuppliesPage() {
                       >
                         <Pencil size={16} />
                       </button>
-                      <button
+                      {canDeleteRecords && <button
                         className="icon-button danger-action"
                         type="button"
                         title="Delete supply"
@@ -9670,7 +9673,7 @@ function SuppliesPage() {
                         }}
                       >
                         <Trash2 size={16} />
-                      </button>
+                      </button>}
                     </div>
                   </td>
                 </tr>
@@ -10482,8 +10485,8 @@ function SuppliesPage() {
   );
 }
 
-function PurchasePage() {
-  return <PurchaseWorkflowMonitor />;
+function PurchasePage({ currentUser }) {
+  return <PurchaseWorkflowMonitor currentUser={currentUser} />;
 
   const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -14445,6 +14448,7 @@ function AssetTable({
   loading = false,
   error = null,
   canManageAssets = false,
+  canDeleteRecords = false,
   onView,
   onEdit,
   onDelete,
@@ -14608,7 +14612,7 @@ function AssetTable({
                         >
                           <Pencil size={16} />
                         </button>
-                        <button
+                        {canDeleteRecords && <button
                           className="icon-button danger-action"
                           type="button"
                           title="Delete asset"
@@ -14617,7 +14621,7 @@ function AssetTable({
                           disabled={disabled}
                         >
                           <Trash2 size={16} />
-                        </button>
+                        </button>}
                       </>
                     )}
                   </div>

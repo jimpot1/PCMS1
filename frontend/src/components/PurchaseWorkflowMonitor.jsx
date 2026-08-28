@@ -28,7 +28,7 @@ function printPurchaseRequest(request) {
   printWindow.document.close();
 }
 
-export default function PurchaseWorkflowMonitor() {
+export default function PurchaseWorkflowMonitor({ currentUser }) {
   const [items, setItems] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [filters, setFilters] = useState({ status: 'all', department_id: '', request_type: '', current_stage: '', date_from: '', date_to: '', search: '' });
@@ -39,6 +39,7 @@ export default function PurchaseWorkflowMonitor() {
   const [editTarget, setEditTarget] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [actionLoading, setActionLoading] = useState(false);
+  const canDelete = currentUser?.role === 'System Administrator';
 
   const load = async () => {
     setLoading(true);
@@ -80,7 +81,7 @@ export default function PurchaseWorkflowMonitor() {
     <button className="workflow-icon-button" type="button" title="View Details" aria-label={`View details for ${item.request_number}`} onClick={() => setSelected(item)}><Eye size={16} /></button>
     <button className="workflow-icon-button" type="button" title="Print Request" aria-label={`Print ${item.request_number}`} onClick={() => printPurchaseRequest(item)}><Printer size={16} /></button>
     {canModify(item) && <button className="workflow-icon-button" type="button" title="Edit Request" aria-label={`Edit ${item.request_number}`} onClick={() => setEditTarget(item)}><Pencil size={16} /></button>}
-    {canModify(item) && <button className="workflow-icon-button destructive" type="button" title="Delete Request" aria-label={`Delete ${item.request_number}`} onClick={() => setDeleteTarget(item)}><Trash2 size={16} /></button>}
+    {canDelete && canModify(item) && <button className="workflow-icon-button destructive" type="button" title="Delete Request" aria-label={`Delete ${item.request_number}`} onClick={() => setDeleteTarget(item)}><Trash2 size={16} /></button>}
   </div>;
 
   return (
@@ -104,7 +105,7 @@ export default function PurchaseWorkflowMonitor() {
       <div className="panel workflow-table-panel">
         {loading ? <div className="loading-state">Loading workflow records...</div> : items.length === 0 ? <div className="workflow-empty-state"><div className="workflow-empty-icon"><Search size={20} /></div><h3>No requests found</h3><p>Try changing the filters or search term.</p><button className="secondary-button" type="button" onClick={resetFilters}>Reset filters</button></div> : <div className="table-responsive workflow-table-scroll"><table className="data-table workflow-table"><thead><tr><th>Request Number</th><th>Requester</th><th>Department</th><th>Type</th><th className="numeric">Total Amount</th><th>Current Stage</th><th>Status</th><th>Date Submitted</th><th>Current Approver</th><th className="actions-heading">Actions</th></tr></thead><tbody>{items.map((item) => <tr key={item.id}><td className="font-mono">{item.request_number || `PR-${item.id}`}</td><td className="truncate-cell" title={displayName(item)}>{displayName(item)}</td><td className="truncate-cell" title={item.department?.name || item.department_name || '-'}>{item.department?.name || item.department_name || '-'}</td><td>{item.request_type || '-'}</td><td className="numeric">PHP {Number(item.total_amount || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td><td><span className="stage-badge">{stageLabel(item.current_stage)}</span></td><td><span className={`status-badge status-${item.status || 'pending'}`}>{item.status || '-'}</span></td><td>{item.created_at ? new Date(item.created_at).toLocaleDateString() : '-'}</td><td className="truncate-cell" title={item.workflow?.next_approver?.name || item.workflow?.next_approver_role || '-'}>{item.workflow?.next_approver?.name || item.workflow?.next_approver_role || '-'}</td><td className="actions-cell">{actionButtons(item)}</td></tr>)}</tbody></table></div>}
       </div>
-      {selected && <PurchaseRequestDetails request={selected} onClose={() => setSelected(null)} onPrint={() => printPurchaseRequest(selected)} onEdit={canModify(selected) ? () => { setEditTarget(selected); setSelected(null); } : null} onDelete={canModify(selected) ? () => { setDeleteTarget(selected); setSelected(null); } : null} />}
+      {selected && <PurchaseRequestDetails request={selected} onClose={() => setSelected(null)} onPrint={() => printPurchaseRequest(selected)} onEdit={canModify(selected) ? () => { setEditTarget(selected); setSelected(null); } : null} onDelete={canDelete && canModify(selected) ? () => { setDeleteTarget(selected); setSelected(null); } : null} />}
       {editTarget && <RequestEditModal request={editTarget} departments={departments} onClose={() => setEditTarget(null)} onSaved={() => refreshAfterAction('Purchase request updated.')} />}
       {deleteTarget && <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="delete-request-title"><div className="confirm-dialog workflow-confirm-dialog"><div className="confirm-dialog-icon"><Trash2 size={20} /></div><h3 id="delete-request-title">Delete Purchase Request?</h3><p>Are you sure you want to delete request <strong>{deleteTarget.request_number}</strong>? This action cannot be undone.</p><div className="modal-actions"><button className="secondary-button" type="button" onClick={() => setDeleteTarget(null)} disabled={actionLoading}>Cancel</button><button className="danger-button" type="button" onClick={confirmDelete} disabled={actionLoading}><Trash2 size={15} /> {actionLoading ? 'Deleting...' : 'Delete Request'}</button></div></div></div>}
 </div>

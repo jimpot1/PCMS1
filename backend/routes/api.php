@@ -23,7 +23,7 @@ use Illuminate\Support\Facades\Route;
 
 Route::get('/purchase-requests/{purchaseRequest}/receipt/view', [PurchaseRequestController::class, 'receiptDocument']);
 
-Route::middleware(['auth'])->group(function () {
+Route::middleware(['auth', 'delete.admin'])->group(function () {
     Route::get('/dashboard', DashboardController::class);
     Route::get('/notifications', [NotificationController::class, 'index']);
     Route::patch('/notifications/read-all', [NotificationController::class, 'markAllRead']);
