@@ -13,7 +13,7 @@ use Illuminate\Support\Facades\Validator;
 class AuthController extends Controller
 {
     private const MAX_LOGIN_ATTEMPTS = 5;
-    private const LOGIN_LOCKOUT_MINUTES = 15;
+    private const LOGIN_LOCKOUT_MINUTES = 1;
     private const LOGIN_RATE_LIMIT_SECONDS = 60;
 
     public function login(Request $request)
