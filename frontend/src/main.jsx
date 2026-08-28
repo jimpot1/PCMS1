@@ -13947,7 +13947,11 @@ function ActivityPage() {
       { label: "Action", value: (log) => log.action },
       { label: "Description", value: (log) => log.text },
       { label: "User", value: (log) => log.user },
+      { label: "Email", value: (log) => log.email },
       { label: "IP", value: (log) => log.ip },
+      { label: "User Agent", value: (log) => log.user_agent },
+      { label: "Status", value: (log) => log.status },
+      { label: "Details", value: (log) => JSON.stringify(log.payload || {}) },
     ]);
   };
 
@@ -13963,17 +13967,30 @@ function ActivityPage() {
       {loading ? (
         <div className="loading-card">Loading activity…</div>
       ) : (
-        <div className="activity-list expanded">
+        <div className="table-card activity-log-table-wrap">
           {logs.length === 0 ? (
             <p className="small-text">No activity recorded yet.</p>
           ) : (
-            logs.map((log) => (
-              <div key={log.id}>
-                <span className="activity-dot" />
-                <p>{log.text}</p>
-                <time>{formatRelativeTime(log.time)}</time>
-              </div>
-            ))
+            <table className="activity-log-table">
+              <thead>
+                <tr><th>Time</th><th>Action</th><th>Description</th><th>User</th><th>Email</th><th>IP Address</th><th>User Agent</th><th>Status</th><th>Details</th></tr>
+              </thead>
+              <tbody>
+                {logs.map((log) => (
+                  <tr key={log.id}>
+                    <td title={log.time}>{formatRelativeTime(log.time)}</td>
+                    <td><span className="status info">{log.action || "activity"}</span></td>
+                    <td>{log.text || "-"}</td>
+                    <td>{log.user || "-"}</td>
+                    <td>{log.email || "-"}</td>
+                    <td>{log.ip || "-"}</td>
+                    <td className="activity-user-agent">{log.user_agent || "-"}</td>
+                    <td>{log.status || "-"}</td>
+                    <td><pre className="activity-log-details">{JSON.stringify(log.payload || {}, null, 2)}</pre></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           )}
         </div>
       )}

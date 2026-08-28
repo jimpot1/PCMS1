@@ -6340,6 +6340,37 @@ body:has(.modal-overlay) {
   max-width: 420px;
 }
 
+.activity-log-table-wrap {
+  overflow-x: auto;
+}
+
+.activity-log-table {
+  min-width: 1320px;
+}
+
+.activity-log-table th,
+.activity-log-table td {
+  vertical-align: top;
+  white-space: nowrap;
+}
+
+.activity-log-table td:nth-child(3),
+.activity-log-table td:nth-child(7) {
+  white-space: normal;
+  max-width: 260px;
+}
+
+.activity-log-details {
+  margin: 0;
+  max-width: 360px;
+  max-height: 150px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: 12px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace;
+  color: #475569;
+}
+
 .modal-card.confirm-dialog .modal-actions {
   flex-wrap: wrap;
 }
