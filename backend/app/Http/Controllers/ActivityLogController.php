@@ -28,9 +28,14 @@ class ActivityLogController extends Controller
                 'id' => $row->id,
                 'action' => $row->action,
                 'text' => ActivityLogFormatter::format($row->action, $payload),
+                'payload' => $payload,
+                'status' => $row->status,
                 'user' => $payload['user'] ?? null,
+                'email' => $payload['email'] ?? null,
                 'ip' => $payload['ip'] ?? null,
+                'user_agent' => $payload['user_agent'] ?? null,
                 'time' => $row->created_at,
+                'updated_at' => $row->updated_at,
             ];
         });
 
