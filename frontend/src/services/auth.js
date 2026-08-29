@@ -82,6 +82,10 @@ export async function signOut() {
 }
 
 export async function getCurrentSession() {
+  if (!getStoredUser()) {
+    return null;
+  }
+
   const response = await fetch(`${API_BASE_URL}/auth/me`, {
     method: 'GET',
     credentials: 'include',
