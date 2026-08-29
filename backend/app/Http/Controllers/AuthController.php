@@ -27,7 +27,7 @@ class AuthController extends Controller
             return response()->json(['message' => 'Account is not active.'], 403);
         }
 
-        if (! Auth::attempt([
+        if (! Auth::guard('web')->attempt([
             'email' => $request->input('email'),
             'password' => $request->input('password'),
         ])) {
@@ -36,12 +36,12 @@ class AuthController extends Controller
 
         $request->session()->regenerate();
 
-        return response()->json(['user' => Auth::user()]);
+        return response()->json(['user' => Auth::guard('web')->user()]);
     }
 
     public function logout(Request $request)
     {
-        Auth::logout();
+        Auth::guard('web')->logout();
 
         $request->session()->invalidate();
         $request->session()->regenerateToken();

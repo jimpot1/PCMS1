@@ -14,6 +14,9 @@ export function releaseReceiptUrl(path) {
 
 async function request(path, options = {}) {
   const headers = new Headers(options.headers || {});
+  const xsrfCookie = document.cookie
+    .split("; ")
+    .find((entry) => entry.startsWith("XSRF-TOKEN="));
 
   if (!(options.body instanceof FormData)) {
     headers.set("Content-Type", "application/json");
@@ -21,6 +24,13 @@ async function request(path, options = {}) {
 
   if (!headers.has("Accept")) {
     headers.set("Accept", "application/json");
+  }
+
+  if (xsrfCookie && !headers.has("X-XSRF-TOKEN")) {
+    headers.set(
+      "X-XSRF-TOKEN",
+      decodeURIComponent(xsrfCookie.substring("XSRF-TOKEN=".length)),
+    );
   }
 
   const response = await fetchWithTimeout(

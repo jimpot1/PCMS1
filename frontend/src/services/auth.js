@@ -39,13 +39,40 @@ export function getStoredUser() {
   }
 }
 
+function apiRoot() {
+  return API_BASE_URL.replace(/\/api\/?$/, '');
+}
+
+function xsrfToken() {
+  const cookie = document.cookie
+    .split('; ')
+    .find((entry) => entry.startsWith('XSRF-TOKEN='));
+
+  return cookie ? decodeURIComponent(cookie.substring('XSRF-TOKEN='.length)) : '';
+}
+
+async function getCsrfCookie() {
+  const response = await fetch(`${apiRoot()}/sanctum/csrf-cookie`, {
+    credentials: 'include',
+    headers: { Accept: 'application/json' }
+  });
+
+  if (!response.ok) {
+    throw new Error('Unable to initialize the security session.');
+  }
+}
+
 export async function signInWithEmail(email, password) {
+  await getCsrfCookie();
+
+  const token = xsrfToken();
   const response = await fetch(`${API_BASE_URL}/auth/login`, {
     method: 'POST',
     credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
-      Accept: 'application/json'
+      Accept: 'application/json',
+      ...(token ? { 'X-XSRF-TOKEN': token } : {})
     },
     body: JSON.stringify({ email, password })
   });
@@ -69,11 +96,13 @@ export async function signInWithEmail(email, password) {
 }
 
 export async function signOut() {
+  const token = xsrfToken();
   await fetch(`${API_BASE_URL}/auth/logout`, {
     method: 'POST',
     credentials: 'include',
     headers: {
-      Accept: 'application/json'
+      Accept: 'application/json',
+      ...(token ? { 'X-XSRF-TOKEN': token } : {})
     }
   });
 
@@ -82,10 +111,6 @@ export async function signOut() {
 }
 
 export async function getCurrentSession() {
-  if (!getStoredUser()) {
-    return null;
-  }
-
   const response = await fetch(`${API_BASE_URL}/auth/me`, {
     method: 'GET',
     credentials: 'include',

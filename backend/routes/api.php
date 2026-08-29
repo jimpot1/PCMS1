@@ -23,7 +23,7 @@ use Illuminate\Support\Facades\Route;
 
 Route::get('/purchase-requests/{purchaseRequest}/receipt/view', [PurchaseRequestController::class, 'receiptDocument']);
 
-Route::middleware(['auth', 'delete.admin'])->group(function () {
+Route::middleware(['auth:sanctum', 'delete.admin'])->group(function () {
     Route::get('/dashboard', DashboardController::class);
     Route::get('/notifications', [NotificationController::class, 'index']);
     Route::patch('/notifications/read-all', [NotificationController::class, 'markAllRead']);
@@ -139,6 +139,6 @@ Route::middleware(['auth', 'delete.admin'])->group(function () {
 use App\Http\Controllers\AuthController;
 
 Route::post('/auth/login', [AuthController::class, 'login']);
-Route::post('/auth/logout', [AuthController::class, 'logout'])->middleware('auth');
-Route::get('/auth/me', [AuthController::class, 'me'])->middleware('auth');
-Route::post('/auth/change-password', [AuthController::class, 'changePassword'])->middleware('auth');
+Route::post('/auth/logout', [AuthController::class, 'logout'])->middleware('auth:sanctum');
+Route::get('/auth/me', [AuthController::class, 'me'])->middleware('auth:sanctum');
+Route::post('/auth/change-password', [AuthController::class, 'changePassword'])->middleware('auth:sanctum');
