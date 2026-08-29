@@ -29,6 +29,11 @@ function persistCurrentUser(user) {
   window.dispatchEvent(new Event('pcms:auth-changed'));
 }
 
+function clearPcmsAuthState() {
+  localStorage.removeItem(CURRENT_USER_KEY);
+  window.dispatchEvent(new Event('pcms:auth-changed'));
+}
+
 export function getStoredUser() {
   try {
     const rawUser = localStorage.getItem(CURRENT_USER_KEY);
@@ -97,16 +102,20 @@ export async function signInWithEmail(email, password) {
 
 export async function signOut() {
   const token = xsrfToken();
-  await fetch(`${API_BASE_URL}/auth/logout`, {
-    method: 'POST',
-    credentials: 'include',
-    headers: {
-      Accept: 'application/json',
-      ...(token ? { 'X-XSRF-TOKEN': token } : {})
-    }
-  });
 
-  persistCurrentUser(null);
+  try {
+    await fetch(`${API_BASE_URL}/auth/logout`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: {
+        Accept: 'application/json',
+        ...(token ? { 'X-XSRF-TOKEN': token } : {})
+      }
+    });
+  } finally {
+    clearPcmsAuthState();
+  }
+
   return { error: null };
 }
 

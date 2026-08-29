@@ -2,12 +2,14 @@
     RewriteEngine On
     RewriteBase /
 
-    # Route API requests to backend Laravel public entrypoint
-    RewriteCond %{REQUEST_FILENAME} !-f
-    RewriteCond %{REQUEST_FILENAME} !-d
-    RewriteRule ^api/(.*)$ backend/public/index.php/$1 [L,QSA]
+    # Route API and asset requests to the Laravel backend without stripping the route path
+    RewriteCond %{REQUEST_URI} ^/api/ [OR]
+    RewriteCond %{REQUEST_URI} ^/sanctum/ [OR]
+    RewriteCond %{REQUEST_URI} ^/storage/ [OR]
+    RewriteCond %{REQUEST_URI} ^/ocr/
+    RewriteRule ^.*$ backend/public/index.php [L,QSA]
 
-    # Route all other requests to frontend index.html (for React routing)
+    # Route all other requests to the frontend app
     RewriteCond %{REQUEST_FILENAME} !-f
     RewriteCond %{REQUEST_FILENAME} !-d
     RewriteRule ^ index.html [L,QSA]
