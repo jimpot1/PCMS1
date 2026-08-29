@@ -5,26 +5,17 @@ return [
 
     'allowed_methods' => ['*'],
 
-    'allowed_origins' => [
+    'allowed_origins' => array_values(array_filter([
         'http://localhost:5173',
         'http://127.0.0.1:5173',
         'http://localhost:5174',
         'http://127.0.0.1:5174',
         'http://localhost:3000',
         'http://127.0.0.1:3000',
-        // Add your Hostinger domain here - example:
-        // 'https://yourdomain.com',
-        // 'https://www.yourdomain.com',
-        // For now, allow all origins in production (not recommended for security)
-        env('APP_ENV') === 'production' ? env('APP_URL') : null,
-    ],
+        env('FRONTEND_URL'),
+    ])),
 
-    'allowed_origins_patterns' => [
-        '#^https://([a-z0-9-]+\.)?hostforgeplatforms?\.com$#',
-        '#^https://([a-z0-9-]+\.)?hostforgeplatform\.cloud$#',
-        '#^https://.*\.hostinger\.com$#',
-        '#^https://.*\.hostingersite\.com$#',
-    ],
+    'allowed_origins_patterns' => [],
 
     'allowed_headers' => ['*'],
 

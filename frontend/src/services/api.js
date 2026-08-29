@@ -13,7 +13,6 @@ export function releaseReceiptUrl(path) {
 }
 
 async function request(path, options = {}) {
-  const currentUser = getStoredCurrentUser();
   const headers = new Headers(options.headers || {});
 
   if (!(options.body instanceof FormData)) {
@@ -22,15 +21,6 @@ async function request(path, options = {}) {
 
   if (!headers.has("Accept")) {
     headers.set("Accept", "application/json");
-  }
-
-  if (currentUser?.id) {
-    headers.set("X-PCMS-User-ID", currentUser.id);
-    headers.set("Authorization", `Bearer ${currentUser.id}`);
-  }
-
-  if (currentUser?.email) {
-    headers.set("X-PCMS-User-Email", currentUser.email);
   }
 
   const response = await fetchWithTimeout(
@@ -94,16 +84,6 @@ async function request(path, options = {}) {
   }
 
   return payload;
-}
-
-function getStoredCurrentUser() {
-  try {
-    const rawUser = localStorage.getItem("pcms_current_user");
-    return rawUser ? JSON.parse(rawUser) : null;
-  } catch (error) {
-    localStorage.removeItem("pcms_current_user");
-    return null;
-  }
 }
 
 function normalizeApiErrorMessage(payload, status) {

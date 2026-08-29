@@ -23,18 +23,20 @@ class AuthController extends Controller
 
         $user = User::where('email', $request->input('email'))->first();
 
-        if (! $user || ! Hash::check($request->input('password'), $user->password_hash)) {
-            return response()->json(['message' => 'Invalid email or password.'], 401);
-        }
-
-        if ($user->status !== 'active') {
+        if ($user && $user->status !== 'active') {
             return response()->json(['message' => 'Account is not active.'], 403);
         }
 
-        Auth::login($user);
+        if (! Auth::attempt([
+            'email' => $request->input('email'),
+            'password' => $request->input('password'),
+        ])) {
+            return response()->json(['message' => 'Invalid email or password.'], 401);
+        }
+
         $request->session()->regenerate();
 
-        return response()->json(['user' => $user]);
+        return response()->json(['user' => Auth::user()]);
     }
 
     public function logout(Request $request)
