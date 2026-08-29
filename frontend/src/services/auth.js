@@ -101,7 +101,7 @@ export async function getCurrentSession() {
     return null;
   }
 
-  const user = normalizeProfile(payload);
+  const user = normalizeProfile(payload.user || payload);
   persistCurrentUser(user);
   return user;
 }
