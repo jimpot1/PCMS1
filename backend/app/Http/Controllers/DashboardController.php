@@ -15,6 +15,20 @@ use Illuminate\Support\Facades\DB;
 
 class DashboardController
 {
+    public function ppmoMetrics(): JsonResponse
+    {
+        return response()->json([
+            'pending_returns' => GatePass::where('status', 'approved')->count(),
+            'stock_count_tasks' => DB::table('stock_movements')
+                ->where('movement_type', 'out')
+                ->where('created_at', '>=', now()->subDays(7))
+                ->count(),
+            'documents_pending_print' => GatePass::where('status', 'approved')
+                ->whereNull('returned_at')
+                ->count(),
+        ]);
+    }
+
     public function __invoke(): JsonResponse
     {
         $pendingRequests = PurchaseRequest::where('status', 'pending')->count();

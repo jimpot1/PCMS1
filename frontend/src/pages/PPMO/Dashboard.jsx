@@ -18,9 +18,10 @@ export default function PPMODashboard() {
     async function load() {
       try {
         setLoading(true);
-        const [queueResponse, receivingResponse] = await Promise.all([
+        const [queueResponse, receivingResponse, metricsResponse] = await Promise.all([
           pcmsApi.ppmoReleaseQueue(),
-          pcmsApi.fetchGatePasses({ limit: 10 })
+          pcmsApi.fetchGatePasses({ limit: 10 }),
+          pcmsApi.ppmoMetrics()
         ]);
 
         if (!mounted) return;
@@ -36,9 +37,9 @@ export default function PPMODashboard() {
           approvedReleases: queueResponse.purchaseRequests.length + queueResponse.gatePasses.length,
           itemsReady: queueResponse.purchaseRequests.length + queueResponse.gatePasses.length,
           todaysDeliveries: receivingResponse.length,
-          pendingReturns: 3,
-          stockCountTasks: 5,
-          documentsPendingPrint: 4
+          pendingReturns: metricsResponse?.pending_returns || 0,
+          stockCountTasks: metricsResponse?.stock_count_tasks || 0,
+          documentsPendingPrint: metricsResponse?.documents_pending_print || 0
         });
       } catch (err) {
         if (!mounted) return;
@@ -50,7 +51,7 @@ export default function PPMODashboard() {
     }
 
     load();
-    return () => { mounted = false; };
+    return () => { mounted = false };
   }, []);
 
   if (error) {

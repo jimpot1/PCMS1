@@ -24,13 +24,18 @@ class User extends Authenticatable
         'password_hash',
         'role',
         'department',
-        'status'
+        'status',
+        'failed_login_attempts',
+        'locked_until',
+        'last_failed_login_at'
     ];
 
     protected $hidden = ['password_hash', 'remember_token'];
 
     protected $casts = [
         'email_verified_at' => 'datetime',
+        'locked_until' => 'datetime',
+        'last_failed_login_at' => 'datetime',
     ];
 
     public function getAuthPassword()

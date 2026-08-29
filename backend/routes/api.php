@@ -25,6 +25,7 @@ Route::get('/purchase-requests/{purchaseRequest}/receipt/view', [PurchaseRequest
 
 Route::middleware(['auth:sanctum', 'delete.admin'])->group(function () {
     Route::get('/dashboard', DashboardController::class);
+    Route::get('/ppmo/metrics', [DashboardController::class, 'ppmoMetrics'])->middleware('role:PPMO Staff,Property Custodian,OIC');
     Route::get('/notifications', [NotificationController::class, 'index']);
     Route::patch('/notifications/read-all', [NotificationController::class, 'markAllRead']);
     Route::patch('/notifications/{source}/{id}/read', [NotificationController::class, 'markAsRead']);

@@ -855,6 +855,10 @@ export async function ppmoReleaseQueue() {
   };
 }
 
+export async function ppmoMetrics() {
+  return request("/ppmo/metrics");
+}
+
 export async function ppmoRelease(type, id) {
   return oicRelease(type, id);
 }
@@ -1341,6 +1345,7 @@ export const pcmsApi = {
   oicRelease: (type, id) => oicRelease(type, id),
   ppmoReleaseQueue: () => ppmoReleaseQueue(),
   ppmoRelease: (type, id) => ppmoRelease(type, id),
+  ppmoMetrics: () => ppmoMetrics(),
   fetchReleasedRequests: (opts) => fetchReleasedRequests(opts),
   fetchReleaseReceipt: (id) => fetchReleaseReceipt(id),
   receiptDocumentUrl: (id) => receiptDocumentUrl(id),
