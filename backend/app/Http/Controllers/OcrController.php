@@ -36,7 +36,7 @@ class OcrController
     public function scan(Request $request): JsonResponse
     {
         $request->validate([
-            'image' => ['required', 'image', 'max:8192'],
+            'image' => ['required', 'image', 'max:20480'],
         ]);
 
         if (! $request->hasFile('image') || ! $request->file('image')->isValid()) {

@@ -11888,6 +11888,73 @@ function OcrPage() {
       ? `${file.name || "capture"}-${file.size}-${file.lastModified || 0}`
       : "";
 
+  const prepareImageForUpload = async (
+    file,
+    { maxWidth = 1600, maxHeight = 1600, maxBytes = 2 * 1024 * 1024 } = {},
+  ) => {
+    if (!file || !file.type.startsWith("image/")) return file;
+
+    if (file.size <= maxBytes) {
+      return file;
+    }
+
+    const dataUrl = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(new Error("Unable to read image file."));
+      reader.readAsDataURL(file);
+    });
+
+    const image = await new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error("Unable to decode image file."));
+      img.src = dataUrl;
+    });
+
+    const scale = Math.min(
+      1,
+      maxWidth / image.width,
+      maxHeight / image.height,
+    );
+
+    const width = Math.max(1, Math.round(image.width * scale));
+    const height = Math.max(1, Math.round(image.height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+
+    const context = canvas.getContext("2d");
+    context.drawImage(image, 0, 0, width, height);
+
+    const mimeType = file.type === "image/png" ? "image/jpeg" : "image/jpeg";
+    let quality = 0.78;
+    let blob = null;
+
+    while (quality >= 0.3) {
+      blob = await new Promise((resolve) => {
+        canvas.toBlob(resolve, mimeType, quality);
+      });
+
+      if (blob && blob.size <= maxBytes) {
+        break;
+      }
+
+      quality -= 0.1;
+    }
+
+    if (!blob) {
+      return file;
+    }
+
+    const compressedFile = new File([blob], file.name.replace(/\.[^.]+$/, ".jpg"), {
+      type: "image/jpeg",
+      lastModified: Date.now(),
+    });
+
+    return compressedFile.size <= maxBytes ? compressedFile : file;
+  };
+
   const handleImageSelect = (file) => {
     if (!file) return;
     setError("");
@@ -11944,8 +12011,9 @@ function OcrPage() {
         return;
       }
 
+      const uploadFile = await prepareImageForUpload(imageFile);
       const formData = new FormData();
-      formData.append("image", imageFile);
+      formData.append("image", uploadFile, uploadFile.name || "ocr-image.jpg");
       const response = await pcmsApi.scanOcr(formData);
       const structuredData = response?.details || response?.data || {};
       const isSuccessful = response?.success !== false;
