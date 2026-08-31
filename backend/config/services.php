@@ -13,6 +13,7 @@ return [
 
     'openai' => [
         'api_key' => env('OPENAI_API_KEY'),
+        'api_url' => env('OPENAI_API_URL', 'https://api.openai.com/v1'),
         'model' => env('OPENAI_MODEL', 'gpt-5.6'),
         'timeout' => (int) env('OPENAI_TIMEOUT', 20),
     ],

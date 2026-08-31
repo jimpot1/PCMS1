@@ -70,12 +70,17 @@ class LlmAnomalyExplanationService
         $response = Http::withToken($apiKey)
             ->acceptJson()
             ->timeout(config('services.openai.timeout', 20))
-            ->post('https://api.openai.com/v1/responses', [
+            ->post(config('services.openai.api_url', 'https://api.openai.com/v1') . '/chat/completions', [
                 'model' => config('services.openai.model', 'gpt-5.6'),
-                'instructions' => $this->instructions(),
-                'input' => $this->buildPrompt($anomaly),
-                'text' => [
-                    'format' => ['type' => 'text'],
+                'messages' => [
+                    [
+                        'role' => 'system',
+                        'content' => $this->instructions(),
+                    ],
+                    [
+                        'role' => 'user',
+                        'content' => $this->buildPrompt($anomaly),
+                    ],
                 ],
             ]);
 
@@ -83,7 +88,7 @@ class LlmAnomalyExplanationService
             throw new \RuntimeException('OpenAI request failed with status ' . $response->status() . '.');
         }
 
-        $text = trim((string) ($response->json('output_text') ?? $this->extractOutputText($response->json('output') ?? [])));
+        $text = trim((string) ($response->json('choices.0.message.content') ?? ''));
 
         if ($text === '') {
             throw new \RuntimeException('OpenAI response did not include explanation text.');
@@ -131,20 +136,5 @@ class LlmAnomalyExplanationService
         $decoded = json_decode($context, true);
 
         return is_array($decoded) ? $decoded : [];
-    }
-
-    protected function extractOutputText(array $output): string
-    {
-        $text = '';
-
-        foreach ($output as $item) {
-            foreach (($item['content'] ?? []) as $content) {
-                if (($content['type'] ?? null) === 'output_text' && isset($content['text'])) {
-                    $text .= $content['text'];
-                }
-            }
-        }
-
-        return $text;
     }
 }
