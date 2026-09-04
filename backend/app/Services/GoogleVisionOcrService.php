@@ -18,7 +18,7 @@ class GoogleVisionOcrService
         try {
             $credentials = self::credentialsConfig();
             $client = new ImageAnnotatorClient([
-                'credentialsConfig' => $credentials,
+                'credentials' => $credentials,
                 'transport' => 'rest',
             ]);
 
@@ -76,7 +76,7 @@ class GoogleVisionOcrService
         }
     }
 
-    protected static function credentialsConfig(): array
+    protected static function credentialsConfig(): array|string
     {
         $base64 = trim((string) config('services.google_vision.credentials_base64', ''));
 
@@ -93,7 +93,7 @@ class GoogleVisionOcrService
                 throw new \RuntimeException('GOOGLE_VISION_CREDENTIALS_BASE64 does not contain a valid service-account JSON key.');
             }
 
-            return ['keyFile' => $credentials];
+            return $credentials;
         }
 
         $path = trim((string) config('services.google_vision.credentials_path', ''));
@@ -106,7 +106,7 @@ class GoogleVisionOcrService
             throw new \RuntimeException("Google Vision credentials file is missing or unreadable: {$path}");
         }
 
-        return ['keyFilePath' => $path];
+        return $path;
     }
 
     protected static function extractFields(string $text): array

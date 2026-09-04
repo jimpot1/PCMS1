@@ -7,6 +7,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 
 class OcrController
 {
@@ -68,7 +69,7 @@ class OcrController
         $fields = $result['fields'] ?? [];
         $storedImagePath = $file->store('ocr-scans', 'public');
 
-        $scanId = DB::table('ocr_scans')->insertGetId([
+        $scanData = [
             'asset_id' => null,
             'image_path' => $storedImagePath,
             'extracted_payload' => json_encode([
@@ -82,8 +83,13 @@ class OcrController
             'confidence_score' => $result['confidence'],
             'confirmed_by' => null,
             'created_at' => now(),
-            'updated_at' => now(),
-        ]);
+        ];
+
+        if (Schema::hasColumn('ocr_scans', 'updated_at')) {
+            $scanData['updated_at'] = now();
+        }
+
+        $scanId = DB::table('ocr_scans')->insertGetId($scanData);
 
         $confidence = max(0, min(100, (float) $result['confidence']));
 

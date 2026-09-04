@@ -441,10 +441,10 @@ function App() {
     return unsubscribe;
   }, []);
 
-  const handleLogin = async ({ email, password }) => {
+  const handleLogin = async ({ email, password, remember }) => {
     setAuthError(null);
     setIsSigningIn(true);
-    const { data, error } = await signInWithEmail(email, password);
+    const { data, error } = await signInWithEmail(email, password, remember);
     setIsSigningIn(false);
 
     if (error) {
@@ -1171,11 +1171,13 @@ function App() {
 function LoginPage({ onLogin, authError, isSigningIn }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [remember, setRemember] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [forgotPasswordMessage, setForgotPasswordMessage] = useState("");
 
   const handleSubmit = (event) => {
     event.preventDefault();
-    onLogin({ email, password });
+    onLogin({ email, password, remember });
   };
 
   return (
@@ -1255,6 +1257,33 @@ function LoginPage({ onLogin, authError, isSigningIn }) {
                   </button>
                 </div>
               </div>
+
+              <div className="login-options">
+                <label className="remember-option">
+                  <input
+                    type="checkbox"
+                    checked={remember}
+                    onChange={(event) => setRemember(event.target.checked)}
+                  />
+                  <span>Remember me</span>
+                </label>
+                <button
+                  type="button"
+                  className="forgot-password"
+                  onClick={() =>
+                    setForgotPasswordMessage(
+                      "Please contact your system administrator to reset your password.",
+                    )
+                  }
+                >
+                  Forgot Password?
+                </button>
+              </div>
+              {forgotPasswordMessage && (
+                <div className="login-help" role="status">
+                  {forgotPasswordMessage}
+                </div>
+              )}
 
               <button
                 className="login-btn"

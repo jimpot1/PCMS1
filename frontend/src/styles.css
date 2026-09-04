@@ -775,6 +775,49 @@ button {
   transition: 0.3s;
 }
 
+.login-options {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 16px 0 20px;
+  font-size: 13px;
+}
+
+.remember-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-muted, #64748b);
+  cursor: pointer;
+}
+
+.remember-option input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--primary, #2563eb);
+}
+
+.forgot-password {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--primary, #2563eb);
+  font-size: inherit;
+  font-weight: 600;
+}
+
+.forgot-password:hover {
+  text-decoration: underline;
+}
+
+.login-help {
+  margin: -8px 0 16px;
+  color: var(--text-muted, #64748b);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
 .login-btn:hover {
   background: #1d4ed8;
 }

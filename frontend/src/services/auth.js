@@ -67,7 +67,7 @@ async function getCsrfCookie() {
   }
 }
 
-export async function signInWithEmail(email, password) {
+export async function signInWithEmail(email, password, remember = false) {
   await getCsrfCookie();
 
   const token = xsrfToken();
@@ -79,7 +79,7 @@ export async function signInWithEmail(email, password) {
       Accept: 'application/json',
       ...(token ? { 'X-XSRF-TOKEN': token } : {})
     },
-    body: JSON.stringify({ email, password })
+    body: JSON.stringify({ email, password, remember })
   });
 
   const payload = await response.json().catch(() => ({}));

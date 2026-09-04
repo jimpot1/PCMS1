@@ -55,7 +55,7 @@ class AuthController extends Controller
         if (! Auth::guard('web')->attempt([
             'email' => $request->input('email'),
             'password' => $request->input('password'),
-        ])) {
+        ], $request->boolean('remember'))) {
             // Increment failed login attempts
             $user->failed_login_attempts++;
             $user->last_failed_login_at = Carbon::now();
