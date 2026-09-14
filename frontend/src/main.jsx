@@ -233,9 +233,148 @@ const sidebarItems = sidebarSections.flatMap((section) => section.items);
 
 const formatCurrency = (value) => `PHP ${value.toLocaleString()}`;
 
+const resolveActivePageFromPath = (pathname) => {
+  const segments = pathname.split("/").filter(Boolean);
+  const tailSegment = segments[segments.length - 1] || "dashboard";
+  const pathToPage = {
+    dashboard: "dashboard",
+    ppmo: "dashboard",
+    assets: "assets",
+    categories: "categories",
+    assignments: "assignments",
+    transfers: "transfers",
+    returns: "returns",
+    supplies: "supplies",
+    departments: "departments",
+    maintenance: "maintenance",
+    damage: "damage",
+    purchases: "purchases",
+    gatepass: "gatepass",
+    audit: "audit",
+    ocr: "ocr",
+    monitoring: "monitoring",
+    reports: "reports",
+    users: "users",
+    notifications: "notifications",
+    settings: "settings",
+    activity: "activity",
+    profile: "dashboard",
+    "account-settings": "dashboard",
+    "approved-release-queue": "purchases",
+    "receive-deliveries": "purchases",
+    "walk-in-request": "purchases",
+    "review-queue": "dashboard",
+    "pending-reviews": "dashboard",
+    "conditional-approvals": "dashboard",
+    "information-requests": "dashboard",
+    "review-history": "dashboard",
+    "validation-anomalies": "dashboard",
+    "audit-trail": "dashboard",
+  };
+
+  return pathToPage[tailSegment] || "dashboard";
+};
+
+const getPagePathForRole = (pageId, role) => {
+  if (role === "President" || role === "CEO") {
+    const paths = {
+      dashboard: "/president/dashboard",
+      approvals: "/president/approvals",
+      history: "/president/history",
+      analytics: "/president/analytics",
+      notifications: "/president/notifications",
+    };
+    return paths[pageId] || "/president/dashboard";
+  }
+
+  if (role === "Department Head") {
+    const paths = {
+      dashboard: "/department-head/dashboard",
+      pending: "/department-head/pending",
+      queue: "/department-head/queue",
+      history: "/department-head/history",
+      analytics: "/department-head/analytics",
+      notifications: "/department-head/notifications",
+    };
+    return paths[pageId] || "/department-head/dashboard";
+  }
+
+  if (role === "OIC" || role === "Property Custodian") {
+    const paths = {
+      dashboard: "/oic/dashboard",
+      approvals: "/oic/approvals",
+      reports: "/oic/reports",
+      monitoring: "/oic/monitoring",
+      audit: "/oic/audit",
+      notifications: "/oic/notifications",
+    };
+    return paths[pageId] || "/oic/dashboard";
+  }
+
+  if (role === "PPMO Staff") {
+    const paths = {
+      dashboard: "/ppmo/dashboard",
+      assets: "/ppmo/assets",
+      ocr: "/ppmo/ocr",
+      categories: "/ppmo/categories",
+      assignments: "/ppmo/assignments",
+      transfers: "/ppmo/transfers",
+      returns: "/ppmo/returns",
+      supplies: "/ppmo/supplies",
+      departments: "/ppmo/departments",
+      maintenance: "/ppmo/maintenance",
+      damage: "/ppmo/damage",
+      purchases: "/ppmo/purchases",
+      gatepass: "/ppmo/gatepass",
+      audit: "/ppmo/audit",
+      monitoring: "/ppmo/monitoring",
+      reports: "/ppmo/reports",
+      notifications: "/ppmo/notifications",
+      users: "/ppmo/users",
+      activity: "/ppmo/activity",
+      settings: "/ppmo/settings",
+    };
+    return paths[pageId] || "/ppmo/dashboard";
+  }
+
+  if (role === ROLES.RECOMMENDING_APPROVER) {
+    const paths = {
+      dashboard: "/recommending-approver/dashboard",
+      "review-queue": "/recommending-approver/review-queue",
+      "conditional-approvals": "/recommending-approver/conditional-approvals",
+      "information-requests": "/recommending-approver/information-requests",
+      "review-history": "/recommending-approver/review-history",
+      "validation-anomalies": "/recommending-approver/validation-anomalies",
+      "audit-trail": "/recommending-approver/audit-trail",
+      notifications: "/recommending-approver/notifications",
+    };
+    return paths[pageId] || "/recommending-approver/dashboard";
+  }
+
+  if (role === ROLES.SYSTEM_ADMIN) {
+    return "/";
+  }
+
+  if (role === "Requester") {
+    return "/requester";
+  }
+
+  return "/";
+};
+
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [activePage, setActivePage] = useState("dashboard");
+  const [activePage, setActivePage] = useState(() => {
+    const hrefPath = window.location.pathname;
+    const urlPage = resolveActivePageFromPath(hrefPath);
+    const storedPage = localStorage.getItem("pcms_active_page");
+
+    if (hrefPath !== "/" && urlPage !== "dashboard") {
+      return urlPage;
+    }
+
+    return storedPage || urlPage;
+  });
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
     () => localStorage.getItem("pcms_sidebar_collapsed") === "1",
@@ -291,6 +430,10 @@ function App() {
     const interval = setInterval(loadNotifications, 60000);
     return () => clearInterval(interval);
   }, [isAuthenticated]);
+
+  useEffect(() => {
+    localStorage.setItem("pcms_active_page", activePage);
+  }, [activePage]);
 
   useEffect(() => {
     const handleKeyDown = (event) => {
@@ -407,6 +550,24 @@ function App() {
       return;
     }
 
+    if (notification?.url) {
+      const destination = new URL(notification.url, window.location.origin);
+      const page = destination.searchParams.get("page");
+      const pageByPath = {
+        "/ppmo/supplies": "supplies",
+        "/ppmo/maintenance": "maintenance",
+        "/ppmo/audit": "audit",
+        "/ppmo/ocr": "ocr",
+        "/ppmo/approved-release-queue": "approved-release-queue",
+        "/ppmo/purchases": "purchases",
+      };
+      const targetPage = page || pageByPath[destination.pathname];
+      if (targetPage) {
+        setActivePage(targetPage);
+        return;
+      }
+    }
+
     setActivePage("notifications");
   };
 
@@ -458,6 +619,7 @@ function App() {
   };
 
   const handleLogout = async () => {
+    localStorage.removeItem("pcms_active_page");
     await signOut();
     setIsAuthenticated(false);
     setCurrentUser(null);
@@ -487,6 +649,11 @@ function App() {
   const handleSelectPage = (pageId) => {
     setActivePage(pageId);
     setSidebarOpen(false);
+
+    const nextPath = getPagePathForRole(pageId, role);
+    if (nextPath && nextPath !== window.location.pathname) {
+      window.history.pushState({}, "", nextPath);
+    }
   };
 
   const toggleSidebarCollapsed = () => {
@@ -1340,7 +1507,10 @@ function RoleDashboardShell({
 }
 
 function RequesterDashboard({ currentUser, onLogout }) {
-  const [activeAction, setActiveAction] = useState("dashboard");
+  const [activeAction, setActiveAction] = useState(() => {
+    const storedAction = localStorage.getItem("pcms_requester_active_action");
+    return storedAction || "dashboard";
+  });
   const [summary, setSummary] = useState(null);
   const [summaryError, setSummaryError] = useState(null);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
@@ -1383,6 +1553,10 @@ function RequesterDashboard({ currentUser, onLogout }) {
       setSummaryError(err.message);
     }
   };
+
+  useEffect(() => {
+    localStorage.setItem("pcms_requester_active_action", activeAction);
+  }, [activeAction]);
 
   useEffect(() => {
     loadSummary();
@@ -1689,6 +1863,7 @@ function RequesterStatus({ records: initialRecords = [] }) {
       loading={loading}
       error={error}
       onView
+      allowAdminDelete={false}
     />
   );
 }
@@ -1774,7 +1949,14 @@ function RequesterReceiveItems({ onChanged, initialItems = [] }) {
   );
 }
 
-function RequesterTable({ title, records, loading, error, onView }) {
+function RequesterTable({
+  title,
+  records,
+  loading,
+  error,
+  onView,
+  allowAdminDelete = false,
+}) {
   const [selectedRequest, setSelectedRequest] = useState(null);
   const [editTarget, setEditTarget] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
@@ -1877,7 +2059,7 @@ function RequesterTable({ title, records, loading, error, onView }) {
                           <Pencil size={15} />
                         </button>
                       )}
-                      {isSystemAdmin && canModify(record) && (
+                      {allowAdminDelete && canModify(record) && (
                         <button
                           className="requester-action-icon-button destructive"
                           type="button"
@@ -1958,10 +2140,13 @@ function DepartmentHeadDashboard({ currentUser, onLogout }) {
   const [error, setError] = useState(null);
   const [message, setMessage] = useState(null);
   const [selectedItem, setSelectedItem] = useState(null);
-  const [activeView, setActiveView] = useState("dashboard");
+  const [activeView, setActiveView] = useState(() => {
+    const storedView = localStorage.getItem("pcms_departmenthead_active_view");
+    return storedView || "dashboard";
+  });
 
-  React.useEffect(() => {
-    console.log("DepartmentHead activeView ->", activeView);
+  useEffect(() => {
+    localStorage.setItem("pcms_departmenthead_active_view", activeView);
   }, [activeView]);
 
   const loadQueue = async () => {
@@ -13500,10 +13685,12 @@ function UsersPage() {
     middle_name: "",
     last_name: "",
     email: "",
+    password: "",
     role: "",
     department: "",
   });
   const [editSaving, setEditSaving] = useState(false);
+  const [showEditPassword, setShowEditPassword] = useState(false);
 
   useEffect(() => {
     loadUsers();
@@ -13580,11 +13767,13 @@ function UsersPage() {
     setError(null);
     setSuccess(null);
     setEditingUser(user);
+    setShowEditPassword(false);
     setEditFormData({
       first_name: user.first_name || "",
       middle_name: user.middle_name || "",
       last_name: user.last_name || "",
       email: user.email || "",
+      password: "",
       role: user.role || "",
       department: user.department || "",
     });
@@ -13595,9 +13784,15 @@ function UsersPage() {
     setError(null);
     setEditSaving(true);
     try {
-      await pcmsApi.updateUser(editingUser.id, editFormData);
+      const payload = { ...editFormData };
+      if (!payload.password || !payload.password.trim()) {
+        delete payload.password;
+      }
+
+      await pcmsApi.updateUser(editingUser.id, payload);
       setSuccess(`${editingUser.full_name} was updated.`);
       setEditingUser(null);
+      setShowEditPassword(false);
       loadUsers();
     } catch (err) {
       setError(err?.message || "Failed to update user.");
@@ -13729,7 +13924,7 @@ function UsersPage() {
                 <label className="full-width">
                   Password{" "}
                   <span className="field-hint">
-                    Optional. Leave blank to generate one automatically.
+                    Required. Share this password with the user so they can sign in.
                   </span>
                   <span className="password-input-wrapper">
                     <input
@@ -13739,6 +13934,7 @@ function UsersPage() {
                         setFormData({ ...formData, password: e.target.value })
                       }
                       minLength={8}
+                      required
                       autoComplete="new-password"
                       placeholder="Minimum 8 characters"
                     />
@@ -13881,6 +14077,41 @@ function UsersPage() {
                       </option>
                     ))}
                   </select>
+                </label>
+                <label className="full-width">
+                  New Password
+                  <span className="field-hint">
+                    Leave blank to keep the current password.
+                  </span>
+                  <span className="password-input-wrapper">
+                    <input
+                      type={showEditPassword ? "text" : "password"}
+                      value={editFormData.password}
+                      onChange={(e) =>
+                        setEditFormData({
+                          ...editFormData,
+                          password: e.target.value,
+                        })
+                      }
+                      minLength={8}
+                      autoComplete="new-password"
+                      placeholder="Minimum 8 characters"
+                    />
+                    <button
+                      className="password-toggle"
+                      type="button"
+                      onClick={() => setShowEditPassword((value) => !value)}
+                      aria-label={
+                        showEditPassword ? "Hide password" : "Show password"
+                      }
+                    >
+                      {showEditPassword ? (
+                        <EyeOff size={18} />
+                      ) : (
+                        <Eye size={18} />
+                      )}
+                    </button>
+                  </span>
                 </label>
               </div>
               <div className="modal-actions">

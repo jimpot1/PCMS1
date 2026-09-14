@@ -11,6 +11,7 @@ class PurchaseRequest extends Model
 
     protected $fillable = [
         'request_number',
+        'procurement_for_request_id',
         'requested_by',
         'department_id',
         'replenishment_supply_id',
@@ -47,6 +48,17 @@ class PurchaseRequest extends Model
         'walk_in_requester_contact',
         'walk_in_has_account',
         'walk_in_notes',
+        'expected_delivery_date',
+        'stock_received_date',
+        'received_quantity',
+        'qc_status',
+        'qc_notes',
+        'qc_performed_by',
+        'qc_performed_at',
+        'receiving_notes',
+        'receiving_photo_path',
+        'procurement_status',
+        'procurement_timeline',
     ];
 
     protected $casts = [
@@ -60,6 +72,11 @@ class PurchaseRequest extends Model
         'is_walk_in' => 'boolean',
         'walk_in_has_account' => 'boolean',
         'auto_generated' => 'boolean',
+        'expected_delivery_date' => 'datetime',
+        'stock_received_date' => 'datetime',
+        'received_quantity' => 'array',
+        'qc_performed_at' => 'datetime',
+        'procurement_timeline' => 'array',
     ];
 
     public function department(): BelongsTo
@@ -70,5 +87,10 @@ class PurchaseRequest extends Model
     public function requester(): BelongsTo
     {
         return $this->belongsTo(User::class, 'requested_by');
+    }
+
+    public function procurementForRequest(): BelongsTo
+    {
+        return $this->belongsTo(self::class, 'procurement_for_request_id');
     }
 }

@@ -79,12 +79,17 @@ class AnomalyController extends Controller
             'corrected_department_id' => ['required_if:apply_correction,true', 'nullable', 'exists:departments,id'],
         ]);
 
-        DB::table('anomaly_alerts')
-            ->where('id', $id)
-            ->update([
-                'status' => 'resolved',
-                'updated_at' => now(),
-            ]);
+        $resolveQuery = DB::table('anomaly_alerts')->where('id', $id);
+        if ($anomaly->source_type === 'low_stock') {
+            $resolveQuery = DB::table('anomaly_alerts')
+                ->where('source_type', 'low_stock')
+                ->where('source_id', $anomaly->source_id)
+                ->where('status', 'open');
+        }
+        $resolveQuery->update([
+            'status' => 'resolved',
+            'updated_at' => now(),
+        ]);
 
         $correctionApplied = false;
         if (($validated['apply_correction'] ?? false) && $anomaly->source_type === 'untracked_transfer') {

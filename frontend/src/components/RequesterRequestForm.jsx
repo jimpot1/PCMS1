@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Upload, Plus, Trash2 } from 'lucide-react';
 import { pcmsApi } from '../services/api.js';
 
@@ -7,6 +8,8 @@ function formatCurrency(value) {
 }
 
 export default function RequesterRequestForm({ currentUser, onSubmitted, summary }) {
+  const [searchParams] = useSearchParams();
+  const procurementForId = searchParams.get('purchase_for');
   const requesterName = currentUser?.full_name || [currentUser?.first_name, currentUser?.last_name].filter(Boolean).join(' ') || currentUser?.email || 'Requester';
   const [documentType, setDocumentType] = useState('request');
   const [departmentsList, setDepartmentsList] = useState([]);
@@ -16,6 +19,7 @@ export default function RequesterRequestForm({ currentUser, onSubmitted, summary
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
   const [recommendations, setRecommendations] = useState([]);
+  const [procurementForRequestId, setProcurementForRequestId] = useState(procurementForId || '');
   const [form, setForm] = useState({
     asset_id: '',
     purpose: '',
@@ -50,6 +54,43 @@ export default function RequesterRequestForm({ currentUser, onSubmitted, summary
       })
       .catch((err) => setError(err.message));
   }, []);
+
+  useEffect(() => {
+    if (!procurementForId) return;
+
+    pcmsApi.fetchPurchaseRequest(procurementForId)
+      .then((request) => {
+        setProcurementForRequestId(String(request?.id || procurementForId));
+        setDocumentType('purchase_order');
+        setForm((current) => ({
+          ...current,
+          department: request?.department?.name || request?.department_name || current.department,
+          unit: request?.unit || current.unit,
+          branch: request?.branch || current.branch,
+          priority: request?.priority || current.priority,
+          date_needed: request?.date_needed || current.date_needed,
+          purpose: request?.purpose || current.purpose,
+        }));
+        if (Array.isArray(request?.line_items) && request.line_items.length > 0) {
+          setLineItems(request.line_items.map((line) => ({
+            ...emptyRequestLine(),
+            qty: line.qty || line.quantity || 1,
+            unit: line.unit || '',
+            item: line.item || line.particular || line.description || '',
+            particular: line.particular || line.item || line.description || '',
+            description: line.description || '',
+            estimated_cost: line.estimated_cost || line.amount || '',
+            amount: line.amount || line.estimated_cost || '',
+            unitPrice: line.unit_price || line.unitPrice || '',
+            type: line.type || line.source_type || 'new',
+            source_type: line.source_type || line.type || 'new',
+            source_id: line.source_id || '',
+            source_ref: line.source_ref || null,
+          })));
+        }
+      })
+      .catch((err) => setError(err.message || 'Unable to load the original request for procurement.'));
+  }, [procurementForId]);
 
   const updateField = (field, value) => setForm((current) => ({ ...current, [field]: value }));
   const addLineItem = () => setLineItems((current) => [...current, emptyRequestLine()]);
@@ -145,7 +186,7 @@ export default function RequesterRequestForm({ currentUser, onSubmitted, summary
       const available = Number(selected?.available_quantity ?? selected?.current_stock ?? 0);
 
       if (selected && qty > available) {
-        next.push({ type: 'inventory_limit', severity: 'high', message: `${selected.name} is unavailable in the requested quantity. Purchase Workflow will be initiated.` });
+        next.push({ type: 'inventory_limit', severity: 'high', message: `${selected.name} is unavailable in the requested quantity. Submit a Purchase Order before release.` });
       } else if (qty > 0 && qty >= 100 && selected?.item_type === 'supply') {
         next.push({ type: 'high_quantity', severity: 'medium', message: `${name || 'Item'} quantity is unusually high for a supply request.` });
       }
@@ -190,6 +231,7 @@ export default function RequesterRequestForm({ currentUser, onSubmitted, summary
           date_needed: form.date_needed,
           purpose: form.purpose,
           total_amount: documentType === 'purchase_order' ? grandTotal : subtotal,
+          procurement_for_request_id: documentType === 'purchase_order' ? procurementForRequestId || undefined : undefined,
           requested_by_name: requesterName,
           line_items: lineItems.filter((item) => item.particular || item.item || item.qty || item.unitPrice || item.estimated_cost).map((item) => ({
             qty: item.qty,

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Home, FileText, Download, PackageCheck, Bell, LogOut, Sparkles } from 'lucide-react';
+import { Home, FileText, Download, PackageCheck, Bell, Sparkles } from 'lucide-react';
 
 const requesterMenus = [
   { id: 'dashboard', label: 'Dashboard', icon: Home },
@@ -12,7 +12,7 @@ const requesterMenus = [
   { id: 'notifications', label: 'Notifications', icon: Bell },
 ];
 
-export default function RequesterSidebar({ currentUser, onLogout, activeView, onNavigate, collapsed, mobileOpen, onCloseMobile }) {
+export default function RequesterSidebar({ currentUser, activeView, onNavigate, collapsed, mobileOpen, onCloseMobile }) {
   const menuClassName = (view) => `nav-link ${activeView === view ? 'active' : ''}`;
   const content = (
     <aside className={`sidebar ${collapsed ? 'collapsed' : ''} ${mobileOpen ? 'open' : ''}`}>
@@ -55,10 +55,6 @@ export default function RequesterSidebar({ currentUser, onLogout, activeView, on
             </div>
           )}
         </div>
-        <button className="logout-btn" type="button" onClick={onLogout}>
-          <LogOut size={16} />
-          {!collapsed && <span>Logout</span>}
-        </button>
       </div>
     </aside>
   );

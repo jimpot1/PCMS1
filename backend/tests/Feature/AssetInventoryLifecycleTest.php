@@ -40,6 +40,341 @@ class AssetInventoryLifecycleTest extends TestCase
         ]);
     }
 
+    public function test_low_stock_auto_requisition_is_disabled_by_default(): void
+    {
+        $this->assertFalse(\App\Http\Controllers\SystemSettingController::bool('low_stock_auto_requisition_enabled', false));
+    }
+
+    public function test_ppmo_staff_can_update_purchase_order_for_receiving_workflow(): void
+    {
+        $staff = $this->makeUser('PPMO Staff', 'Staff');
+        $requester = $this->makeUser('Requester', 'Employee');
+
+        $purchaseRequest = \App\Models\PurchaseRequest::create([
+            'request_number' => 'PR-9001',
+            'requested_by' => $requester->id,
+            'department_id' => null,
+            'department_name' => 'Operations',
+            'current_stage' => 'property_custodian',
+            'status' => 'approved',
+            'request_type' => 'purchase_order',
+            'workflow_destination' => 'purchase_workflow',
+            'purpose' => 'Office supplies',
+            'line_items' => [[
+                'source_type' => 'supply',
+                'source_id' => 'supply-1',
+                'item' => 'Notebook',
+                'qty' => 10,
+                'quantity' => 10,
+                'unit_price' => 100,
+            ]],
+            'timeline' => [],
+            'procurement_status' => 'approved',
+            'qc_status' => 'pending',
+            'total_amount' => 1000,
+        ]);
+
+        $policy = new \App\Policies\PurchaseRequestPolicy();
+
+        $this->assertTrue($policy->update($staff, $purchaseRequest));
+    }
+
+    public function test_ppmo_release_queue_excludes_purchase_order_records(): void
+    {
+        $staff = $this->makeUser('PPMO Staff', 'Staff');
+        $requester = $this->makeUser('Requester', 'Employee');
+
+        \App\Models\PurchaseRequest::create([
+            'request_number' => 'PR-9002',
+            'requested_by' => $requester->id,
+            'department_id' => null,
+            'department_name' => 'Operations',
+            'current_stage' => 'property_custodian',
+            'status' => 'approved',
+            'request_type' => 'request',
+            'workflow_destination' => 'supplies_inventory_release',
+            'purpose' => 'Office supplies',
+            'line_items' => [[
+                'source_type' => 'supply',
+                'source_id' => 'supply-2',
+                'item' => 'Printer paper',
+                'qty' => 5,
+                'quantity' => 5,
+                'unit_price' => 40,
+            ]],
+            'timeline' => [],
+            'procurement_status' => 'ready_to_release',
+            'qc_status' => 'passed',
+            'total_amount' => 200,
+        ]);
+
+        \App\Models\PurchaseRequest::create([
+            'request_number' => 'PO-9003',
+            'requested_by' => $requester->id,
+            'department_id' => null,
+            'department_name' => 'Operations',
+            'current_stage' => 'property_custodian',
+            'status' => 'approved',
+            'request_type' => 'purchase_order',
+            'workflow_destination' => 'purchase_workflow',
+            'purpose' => 'Procurement replenishment',
+            'line_items' => [[
+                'source_type' => 'supply',
+                'source_id' => 'supply-3',
+                'item' => 'Printer paper',
+                'qty' => 20,
+                'quantity' => 20,
+                'unit_price' => 50,
+            ]],
+            'timeline' => [],
+            'procurement_status' => 'received',
+            'qc_status' => 'passed',
+            'total_amount' => 1000,
+        ]);
+
+        $request = new \Illuminate\Http\Request();
+        $request->setUserResolver(fn () => $staff);
+        $request->merge(['current_stage' => 'property_custodian', 'per_page' => 15]);
+
+        $response = app(PurchaseRequestController::class)->index($request);
+        $payload = $response->getData(true);
+
+        $numbers = collect($payload['data'] ?? [])->pluck('request_number')->all();
+
+        $this->assertContains('PR-9002', $numbers);
+        $this->assertNotContains('PO-9003', $numbers);
+    }
+
+    public function test_purchase_order_requests_are_visible_when_filtering_for_receiving_workflow(): void
+    {
+        $staff = $this->makeUser('PPMO Staff', 'Staff');
+        $requester = $this->makeUser('Requester', 'Employee');
+
+        \App\Models\PurchaseRequest::create([
+            'request_number' => 'PO-9012',
+            'requested_by' => $requester->id,
+            'department_id' => null,
+            'department_name' => 'Operations',
+            'current_stage' => 'property_custodian',
+            'status' => 'approved',
+            'request_type' => 'purchase_order',
+            'workflow_destination' => 'purchase_workflow',
+            'purpose' => 'Procurement replenishment',
+            'line_items' => [[
+                'source_type' => 'supply',
+                'source_id' => 'supply-12',
+                'item' => 'Notebook',
+                'qty' => 25,
+                'quantity' => 25,
+                'unit_price' => 120,
+            ]],
+            'timeline' => [],
+            'total_amount' => 3000,
+        ]);
+
+        $request = new \Illuminate\Http\Request();
+        $request->setUserResolver(fn () => $staff);
+        $request->merge(['current_stage' => 'property_custodian', 'status' => 'approved', 'request_type' => 'purchase_order', 'per_page' => 15]);
+
+        $response = app(PurchaseRequestController::class)->index($request);
+        $payload = $response->getData(true);
+        $numbers = collect($payload['data'] ?? [])->pluck('request_number')->all();
+
+        $this->assertContains('PO-9012', $numbers);
+    }
+
+    public function test_purchase_workflow_scope_excludes_regular_request_records(): void
+    {
+        $staff = $this->makeUser('PPMO Staff', 'Staff');
+        $requester = $this->makeUser('Requester', 'Employee');
+
+        \App\Models\PurchaseRequest::create([
+            'request_number' => 'REQ-9004',
+            'requested_by' => $requester->id,
+            'department_id' => null,
+            'department_name' => 'Operations',
+            'current_stage' => 'property_custodian',
+            'status' => 'approved',
+            'request_type' => 'request',
+            'workflow_destination' => 'supplies_inventory_release',
+            'purpose' => 'Office supplies',
+            'line_items' => [[
+                'source_type' => 'supply',
+                'source_id' => 'supply-4',
+                'item' => 'Notebook',
+                'qty' => 10,
+                'quantity' => 10,
+                'unit_price' => 100,
+            ]],
+            'timeline' => [],
+            'total_amount' => 1000,
+        ]);
+
+        \App\Models\PurchaseRequest::create([
+            'request_number' => 'PO-9005',
+            'requested_by' => $requester->id,
+            'department_id' => null,
+            'department_name' => 'Operations',
+            'current_stage' => 'property_custodian',
+            'status' => 'approved',
+            'request_type' => 'purchase_order',
+            'workflow_destination' => 'purchase_workflow',
+            'purpose' => 'Procurement replenishment',
+            'line_items' => [[
+                'source_type' => 'supply',
+                'source_id' => 'supply-5',
+                'item' => 'Notebook',
+                'qty' => 25,
+                'quantity' => 25,
+                'unit_price' => 120,
+            ]],
+            'timeline' => [],
+            'total_amount' => 3000,
+        ]);
+
+        $request = new \Illuminate\Http\Request();
+        $request->setUserResolver(fn () => $staff);
+        $request->merge(['workflow_destination' => 'purchase_workflow', 'per_page' => 15]);
+
+        $response = app(PurchaseRequestController::class)->index($request);
+        $payload = $response->getData(true);
+        $numbers = collect($payload['data'] ?? [])->pluck('request_number')->all();
+
+        $this->assertContains('PO-9005', $numbers);
+        $this->assertNotContains('REQ-9004', $numbers);
+    }
+
+    public function test_release_queue_only_loads_approved_records_for_release_stage(): void
+    {
+        $staff = $this->makeUser('PPMO Staff', 'Staff');
+        $requester = $this->makeUser('Requester', 'Employee');
+
+        \App\Models\PurchaseRequest::create([
+            'request_number' => 'REQ-9010',
+            'requested_by' => $requester->id,
+            'department_id' => null,
+            'department_name' => 'Operations',
+            'current_stage' => 'ppmo_staff',
+            'status' => 'approved',
+            'request_type' => 'request',
+            'workflow_destination' => 'supplies_inventory_release',
+            'purpose' => 'Approved item',
+            'line_items' => [[
+                'source_type' => 'supply',
+                'source_id' => 'supply-10',
+                'item' => 'Approved item',
+                'qty' => 2,
+                'quantity' => 2,
+                'unit_price' => 50,
+            ]],
+            'timeline' => [],
+            'total_amount' => 100,
+        ]);
+
+        \App\Models\PurchaseRequest::create([
+            'request_number' => 'REQ-9011',
+            'requested_by' => $requester->id,
+            'department_id' => null,
+            'department_name' => 'Operations',
+            'current_stage' => 'ppmo_staff',
+            'status' => 'pending',
+            'request_type' => 'request',
+            'workflow_destination' => 'supplies_inventory_release',
+            'purpose' => 'Pending item',
+            'line_items' => [[
+                'source_type' => 'supply',
+                'source_id' => 'supply-11',
+                'item' => 'Pending item',
+                'qty' => 3,
+                'quantity' => 3,
+                'unit_price' => 70,
+            ]],
+            'timeline' => [],
+            'total_amount' => 210,
+        ]);
+
+        $request = new \Illuminate\Http\Request();
+        $request->setUserResolver(fn () => $staff);
+        $request->merge(['current_stage' => 'ppmo_staff', 'status' => 'approved', 'per_page' => 15]);
+
+        $response = app(PurchaseRequestController::class)->index($request);
+        $payload = $response->getData(true);
+        $numbers = collect($payload['data'] ?? [])->pluck('request_number')->all();
+
+        $this->assertContains('REQ-9010', $numbers);
+        $this->assertNotContains('REQ-9011', $numbers);
+    }
+
+    public function test_ppmo_staff_can_release_inventory_request_when_current_stage_matches_ppmo_staff(): void
+    {
+        $staff = $this->makeUser('PPMO Staff', 'Staff');
+        $requester = $this->makeUser('Requester', 'Employee');
+
+        $purchaseRequest = \App\Models\PurchaseRequest::create([
+            'request_number' => 'REQ-9012',
+            'requested_by' => $requester->id,
+            'department_id' => null,
+            'department_name' => 'Operations',
+            'current_stage' => 'ppmo_staff',
+            'status' => 'approved',
+            'request_type' => 'request',
+            'workflow_destination' => 'purchase_workflow',
+            'purpose' => 'Supply release for approval',
+            'line_items' => [[
+                'source_type' => 'supply',
+                'source_id' => 'supply-12',
+                'item' => 'Notebook',
+                'qty' => 5,
+                'quantity' => 5,
+                'unit_price' => 20,
+            ]],
+            'timeline' => [],
+            'total_amount' => 100,
+        ]);
+
+        $policy = new \App\Policies\PurchaseRequestPolicy();
+
+        $this->assertTrue($policy->release($staff, $purchaseRequest));
+    }
+
+    public function test_walk_in_request_uses_walk_in_workflow_stages(): void
+    {
+        $requester = $this->makeUser('Requester', 'Employee');
+
+        $purchaseRequest = new \App\Models\PurchaseRequest([
+            'request_number' => 'REQ-9004',
+            'requested_by' => $requester->id,
+            'department_id' => null,
+            'department_name' => 'Operations',
+            'current_stage' => 'property_custodian',
+            'status' => 'approved',
+            'request_type' => 'request',
+            'workflow_destination' => 'supplies_inventory_release',
+            'is_walk_in' => true,
+            'purpose' => 'Office supplies',
+            'line_items' => [[
+                'source_type' => 'supply',
+                'source_id' => 'supply-4',
+                'item' => 'Notebook',
+                'qty' => 10,
+                'quantity' => 10,
+                'unit_price' => 100,
+            ]],
+            'timeline' => [],
+            'total_amount' => 1000,
+        ]);
+
+        $method = new ReflectionMethod(PurchaseRequestController::class, 'workflowSummary');
+        $method->setAccessible(true);
+        $summary = $method->invoke(new PurchaseRequestController(), $purchaseRequest);
+
+        $stageKeys = collect($summary['stages'])->pluck('stage')->all();
+
+        $this->assertContains('ppmo_staff', $stageKeys);
+        $this->assertNotContains('department_head', $stageKeys);
+        $this->assertNotContains('recommending_approver', $stageKeys);
+    }
+
     public function test_active_assignments_reduce_inventory_but_pending_assignments_do_not(): void
     {
         $staff = $this->makeUser('PPMO Staff', 'Staff');

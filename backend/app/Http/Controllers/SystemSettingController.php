@@ -12,7 +12,7 @@ class SystemSettingController extends Controller
     private const DEFAULTS = [
         'recommending_approver_enabled' => true,
         'maintenance_reminder_days' => 7,
-        'low_stock_auto_requisition_enabled' => true,
+        'low_stock_auto_requisition_enabled' => false,
         'ocr_confidence_threshold' => 80,
         'anomaly_risk_threshold' => 8,
     ];

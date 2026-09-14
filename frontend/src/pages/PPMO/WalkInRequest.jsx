@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { AlertTriangle, CheckCircle2, ClipboardList, FileText, Loader2, PackageCheck, Plus, Search, ShieldCheck, Trash2, UploadCloud, UserPlus, X } from 'lucide-react';
 import { pcmsApi } from '../../services/api.js';
 
@@ -31,6 +32,8 @@ function formatCurrency(value) {
 }
 
 export default function WalkInRequest() {
+  const [searchParams] = useSearchParams();
+  const procurementForId = searchParams.get('purchase_for');
   const [hasAccount, setHasAccount] = useState(true);
   const [requesterSearch, setRequesterSearch] = useState('');
   const [requesterOptions, setRequesterOptions] = useState([]);
@@ -68,6 +71,40 @@ export default function WalkInRequest() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
+
+  useEffect(() => {
+    if (!procurementForId) return;
+
+    pcmsApi.fetchPurchaseRequest(procurementForId)
+      .then((request) => {
+        setHasAccount(Boolean(request?.requester));
+        setSelectedRequester(request?.requester || null);
+        setAlreadyApproved(false);
+        updateField('request_type', 'purchase_order');
+        setForm((current) => ({
+          ...current,
+          department_id: request?.department_id || current.department_id,
+          unit: request?.unit || current.unit,
+          branch: request?.branch || current.branch,
+          priority: request?.priority || current.priority,
+          date_needed: request?.date_needed || current.date_needed,
+          purpose: request?.purpose || current.purpose,
+        }));
+        if (Array.isArray(request?.line_items) && request.line_items.length > 0) {
+          setLineItems(request.line_items.map((line) => ({
+            ...emptyLineItem(),
+            qty: line.qty || line.quantity || 1,
+            unit: line.unit || '',
+            item: line.item || line.particular || line.description || '',
+            particular: line.particular || line.item || line.description || '',
+            description: line.description || '',
+            unitPrice: line.unit_price || line.unitPrice || '',
+            amount: line.amount || line.estimated_cost || '',
+          })));
+        }
+      })
+      .catch((err) => setError(err.message || 'Unable to load the original request for procurement.'));
+  }, [procurementForId]);
 
   const subtotal = useMemo(() => lineItems.reduce((sum, line) => {
     const amount = Number(line.amount || (Number(line.qty || 0) * Number(line.unitPrice || 0)) || 0);
@@ -275,6 +312,7 @@ export default function WalkInRequest() {
       walk_in_requester_name: hasAccount ? undefined : form.walk_in_requester_name,
       walk_in_requester_contact: form.walk_in_requester_contact || undefined,
       walk_in_notes: form.walk_in_notes || undefined,
+      procurement_for_request_id: procurementForId || undefined,
       department_id: form.department_id || undefined,
       purpose: form.purpose || undefined,
       already_approved: alreadyApproved,

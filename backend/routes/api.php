@@ -13,6 +13,7 @@ use App\Http\Controllers\MaintenanceController;
 use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\OcrController;
 use App\Http\Controllers\PurchaseRequestController;
+use App\Http\Controllers\ReceivingWorkflowController;
 use App\Http\Controllers\ReportController;
 use App\Http\Controllers\StockMovementController;
 use App\Http\Controllers\SupplyController;
@@ -100,6 +101,12 @@ Route::middleware(['auth:sanctum', 'delete.admin'])->group(function () {
     Route::patch('/purchase-requests/{purchaseRequest}/release', [PurchaseRequestController::class, 'release'])->middleware('role:System Administrator,PPMO Staff,Property Custodian,OIC');
     Route::patch('/purchase-requests/{purchaseRequest}/supply-release', [PurchaseRequestController::class, 'supplyRelease'])->middleware('role:System Administrator,PPMO Staff,Property Custodian,OIC');
     Route::get('/purchase-requests/{purchaseRequest}/receipt', [PurchaseRequestController::class, 'receipt'])->middleware('role:System Administrator,PPMO Staff,Property Custodian,OIC');
+
+    // Receiving & QC Workflow for Purchase Orders
+    Route::post('/purchase-requests/{purchaseRequest}/receiving/log-received', [ReceivingWorkflowController::class, 'logReceived'])->middleware('role:System Administrator,PPMO Staff,Property Custodian,OIC');
+    Route::post('/purchase-requests/{purchaseRequest}/receiving/perform-qc', [ReceivingWorkflowController::class, 'performQc'])->middleware('role:System Administrator,PPMO Staff,Property Custodian,OIC');
+    Route::post('/purchase-requests/{purchaseRequest}/receiving/update-stock', [ReceivingWorkflowController::class, 'updateStockFromPo'])->middleware('role:System Administrator,PPMO Staff,Property Custodian,OIC');
+    Route::get('/purchase-requests/{purchaseRequest}/procurement-status', [ReceivingWorkflowController::class, 'getProcurementStatus'])->middleware('role:System Administrator,PPMO Staff,Property Custodian,OIC');
     Route::post('/gate-passes/walk-in', [GatePassController::class, 'storeWalkIn'])->middleware('role:System Administrator,PPMO Staff');
     Route::apiResource('gate-passes', GatePassController::class);
     Route::patch('/gate-passes/{gatePass}/approve', [GatePassController::class, 'approve'])->middleware('role:Department Head,OIC,Property Custodian,PPMO Staff');

@@ -1,7 +1,7 @@
 import React from 'react';
 import { FileText, Pencil, Printer, Trash2, X } from 'lucide-react';
 import { assetQrCodeUrl } from '../services/api.js';
-import PurchaseWorkflowTimeline from './PurchaseWorkflowTimeline.jsx';
+import PurchaseWorkflowTimeline, { LIFECYCLE_STATE_LABELS, resolveLifecycleState } from './PurchaseWorkflowTimeline.jsx';
 
 const requesterName = (request) => request?.requester?.full_name || request?.requester?.name || request?.requester?.email || request?.requested_by_name || request?.walk_in_requester_name || '-';
 const departmentName = (request) => request?.department?.name || request?.department_name || request?.department || '-';
@@ -9,6 +9,8 @@ const itemName = (item, index) => item?.name || item?.item || item?.particular |
 
 export default function PurchaseRequestDetails({ request, onClose, onPrint, onEdit, onDelete }) {
   if (!request) return null;
+
+  const lifecycleState = resolveLifecycleState(request);
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -29,13 +31,13 @@ export default function PurchaseRequestDetails({ request, onClose, onPrint, onEd
             <div><label>Priority</label><p>{request.priority || '-'}</p></div>
             <div><label>Date Needed</label><p>{request.date_needed ? new Date(request.date_needed).toLocaleDateString() : '-'}</p></div>
             <div><label>Current Stage</label><p>{request.current_stage || '-'}</p></div>
-            <div><label>Status</label><p>{request.status || '-'}</p></div>
+            <div><label>Lifecycle State</label><p>{LIFECYCLE_STATE_LABELS[lifecycleState] || request.status || '-'}</p></div>
           </div>
 
           <div className="detail-section"><h4>Purpose</h4><p>{request.purpose || 'No purpose recorded.'}</p></div>
 
           {request.workflow?.is_procurement_required && (
-            <div className="form-message warning">Insufficient stock — procurement is required. This request follows the existing Purchase Order approval workflow and cannot be released as an inventory request.</div>
+            <div className="form-message warning">Insufficient stock — submit a Purchase Order for this request before it can be released.</div>
           )}
 
           <div className="detail-section">

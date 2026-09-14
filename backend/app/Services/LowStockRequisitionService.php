@@ -111,6 +111,7 @@ class LowStockRequisitionService
 
         $this->log('low_stock_requisition_created', $supply, $purchaseRequest);
         $this->notifyDepartmentHead($department, $purchaseRequest, $supply);
+        $this->notifyPpmoStaff($purchaseRequest, $supply);
 
         return $purchaseRequest;
     }
@@ -196,6 +197,44 @@ class LowStockRequisitionService
             'created_at' => now(),
             'updated_at' => now(),
         ]);
+    }
+
+    private function notifyPpmoStaff(PurchaseRequest $request, Supply $supply): void
+    {
+        if (! Schema::hasTable('transfer_notifications')) {
+            return;
+        }
+
+        $recipients = DB::table('users')
+            ->where('role', 'PPMO Staff')
+            ->where(function ($query) {
+                $query->whereNull('status')->orWhere('status', 'active');
+            })
+            ->get(['id', 'role']);
+
+        foreach ($recipients as $recipient) {
+            $exists = DB::table('transfer_notifications')
+                ->where('recipient_id', $recipient->id)
+                ->where('type', 'low_stock_requisition')
+                ->where('message', 'like', "%{$request->request_number}%")
+                ->exists();
+
+            if ($exists) {
+                continue;
+            }
+
+            DB::table('transfer_notifications')->insert([
+                'transfer_id' => null,
+                'recipient_id' => $recipient->id,
+                'recipient_role' => $recipient->role,
+                'type' => 'low_stock_requisition',
+                'title' => 'Automatic Purchase Order Created',
+                'message' => "{$supply->name} is below minimum stock. Automatic replenishment request {$request->request_number} is awaiting procurement processing.",
+                'navigation_target' => '/ppmo/purchases',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
     }
 
     private function log(string $action, Supply $supply, PurchaseRequest $request): void

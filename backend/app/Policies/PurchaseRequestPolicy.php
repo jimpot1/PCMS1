@@ -47,10 +47,22 @@ class PurchaseRequestPolicy
 
     public function update(User $user, PurchaseRequest $purchaseRequest): bool
     {
-        return $this->isSystemAdministrator($user)
-            || ($user->role === 'Requester'
-                && $purchaseRequest->requested_by === $user->id
-                && in_array($purchaseRequest->status, ['draft', 'revision_requested'], true));
+        if ($this->isSystemAdministrator($user)) {
+            return true;
+        }
+
+        if ($user->role === 'Requester') {
+            return $purchaseRequest->requested_by === $user->id
+                && in_array($purchaseRequest->status, ['draft', 'revision_requested'], true);
+        }
+
+        if (in_array($user->role, ['PPMO Staff', 'Property Custodian', 'OIC'], true)) {
+            return $purchaseRequest->status === 'approved'
+                || $purchaseRequest->procurement_status === 'received'
+                || $purchaseRequest->procurement_status === 'ready_to_release';
+        }
+
+        return false;
     }
 
     public function requestRevision(User $user, PurchaseRequest $purchaseRequest): bool
@@ -104,7 +116,9 @@ class PurchaseRequestPolicy
         }
 
         if ($user->role === 'PPMO Staff') {
-            $requiredStage = $purchaseRequest->workflow_destination === 'purchase_workflow' ? 'property_custodian' : 'ppmo_staff';
+            $requiredStage = in_array($purchaseRequest->current_stage, ['property_custodian', 'ppmo_staff'], true)
+                ? $purchaseRequest->current_stage
+                : ($purchaseRequest->workflow_destination === 'purchase_workflow' ? 'property_custodian' : 'ppmo_staff');
             return $purchaseRequest->current_stage === $requiredStage;
         }
 

@@ -4929,6 +4929,12 @@ td span:not(.status):not(.risk) {
   color: #991b1b;
 }
 
+.alert.success {
+  background: #dcfce7;
+  border-color: #bbf7d0;
+  color: #166534;
+}
+
 /* Modal Footer - Actions */
 .modal-actions {
   display: flex;

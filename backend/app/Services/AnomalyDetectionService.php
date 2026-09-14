@@ -289,7 +289,7 @@ class AnomalyDetectionService
         }
 
         $recipients = User::query()
-            ->whereIn('role', ['OIC', 'System Administrator'])
+            ->whereIn('role', ['OIC', 'PPMO Staff', 'System Administrator'])
             ->where(function ($query) {
                 $query->whereNull('status')->orWhere('status', 'active');
             })

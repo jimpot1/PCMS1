@@ -21,7 +21,6 @@ export default function RequesterLayout({ currentUser, onLogout, activeView, onN
     <div className={`sms-app ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
       <RequesterSidebar
         currentUser={currentUser}
-        onLogout={onLogout}
         activeView={activeView}
         onNavigate={handleNavigate}
         collapsed={sidebarCollapsed}

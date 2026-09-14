@@ -52,12 +52,18 @@ class PurchaseRequestController extends Controller
                     return $query
                         ->when($request->filled('current_stage'), fn ($query) => $query->where('current_stage', $request->current_stage))
                         ->when($request->filled('status'), fn ($query) => $query->where('status', $request->status))
-                        ->when($request->current_stage === 'property_custodian' && ! $request->filled('status'), fn ($query) => $query->where('status', 'approved'));
+                        ->when($request->current_stage === 'property_custodian' && ! $request->filled('status'), fn ($query) => $query->where('status', 'approved'))
+                        ->when(
+                            in_array($request->current_stage, ['property_custodian', 'ppmo_staff'], true)
+                                && ! $request->filled('request_type'),
+                            fn ($query) => $query->where('request_type', '!=', 'purchase_order')
+                        );
                 }
             )
             ->when($request->status, fn ($query, $value) => $query->where('status', $value))
             ->when($request->current_stage, fn ($query, $value) => $query->where('current_stage', $value))
             ->when($request->department_id, fn ($query, $value) => $query->where('department_id', $value))
+            ->when($request->workflow_destination === 'purchase_workflow', fn ($query) => $query->where('request_type', 'purchase_order'))
             ->when($request->request_type, fn ($query, $value) => $query->where('request_type', $value))
             ->when($request->date_from, fn ($query, $value) => $query->whereDate('created_at', '>=', $value))
             ->when($request->date_to, fn ($query, $value) => $query->whereDate('created_at', '<=', $value))
@@ -246,6 +252,7 @@ class PurchaseRequestController extends Controller
             'purpose' => ['required_if:request_type,request', 'nullable', 'string'],
             'requested_by_name' => ['nullable', 'string'],
             'request_type' => ['nullable', 'in:purchase_order,request'],
+            'procurement_for_request_id' => ['nullable', 'integer', 'exists:purchase_requests,id'],
             'attachment' => ['nullable', 'file', 'max:10240'],
             'line_items' => ['nullable', 'array'],
             'line_items.*.type' => ['nullable', 'in:asset,supply,new'],
@@ -297,14 +304,22 @@ class PurchaseRequestController extends Controller
         }
 
         $requestType = $validated['request_type'] ?? 'purchase_order';
+        $procurementForRequestId = $validated['procurement_for_request_id'] ?? null;
+        if ($procurementForRequestId) {
+            $originalRequest = PurchaseRequest::find($procurementForRequestId);
+            if ($requestType !== 'purchase_order' || ! $originalRequest || $originalRequest->requested_by !== $request->user()?->id) {
+                return response()->json(['message' => 'This Purchase Order is not linked to a valid request owned by the requester.'], 422);
+            }
+        }
         $attachmentPath = $request->hasFile('attachment') ? $request->file('attachment')->store('request-attachments', 'public') : null;
         $workflowDestination = $requestType === 'request' ? $this->aggregateWorkflowDestination($resolvedItems) : 'purchase_workflow';
 
         $departmentName = optional(Department::find($departmentId))->name ?? $request->user()?->department;
 
-        $purchaseRequest = DB::transaction(function () use ($request, $validated, $departmentId, $departmentName, $requestType, $resolvedItems, $attachmentPath, $workflowDestination) {
+        $purchaseRequest = DB::transaction(function () use ($request, $validated, $departmentId, $departmentName, $requestType, $resolvedItems, $attachmentPath, $workflowDestination, $procurementForRequestId) {
             return PurchaseRequest::create([
                 'request_number' => $this->generateRequestNumber($requestType),
+                'procurement_for_request_id' => $procurementForRequestId,
                 'requested_by' => $request->user()?->id,
                 'department_id' => $departmentId,
                 'current_stage' => 'department_head',
@@ -329,6 +344,10 @@ class PurchaseRequestController extends Controller
 
         $purchaseRequest = $purchaseRequest->fresh()->load('department', 'requester');
         $departmentHead = $this->getDepartmentHeadForRequest($purchaseRequest);
+
+        if ($requestType === 'request' && $this->hasProcurementRequiredItem($resolvedItems)) {
+            $this->notifyProcurementRequired($purchaseRequest);
+        }
 
         if ($departmentHead && Schema::hasTable('transfer_notifications')) {
             DB::table('transfer_notifications')->insert([
@@ -398,6 +417,7 @@ class PurchaseRequestController extends Controller
             'walk_in_requester_contact' => ['nullable', 'string', 'max:255'],
             'walk_in_notes' => ['nullable', 'string'],
             'department_id' => ['nullable', 'exists:departments,id'],
+            'procurement_for_request_id' => ['nullable', 'integer', 'exists:purchase_requests,id'],
             'department' => ['nullable', 'string'],
             'unit' => ['nullable', 'string'],
             'branch' => ['nullable', 'string'],
@@ -444,6 +464,10 @@ class PurchaseRequestController extends Controller
         }
 
         $requestType = $validated['request_type'] ?? 'purchase_order';
+        $procurementForRequestId = $validated['procurement_for_request_id'] ?? null;
+        if ($procurementForRequestId && $requestType !== 'purchase_order') {
+            return response()->json(['message' => 'Only a Purchase Order can be linked to an original request.'], 422);
+        }
 
         $resolvedItems = [];
         if ($requestType === 'request') {
@@ -476,7 +500,9 @@ class PurchaseRequestController extends Controller
             : null;
         $workflowDestination = $requestType === 'request' ? $this->aggregateWorkflowDestination($resolvedItems) : 'purchase_workflow';
         $departmentName = optional(Department::find($departmentId))->name ?? ($validated['department'] ?? null);
-        $initialStage = $alreadyApproved && $requestType === 'request' && in_array($workflowDestination, ['asset_assignment', 'supplies_inventory_release'], true)
+        $walkInInventoryRequest = $requestType === 'request'
+            && in_array($workflowDestination, ['asset_assignment', 'supplies_inventory_release'], true);
+        $initialStage = $walkInInventoryRequest
             ? 'ppmo_staff'
             : ($alreadyApproved ? 'property_custodian' : 'recommending_approver');
 
@@ -492,16 +518,19 @@ class PurchaseRequestController extends Controller
             $approvalDocumentPath,
             $workflowDestination,
             $initialStage,
-            $requesterUser
+            $walkInInventoryRequest,
+            $requesterUser,
+            $procurementForRequestId
         ) {
             return PurchaseRequest::create([
                 'request_number' => $this->generateRequestNumber($requestType),
+                'procurement_for_request_id' => $procurementForRequestId,
                 'requested_by' => $validated['has_account'] ? $requesterUser->id : null,
                 'department_id' => $departmentId,
-                // Walk-ins skip Department Head review since PPMO/Admin already
-                // vetted the requester in person; enter directly at Recommending Approver.
+                // Walk-in inventory requests are vetted in person and go directly
+                // to PPMO processing; online requests retain OIC approval.
                 'current_stage' => $initialStage,
-                'status' => $alreadyApproved ? 'approved' : 'pending',
+                'status' => $walkInInventoryRequest || $alreadyApproved ? 'approved' : 'pending',
                 'request_type' => $requestType,
                 'workflow_destination' => $workflowDestination,
                 'department_name' => $departmentName,
@@ -530,9 +559,15 @@ class PurchaseRequestController extends Controller
 
         $purchaseRequest = $purchaseRequest->fresh()->load('department', 'requester');
 
-        $nextReviewer = $alreadyApproved
+        if ($requestType === 'request' && $this->hasProcurementRequiredItem($resolvedItems)) {
+            $this->notifyProcurementRequired($purchaseRequest, true);
+        }
+
+        $nextReviewer = $walkInInventoryRequest
+            ? User::query()->where('role', 'PPMO Staff')->where('status', 'active')->first()
+            : ($alreadyApproved
             ? $this->getCustodianForRequest($purchaseRequest)
-            : User::query()->where('role', 'Recommending Approver')->where('status', 'active')->first();
+            : User::query()->where('role', 'Recommending Approver')->where('status', 'active')->first());
         if ($nextReviewer && Schema::hasTable('transfer_notifications')) {
             DB::table('transfer_notifications')->insert([
                 'transfer_id' => null,
@@ -571,6 +606,9 @@ class PurchaseRequestController extends Controller
             'purpose' => ['sometimes', 'nullable', 'string'],
             'line_items' => ['sometimes', 'array', 'min:1'],
             'total_amount' => ['sometimes', 'numeric', 'min:0'],
+            'procurement_status' => ['sometimes', 'nullable', 'in:draft,approved,received,ready_to_release,completed,qc_failed,qc_on_hold'],
+            'qc_status' => ['sometimes', 'nullable', 'in:pending,passed,failed,hold'],
+            'status' => ['sometimes', 'nullable', 'string', 'max:255'],
         ]);
 
         if ($purchaseRequest->status === 'revision_requested' && array_key_exists('line_items', $validated)) {
@@ -1008,19 +1046,45 @@ class PurchaseRequestController extends Controller
         $this->authorize('release', $purchaseRequest);
 
         if ($purchaseRequest->request_type === 'request' && $purchaseRequest->workflow_destination === 'purchase_workflow') {
-            return response()->json(['message' => 'Insufficient stock. Procurement is required before this request can be released.'], 422);
+            $supplyLines = collect($purchaseRequest->line_items ?? [])
+                ->filter(fn ($lineItem) => ($lineItem['source_type'] ?? $lineItem['type'] ?? null) === 'supply');
+            $canReleaseAfterProcurement = $supplyLines->isNotEmpty()
+                && $supplyLines->every(function ($lineItem) {
+                    $supply = Supply::find($lineItem['source_id'] ?? null);
+                    $quantity = (int) ($lineItem['qty'] ?? $lineItem['quantity'] ?? 0);
+
+                    return $supply && (int) $supply->stock >= $quantity;
+                });
+
+            if (! $canReleaseAfterProcurement) {
+                // Notify requester to create a Purchase Order for the missing items
+                $this->notifyRequesterForProcurement($purchaseRequest, $supplyLines);
+                
+                return response()->json([
+                    'message' => 'Insufficient stock. The requester has been notified to submit a Purchase Order for the missing items. The request will be releasable once the Purchase Order is received and processed.',
+                    'status' => 'procurement_required'
+                ], 422);
+            }
         }
 
-        $requiredReleaseStage = $this->isInventoryRequestWorkflow($purchaseRequest) ? 'ppmo_staff' : 'property_custodian';
+        $requiredReleaseStage = $this->releaseStageForRequest($purchaseRequest);
         if ($purchaseRequest->current_stage !== $requiredReleaseStage || $purchaseRequest->status !== 'approved') {
-            return response()->json(['message' => 'Only approved requests in the processing/release stage can be released.'], 422);
+            $currentStage = $purchaseRequest->current_stage ?? 'unknown';
+            $currentStatus = $purchaseRequest->status ?? 'unknown';
+
+            return response()->json([
+                'message' => "This request cannot be released because it is currently at status '{$currentStatus}' and stage '{$currentStage}'. Only approved requests in the {$requiredReleaseStage} processing/release stage can be released.",
+                'status' => $currentStatus,
+                'current_stage' => $currentStage,
+                'required_stage' => $requiredReleaseStage,
+            ], 422);
         }
 
-        // Allow release when request is approved, or when Property Custodian is performing release
+        // Allow release when request is approved, or when the assigned release stage is performing release
         $userRole = $request->user()?->role ?? '';
         $canRelease = fn (PurchaseRequest $lockedRequest) => (
             $lockedRequest->status === 'approved'
-            || ($lockedRequest->current_stage === ($this->isInventoryRequestWorkflow($lockedRequest) ? 'ppmo_staff' : 'property_custodian') && in_array($userRole, ['PPMO Staff', 'Property Custodian', 'OIC'], true))
+            || ($lockedRequest->current_stage === $this->releaseStageForRequest($lockedRequest) && in_array($userRole, ['PPMO Staff', 'Property Custodian', 'OIC'], true))
         );
 
         if (! $canRelease($purchaseRequest)) {
@@ -1033,6 +1097,16 @@ class PurchaseRequestController extends Controller
 
         if ($purchaseRequest->is_walk_in && $purchaseRequest->approval_status === 'needs_verification') {
             return response()->json(['message' => 'Walk-in approval form needs verification before final release.'], 422);
+        }
+
+        $blockingAnomaly = $this->openSupplyAnomalyForRequest($purchaseRequest);
+        if ($blockingAnomaly) {
+            $this->notifyPpmoOfReleaseAnomaly($blockingAnomaly);
+
+            return response()->json([
+                'message' => 'Supply anomaly must be resolved before this request can be released.',
+                'anomaly_id' => $blockingAnomaly->id,
+            ], 422);
         }
 
         $quantityAnomalyIds = [];
@@ -1129,7 +1203,7 @@ class PurchaseRequestController extends Controller
 
         $releasedRequest = DB::transaction(function () use ($purchaseRequest, $request, $validated) {
             $lockedRequest = PurchaseRequest::query()->whereKey($purchaseRequest->id)->lockForUpdate()->firstOrFail();
-            $requiredStage = $this->isInventoryRequestWorkflow($lockedRequest) ? 'ppmo_staff' : 'property_custodian';
+            $requiredStage = $this->releaseStageForRequest($lockedRequest);
             if ($lockedRequest->current_stage !== $requiredStage || ! in_array($lockedRequest->status, ['approved', 'partially_released'], true)) {
                 throw ValidationException::withMessages(['request' => 'Only approved requests with remaining quantity can be released.']);
             }
@@ -1379,12 +1453,42 @@ class PurchaseRequestController extends Controller
 
     protected function workflowStages(PurchaseRequest $purchaseRequest): array
     {
+        if ($purchaseRequest->is_walk_in) {
+            return $this->walkInWorkflowStagesForValues($purchaseRequest->request_type, $purchaseRequest->workflow_destination);
+        }
+
         return $this->workflowStagesForValues($purchaseRequest->request_type, $purchaseRequest->workflow_destination);
+    }
+
+    protected function releaseStageForRequest(PurchaseRequest $purchaseRequest): string
+    {
+        if (in_array($purchaseRequest->current_stage, ['property_custodian', 'ppmo_staff'], true)) {
+            return $purchaseRequest->current_stage;
+        }
+
+        return $this->workflowDestinationForRequest($purchaseRequest) === 'purchase_workflow'
+            ? 'property_custodian'
+            : 'ppmo_staff';
+    }
+
+    protected function workflowDestinationForRequest(PurchaseRequest $purchaseRequest): string
+    {
+        $destination = $purchaseRequest->workflow_destination ?? '';
+
+        if (in_array($destination, ['asset_assignment', 'supplies_inventory_release'], true)) {
+            return $destination;
+        }
+
+        if ($purchaseRequest->request_type === 'purchase_order' || $destination === 'purchase_workflow') {
+            return 'purchase_workflow';
+        }
+
+        return 'supplies_inventory_release';
     }
 
     protected function isInventoryRequestWorkflow(PurchaseRequest $purchaseRequest): bool
     {
-        return $this->workflowStages($purchaseRequest) === self::INVENTORY_REQUEST_STAGES;
+        return $this->releaseStageForRequest($purchaseRequest) === 'ppmo_staff';
     }
 
     protected function workflowStagesForValues(?string $requestType, ?string $workflowDestination): array
@@ -1395,6 +1499,15 @@ class PurchaseRequestController extends Controller
         return SystemSettingController::bool('recommending_approver_enabled', true)
             ? $stages
             : array_values(array_filter($stages, fn ($stage) => $stage !== 'recommending_approver'));
+    }
+
+    protected function walkInWorkflowStagesForValues(?string $requestType, ?string $workflowDestination): array
+    {
+        $inventoryRequest = $requestType === 'request' && in_array($workflowDestination, ['asset_assignment', 'supplies_inventory_release'], true);
+
+        return $inventoryRequest
+            ? ['employee', 'ppmo_staff', 'released']
+            : ['employee', 'property_custodian', 'released'];
     }
 
     protected function generateRequestNumber(string $requestType = 'purchase_order'): string
@@ -1586,6 +1699,8 @@ HTML;
                     'source_type' => $catalog['item_type'] ?? 'new',
                     'source_id' => $catalog['source_id'] ?? null,
                     'workflow_destination' => $destination,
+                    'procurement_required' => $catalog ? $available < $qty : true,
+                    'available_quantity' => $available,
                     'availability_status' => $catalog['status'] ?? 'New Item',
                     'unit_price' => $unitCost,
                     'unitPrice' => $unitCost,
@@ -1858,13 +1973,9 @@ HTML;
 
     protected function destinationForLine(string $itemType, int $available, int $qty): string
     {
-        if ($available < $qty) {
-            return 'purchase_workflow';
-        }
-
         return match ($itemType) {
             'supply' => 'supplies_inventory_release',
-            'asset' => 'asset_assignment',
+            'asset' => $available >= $qty ? 'asset_assignment' : 'purchase_workflow',
             default => 'purchase_workflow',
         };
     }
@@ -1933,7 +2044,11 @@ HTML;
             return null;
         }
 
-        if (($lineItem['workflow_destination'] ?? null) === 'supplies_inventory_release' && ($lineItem['source_type'] ?? null) === 'supply') {
+        $isSupplyRelease = ($lineItem['source_type'] ?? null) === 'supply'
+            && ! empty($lineItem['source_id'])
+            && in_array($purchaseRequest->request_type, ['request', 'purchase_order'], true);
+
+        if ($isSupplyRelease) {
             $supply = Supply::lockForUpdate()->find($lineItem['source_id'] ?? null);
             if (! $supply) {
                 throw ValidationException::withMessages([
@@ -2141,6 +2256,125 @@ HTML;
         return null;
     }
 
+    protected function openSupplyAnomalyForRequest(PurchaseRequest $purchaseRequest): ?object
+    {
+        foreach ($purchaseRequest->line_items ?? [] as $lineItem) {
+            if (($lineItem['source_type'] ?? $lineItem['type'] ?? null) !== 'supply' || empty($lineItem['source_id'])) {
+                continue;
+            }
+
+            $anomaly = DB::table('anomaly_alerts')
+                ->where('status', 'open')
+                ->where(function ($query) use ($lineItem) {
+                    $query->where('supply_id', (int) $lineItem['source_id'])
+                        ->orWhere(function ($lowStockQuery) use ($lineItem) {
+                            $lowStockQuery->where('source_type', 'low_stock')
+                                ->where('source_id', (string) $lineItem['source_id']);
+                        });
+                })
+                ->where(function ($query) use ($purchaseRequest) {
+                    $query->whereNull('department_id')
+                        ->orWhere('department_id', $purchaseRequest->department_id);
+                })
+                ->orderByDesc('priority')
+                ->orderByDesc('created_at')
+                ->first();
+
+            if ($anomaly) {
+                return $anomaly;
+            }
+        }
+
+        return null;
+    }
+
+    protected function notifyPpmoOfReleaseAnomaly(object $anomaly): void
+    {
+        if (! Schema::hasTable('transfer_notifications') || ! Schema::hasColumn('transfer_notifications', 'anomaly_alert_id')) {
+            return;
+        }
+
+        $recipients = User::query()
+            ->where('role', 'PPMO Staff')
+            ->where(function ($query) {
+                $query->whereNull('status')->orWhere('status', 'active');
+            })
+            ->get(['id', 'role']);
+
+        foreach ($recipients as $recipient) {
+            $exists = DB::table('transfer_notifications')
+                ->where('anomaly_alert_id', $anomaly->id)
+                ->where('recipient_id', $recipient->id)
+                ->where('type', 'anomaly')
+                ->exists();
+
+            if ($exists) {
+                continue;
+            }
+
+            DB::table('transfer_notifications')->insert([
+                'transfer_id' => null,
+                'anomaly_alert_id' => $anomaly->id,
+                'recipient_id' => $recipient->id,
+                'recipient_role' => $recipient->role,
+                'type' => 'anomaly',
+                'title' => 'Release blocked by supply anomaly',
+                'message' => $anomaly->reason ?: 'Resolve the open supply anomaly before releasing this request.',
+                'navigation_target' => "inventory-monitoring:{$anomaly->id}",
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
+    }
+
+    protected function hasProcurementRequiredItem(array $lineItems): bool
+    {
+        return collect($lineItems)->contains(fn ($lineItem) => (bool) ($lineItem['procurement_required'] ?? false));
+    }
+
+    protected function notifyProcurementRequired(PurchaseRequest $purchaseRequest, bool $isWalkIn = false): void
+    {
+        if (! Schema::hasTable('transfer_notifications')) {
+            return;
+        }
+
+        $recipients = User::query()
+            ->when($isWalkIn, fn ($query) => $query->where('role', 'PPMO Staff'))
+            ->when(! $isWalkIn, fn ($query) => $query->whereKey($purchaseRequest->requested_by))
+            ->where(function ($query) {
+                $query->whereNull('status')->orWhere('status', 'active');
+            })
+            ->get(['id', 'role']);
+
+        foreach ($recipients as $recipient) {
+            $exists = DB::table('transfer_notifications')
+                ->where('recipient_id', $recipient->id)
+                ->where('type', 'procurement_required')
+                ->where('message', 'like', "%{$purchaseRequest->request_number}%")
+                ->exists();
+
+            if ($exists) {
+                continue;
+            }
+
+            DB::table('transfer_notifications')->insert([
+                'transfer_id' => null,
+                'recipient_id' => $recipient->id,
+                'recipient_role' => $recipient->role,
+                'type' => 'procurement_required',
+                'title' => $isWalkIn ? 'Purchase Order Required for Walk-in Request' : 'Purchase Order Required',
+                'message' => $isWalkIn
+                    ? "Walk-in request {$purchaseRequest->request_number} needs a Purchase Order because requested stock is insufficient."
+                    : "Request {$purchaseRequest->request_number} needs a Purchase Order because requested stock is insufficient. Submit a Purchase Order before release.",
+                'navigation_target' => $isWalkIn
+                    ? '/ppmo/walk-in-request?purchase_for=' . $purchaseRequest->id
+                    : '/requester?purchase_for=' . $purchaseRequest->id,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
+    }
+
     protected function departmentIdForUser(?User $user): ?int
     {
         if (!$user?->department) {
@@ -2188,8 +2422,8 @@ HTML;
 
             return [
                 'stage' => $stage,
-                'label' => $this->stageLabel($stage, $purchaseRequest),
-                'role' => $stage === 'property_custodian' && $purchaseRequest->request_type === 'request' ? 'OIC' : ($this->getRoleForStage($stage) ?: $this->stageLabel($stage, $purchaseRequest)),
+                'label' => $this->workflowStageLabelForMode($purchaseRequest, $stage),
+                'role' => $stage === 'property_custodian' && $purchaseRequest->request_type === 'request' ? 'OIC' : ($this->getRoleForStage($stage) ?: $this->workflowStageLabelForMode($purchaseRequest, $stage)),
                 'approver' => $approver ? [
                     'id' => $approver->id,
                     'name' => $approver->full_name ?: trim("{$approver->first_name} {$approver->last_name}"),
@@ -2205,7 +2439,9 @@ HTML;
             'current_stage' => $purchaseRequest->current_stage,
             'status' => $purchaseRequest->status,
             'workflow_type' => $this->workflowStages($purchaseRequest) === self::INVENTORY_REQUEST_STAGES ? 'request' : 'purchase_order',
-            'is_procurement_required' => $purchaseRequest->workflow_destination === 'purchase_workflow',
+            'is_procurement_required' => $purchaseRequest->workflow_destination === 'purchase_workflow'
+                || $this->hasProcurementRequiredItem($purchaseRequest->line_items ?? []),
+            'procurement_for_request_id' => $purchaseRequest->procurement_for_request_id,
             'stages' => $chain,
             'next_approver_role' => $nextRole,
             'next_approver' => $nextApprover ? [
@@ -2239,6 +2475,21 @@ HTML;
             'ppmo_staff' => 'PPMO Staff — Processing / Release',
             'released' => 'Released',
             default => ucwords(str_replace('_', ' ', $stage)),
+        };
+    }
+
+    protected function workflowStageLabelForMode(PurchaseRequest $purchaseRequest, string $stage): string
+    {
+        if (! $purchaseRequest->is_walk_in) {
+            return $this->stageLabel($stage, $purchaseRequest);
+        }
+
+        return match ($stage) {
+            'employee' => 'Submitted',
+            'property_custodian' => 'Property Custodian / OIC',
+            'ppmo_staff' => 'PPMO Staff — Processing / Release',
+            'released' => 'Released',
+            default => $this->stageLabel($stage, $purchaseRequest),
         };
     }
 
@@ -2472,5 +2723,61 @@ HTML;
             'created_at' => now(),
             'updated_at' => now(),
         ]);
+    }
+
+    /**
+     * Notify requester to create a Purchase Order for items with insufficient stock
+     * @param PurchaseRequest $purchaseRequest
+     * @param \Illuminate\Support\Collection $supplyLines
+     * @return void
+     */
+    protected function notifyRequesterForProcurement(PurchaseRequest $purchaseRequest, $supplyLines): void
+    {
+        if (! Schema::hasTable('transfer_notifications') || ! $purchaseRequest->requested_by) {
+            return;
+        }
+        
+        // Calculate missing quantities
+        $shortfallItems = [];
+        foreach ($supplyLines as $lineItem) {
+            $supply = Supply::find($lineItem['source_id'] ?? null);
+            if (!$supply) continue;
+            
+            $requestedQty = (int) ($lineItem['qty'] ?? $lineItem['quantity'] ?? 0);
+            $currentStock = (int) $supply->stock;
+            $shortfallQty = $requestedQty - $currentStock;
+            
+            if ($shortfallQty > 0) {
+                $shortfallItems[] = $lineItem['item'] ?? $lineItem['particular'] ?? $supply->name;
+            }
+        }
+        
+        if (empty($shortfallItems)) {
+            return;
+        }
+        
+        $itemsList = implode(', ', $shortfallItems);
+        $message = "Request {$purchaseRequest->request_number} cannot be released due to insufficient stock for: {$itemsList}. Please submit a Purchase Order to procure the missing items.";
+        
+        // Check if notification already exists to avoid duplicates
+        $exists = DB::table('transfer_notifications')
+            ->where('recipient_id', $purchaseRequest->requested_by)
+            ->where('type', 'procurement_required')
+            ->where('message', $message)
+            ->where('created_at', '>=', now()->subHours(1))
+            ->exists();
+
+        if (! $exists) {
+            DB::table('transfer_notifications')->insert([
+                'transfer_id' => null,
+                'recipient_id' => $purchaseRequest->requested_by,
+                'recipient_role' => 'Requester',
+                'type' => 'procurement_required',
+                'title' => 'Purchase Order Needed',
+                'message' => $message,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
     }
 }

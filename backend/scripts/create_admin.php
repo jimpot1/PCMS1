@@ -14,8 +14,10 @@ $admin = User::updateOrCreate(
         'first_name' => 'System',
         'middle_name' => null,
         'last_name' => 'Administrator',
-        'password' => Hash::make('Admin123!'),
+        'full_name' => 'System Administrator',
+        'password_hash' => Hash::make('Admin123!'),
         'role' => 'System Administrator',
+        'department' => 'Administration',
         'status' => 'active'
     ]
 );

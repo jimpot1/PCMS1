@@ -24,6 +24,8 @@ export default function PurchaseOrderDocuments() {
   const [statusFilter, setStatusFilter] = useState('all');
   const [selected, setSelected] = useState(null);
   const [downloading, setDownloading] = useState(false);
+  const [pendingPrint, setPendingPrint] = useState(false);
+  const [pendingDownload, setPendingDownload] = useState(null);
 
   useEffect(() => {
     let mounted = true;
@@ -70,6 +72,11 @@ export default function PurchaseOrderDocuments() {
     window.print();
   };
 
+  const handlePrintFromTable = (po) => {
+    setSelected(po);
+    setPendingPrint(true);
+  };
+
   const handleDownload = async (po) => {
     const printArea = document.getElementById('po-print-area');
     if (!printArea) return;
@@ -86,6 +93,33 @@ export default function PurchaseOrderDocuments() {
       setDownloading(false);
     }
   };
+
+  const handleDownloadFromTable = (po) => {
+    setSelected(po);
+    setPendingDownload(po);
+  };
+
+  useEffect(() => {
+    if (!selected || !pendingPrint) return undefined;
+
+    const frame = window.requestAnimationFrame(() => {
+      setPendingPrint(false);
+      window.print();
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [selected, pendingPrint]);
+
+  useEffect(() => {
+    if (!selected || !pendingDownload) return undefined;
+
+    const frame = window.requestAnimationFrame(() => {
+      setPendingDownload(null);
+      handleDownload(pendingDownload);
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [selected, pendingDownload]);
 
   return (
     <div className="page-container">
@@ -149,6 +183,12 @@ export default function PurchaseOrderDocuments() {
                     <td>
                       <button className="staff-action-button" title="View Purchase Order" aria-label={`View purchase order ${po.request_number || po.id}`} onClick={() => setSelected(po)}>
                         <Eye size={16} />
+                      </button>
+                      <button className="staff-action-button" title="Print Purchase Order" aria-label={`Print purchase order ${po.request_number || po.id}`} onClick={() => handlePrintFromTable(po)}>
+                        <Printer size={16} />
+                      </button>
+                      <button className="staff-action-button" title="Download Purchase Order" aria-label={`Download purchase order ${po.request_number || po.id}`} onClick={() => handleDownloadFromTable(po)} disabled={downloading}>
+                        <Download size={16} />
                       </button>
                     </td>
                   </tr>
@@ -286,20 +326,40 @@ export default function PurchaseOrderDocuments() {
       )}
 
       <style>{`
-        .po-document { padding: 8px 4px; }
-        .po-document-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid var(--border); }
-        .po-document-header h2 { margin: 0 0 4px; }
-        .po-document-number label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
-        .po-document-total { display: flex; justify-content: space-between; align-items: center; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); font-size: 16px; }
-        .po-document-signatures { display: flex; gap: 24px; margin-top: 40px; }
+        .po-document { box-sizing: border-box; max-width: 794px; min-height: 1123px; margin: 0 auto; padding: 38px 42px; color: #172033; background: #fff; font-family: Georgia, 'Times New Roman', serif; }
+        .po-document-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 28px; margin-bottom: 24px; padding-bottom: 18px; border-bottom: 2px solid #172033; }
+        .po-document-header h2 { margin: 0 0 6px; color: #10213b; font-size: 25px; letter-spacing: .04em; text-transform: uppercase; }
+        .po-document-header p { margin: 0; color: #64748b; font-family: Arial, sans-serif; font-size: 11px; }
+        .po-document-number { min-width: 150px; text-align: right; }
+        .po-document-number label { display: block; margin-bottom: 6px; color: #64748b; font-family: Arial, sans-serif; font-size: 10px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+        .po-document-number p { margin: 0; color: #172033; font-family: Arial, sans-serif; font-size: 14px; font-weight: 700; }
+        .po-document .detail-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 15px 24px; margin-bottom: 18px; }
+        .po-document label, .po-document h4 { font-family: Arial, sans-serif; }
+        .po-document .detail-grid label { display: block; margin-bottom: 4px; color: #64748b; font-size: 9px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+        .po-document .detail-grid p { margin: 0; font-size: 12px; }
+        .po-document .detail-section { margin-top: 18px; }
+        .po-document .detail-section h4 { margin: 0 0 8px; color: #10213b; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; }
+        .po-document .detail-section > p { margin: 0; font-size: 12px; line-height: 1.5; }
+        .po-document .data-table { width: 100%; border-collapse: collapse; font-family: Arial, sans-serif; font-size: 10px; }
+        .po-document .data-table th { padding: 9px 8px; border: 1px solid #cbd5e1; background: #e8eef5; color: #334155; font-size: 9px; letter-spacing: .06em; text-align: left; text-transform: uppercase; }
+        .po-document .data-table td { padding: 9px 8px; border: 1px solid #dbe2ea; color: #172033; }
+        .po-document-total { display: flex; justify-content: space-between; align-items: center; margin-top: 20px; padding: 12px 8px; border-top: 2px solid #172033; font-family: Arial, sans-serif; font-size: 13px; }
+        .po-document-total strong { font-size: 16px; }
+        .po-document-signatures { display: flex; gap: 28px; margin-top: 74px; }
         .po-document-signatures > div { flex: 1; text-align: center; }
-        .signature-line { border-top: 1px solid #94A3B8; margin: 40px 0 6px; }
-        .po-document-signatures label { font-size: 12px; color: var(--muted); }
+        .signature-line { border-top: 1px solid #64748b; margin: 30px 0 7px; }
+        .po-document-signatures label { color: #64748b; font-family: Arial, sans-serif; font-size: 9px; font-weight: 700; letter-spacing: .1em; }
 
+        @page { size: A4 portrait; margin: 14mm; }
         @media print {
-          body * { visibility: hidden; }
-          #po-print-area, #po-print-area * { visibility: visible; }
-          #po-print-area { position: absolute; top: 0; left: 0; width: 100%; }
+          html, body { background: #fff !important; }
+          body { margin: 0 !important; }
+          body * { visibility: hidden !important; }
+          #po-print-area, #po-print-area * { visibility: visible !important; }
+          #po-print-area { position: absolute; top: 0; left: 0; z-index: 9999; width: 100%; min-height: auto; margin: 0; padding: 0; }
+          #po-print-area .data-table { break-inside: auto; }
+          #po-print-area thead { display: table-header-group; }
+          #po-print-area tr, #po-print-area .detail-section, #po-print-area .po-document-signatures { break-inside: avoid; page-break-inside: avoid; }
           .no-print { display: none !important; }
         }
       `}</style>

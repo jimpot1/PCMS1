@@ -4,13 +4,24 @@ import { assetQrCodeUrl, pcmsApi } from '../../services/api.js';
 import RequestEditModal from '../../components/RequestEditModal.jsx';
 import { TableSkeleton } from '../../components/TableSkeleton.jsx';
 
+function getReleaseErrorMessage(error) {
+  const rawMessage = error?.message || 'Unable to release this item.';
+
+  try {
+    const response = JSON.parse(rawMessage);
+    return response?.payload?.message || rawMessage;
+  } catch {
+    return rawMessage;
+  }
+}
+
 export default function ApprovedReleaseQueue() {
   const [items, setItems] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [stockError, setStockError] = useState(null);
   const [message, setMessage] = useState(null);
-  const [receiptUrl, setReceiptUrl] = useState(null);
   const [notes, setNotes] = useState({});
   const [processingId, setProcessingId] = useState(null);
   const [confirmTarget, setConfirmTarget] = useState(null);
@@ -67,20 +78,23 @@ export default function ApprovedReleaseQueue() {
   const releaseItem = async (item) => {
     setError(null);
     setMessage(null);
-    setReceiptUrl(null);
+    setStockError(null);
     setProcessingId(item.id);
     try {
       const response = await pcmsApi.ppmoRelease('purchase', item.id);
-      const released = response?.data;
-      setMessage(response?.workflow?.message || 'Item released successfully.');
-      if (released?.id) {
-        const refreshedReceipt = await pcmsApi.fetchReleaseReceipt(released.id);
-        const receipt = refreshedReceipt || released;
-        if (receipt?.receipt_document_path) setReceiptUrl(pcmsApi.receiptDocumentUrl(released.id));
-      }
+      setMessage(response?.message || response?.workflow?.message || 'Item released successfully.');
       await loadQueue();
     } catch (err) {
-      setError(err.message || 'Unable to release this item.');
+      const releaseError = getReleaseErrorMessage(err);
+      if (/supply anomaly|insufficient stock|stock(?:\s+is)?\s+out/i.test(releaseError)) {
+        setStockError({
+          requestNumber: item.request_number,
+          title: /supply anomaly/i.test(releaseError) ? 'Supply Anomaly Requires Resolution' : 'Insufficient Stock',
+          message: releaseError,
+        });
+      } else {
+        setError(releaseError);
+      }
     } finally {
       setProcessingId(null);
       setConfirmTarget(null);
@@ -103,12 +117,6 @@ export default function ApprovedReleaseQueue() {
       {message && (
         <div className="form-message success">
           {message}
-          {receiptUrl && (
-            <>
-              {' '}
-              <a href={receiptUrl} target="_blank" rel="noreferrer">View release receipt</a>
-            </>
-          )}
         </div>
       )}
 
@@ -230,6 +238,26 @@ export default function ApprovedReleaseQueue() {
                     <PackageCheck size={16} />
                     {processingId === confirmTarget.id ? 'Releasing…' : 'Yes, release it'}
                   </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {stockError && (
+        <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="insufficient-stock-title" onClick={() => setStockError(null)}>
+          <div className="panel" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-like-container">
+              <div className="modal-header">
+                <h3 id="insufficient-stock-title">{stockError.title || 'Insufficient Stock'}</h3>
+                <button className="close-button" onClick={() => setStockError(null)} aria-label="Close insufficient stock message">×</button>
+              </div>
+              <div className="modal-body">
+                <AlertTriangle size={28} aria-hidden="true" />
+                <p>{stockError.message}</p>
+                <p className="text-muted">Request {stockError.requestNumber} cannot be released until the required items are procured and added to inventory.</p>
+                <div className="modal-footer">
+                  <button className="primary-button" onClick={() => setStockError(null)}>Close</button>
                 </div>
               </div>
             </div>

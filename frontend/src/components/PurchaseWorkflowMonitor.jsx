@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { Eye, Filter, Pencil, Printer, RefreshCw, Search, Trash2 } from 'lucide-react';
+import { Eye, Filter, Pencil, Printer, RefreshCw, Search, Trash2, ClipboardList } from 'lucide-react';
 import { pcmsApi } from '../services/api.js';
 import PurchaseRequestDetails from './PurchaseRequestDetails.jsx';
 import { WORKFLOW_STAGES } from './PurchaseWorkflowTimeline.jsx';
 import RequestEditModal from './RequestEditModal.jsx';
+import ReceivingWorkflow from '../pages/PPMO/ReceivingWorkflow.jsx';
 
 const statuses = [
   ['all', 'All'], ['pending', 'Pending'], ['approved', 'Approved'], ['rejected', 'Rejected'],
@@ -29,6 +30,7 @@ function printPurchaseRequest(request) {
 }
 
 export default function PurchaseWorkflowMonitor({ currentUser }) {
+  const [activeTab, setActiveTab] = useState('monitor'); // 'monitor' or 'receiving'
   const [items, setItems] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [filters, setFilters] = useState({ status: 'all', department_id: '', request_type: '', current_stage: '', date_from: '', date_to: '', search: '' });
@@ -45,8 +47,13 @@ export default function PurchaseWorkflowMonitor({ currentUser }) {
     setLoading(true);
     setError(null);
     try {
-      const query = { ...filters };
+      const query = {
+        ...filters,
+        workflow_destination: 'purchase_workflow',
+        request_type: 'purchase_order',
+      };
       if (query.status === 'all') delete query.status;
+      if (query.request_type === '') delete query.request_type;
       const data = await pcmsApi.fetchPurchaseRequests(query);
       setItems(Array.isArray(data) ? data : []);
     } catch (err) {
@@ -86,9 +93,48 @@ export default function PurchaseWorkflowMonitor({ currentUser }) {
 
   return (
     <div className="page-container purchase-workflow-page">
-      <section className="page-header workflow-page-header"><div><p className="eyebrow">PURCHASE REQUESTS</p><h1>Purchase Workflow Monitor</h1><p>Monitor the shared request workflow and inspect every approval and release record.</p></div><button className="secondary-button" type="button" onClick={load}><RefreshCw size={15} /> Refresh data</button></section>
-      {error && <div className="form-message error">{error}</div>}
-      {notice && <div className="form-message success">{notice}</div>}
+      <section className="page-header workflow-page-header">
+        <div>
+          <p className="eyebrow">PURCHASE REQUESTS</p>
+          <h1>Purchase Workflow</h1>
+          <p>{activeTab === 'monitor' ? 'Monitor the shared request workflow and inspect every approval and release record.' : 'Process purchase order receipts and quality checks'}</p>
+        </div>
+        {activeTab === 'monitor' && <button className="secondary-button" type="button" onClick={load}><RefreshCw size={15} /> Refresh data</button>}
+      </section>
+
+      {/* Tab Switcher */}
+      <div className="panel" style={{ padding: '12px 16px', borderBottom: '1px solid #d8dee9', display: 'flex', gap: '8px' }}>
+        <button
+          className={`secondary-button ${activeTab === 'monitor' ? 'active' : ''}`}
+          onClick={() => setActiveTab('monitor')}
+          style={{
+            backgroundColor: activeTab === 'monitor' ? '#172033' : 'transparent',
+            color: activeTab === 'monitor' ? '#fff' : '#64748b',
+            border: activeTab === 'monitor' ? '1px solid #172033' : '1px solid #d8dee9'
+          }}
+        >
+          <Search size={16} />
+          Monitor Requests
+        </button>
+        <button
+          className={`secondary-button ${activeTab === 'receiving' ? 'active' : ''}`}
+          onClick={() => setActiveTab('receiving')}
+          style={{
+            backgroundColor: activeTab === 'receiving' ? '#172033' : 'transparent',
+            color: activeTab === 'receiving' ? '#fff' : '#64748b',
+            border: activeTab === 'receiving' ? '1px solid #172033' : '1px solid #d8dee9'
+          }}
+        >
+          <ClipboardList size={16} />
+          Receiving & QC
+        </button>
+      </div>
+
+      {/* Monitor View */}
+      {activeTab === 'monitor' && (
+        <>
+          {error && <div className="form-message error">{error}</div>}
+          {notice && <div className="form-message success">{notice}</div>}
       <div className="panel workflow-filters">
         <div className="filter-tabs" role="tablist" aria-label="Filter by request status">{statuses.map(([value, label]) => <button type="button" role="tab" aria-selected={filters.status === value} key={value} className={filters.status === value ? 'active' : ''} onClick={() => updateFilter('status', value)}>{label}</button>)}</div>
         <form className="workflow-filter-grid" onSubmit={submitSearch}>
@@ -108,6 +154,11 @@ export default function PurchaseWorkflowMonitor({ currentUser }) {
       {selected && <PurchaseRequestDetails request={selected} onClose={() => setSelected(null)} onPrint={() => printPurchaseRequest(selected)} onEdit={canModify(selected) ? () => { setEditTarget(selected); setSelected(null); } : null} onDelete={canDelete && canModify(selected) ? () => { setDeleteTarget(selected); setSelected(null); } : null} />}
       {editTarget && <RequestEditModal request={editTarget} departments={departments} onClose={() => setEditTarget(null)} onSaved={() => refreshAfterAction('Purchase request updated.')} />}
       {deleteTarget && <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="delete-request-title"><div className="confirm-dialog workflow-confirm-dialog"><div className="confirm-dialog-icon"><Trash2 size={20} /></div><h3 id="delete-request-title">Delete Purchase Request?</h3><p>Are you sure you want to delete request <strong>{deleteTarget.request_number}</strong>? This action cannot be undone.</p><div className="modal-actions"><button className="secondary-button" type="button" onClick={() => setDeleteTarget(null)} disabled={actionLoading}>Cancel</button><button className="danger-button" type="button" onClick={confirmDelete} disabled={actionLoading}><Trash2 size={15} /> {actionLoading ? 'Deleting...' : 'Delete Request'}</button></div></div></div>}
-</div>
+        </>
+      )}
+
+      {/* Receiving & QC View */}
+      {activeTab === 'receiving' && <ReceivingWorkflow />}
+    </div>
   );
 }

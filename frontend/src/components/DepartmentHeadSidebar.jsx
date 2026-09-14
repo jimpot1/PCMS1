@@ -1,6 +1,6 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
-import { Home, ClipboardCheck, Layers, FileText, BarChart3, Bell, LogOut, Sparkles } from 'lucide-react';
+import { Home, ClipboardCheck, Layers, FileText, BarChart3, Bell, Sparkles } from 'lucide-react';
 
 const departmentMenus = [
   { id: 'dashboard', label: 'Dashboard', icon: Home, to: '/department-head/dashboard' },
@@ -51,10 +51,6 @@ export default function DepartmentHeadSidebar({ currentUser, onLogout, collapsed
               </div>
             )}
           </div>
-          <button className="department-logout-btn" type="button" onClick={onLogout}>
-            <LogOut size={16} />
-            {!collapsed && <span>Logout</span>}
-          </button>
         </div>
       </div>
     </aside>

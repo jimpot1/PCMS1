@@ -814,7 +814,7 @@ export async function pendingApprovals() {
 
 export async function fetchOicReleaseQueue() {
   const [purchaseResponse, gatePassResponse] = await Promise.all([
-    request("/purchase-requests?current_stage=property_custodian&per_page=200"),
+    request("/purchase-requests?current_stage=property_custodian&status=approved&per_page=200"),
     request("/gate-passes?deliverable=1&per_page=200"),
   ]);
 
@@ -840,17 +840,19 @@ export async function ppmoReleaseQueue() {
   const [purchaseResponse, requestResponse, gatePassResponse] =
     await Promise.all([
       request(
-        "/purchase-requests?current_stage=property_custodian&per_page=200",
+        "/purchase-requests?current_stage=property_custodian&status=approved&per_page=200",
       ),
-      request("/purchase-requests?current_stage=ppmo_staff&per_page=200"),
+      request("/purchase-requests?current_stage=ppmo_staff&status=approved&per_page=200"),
       request("/gate-passes?deliverable=1&per_page=200"),
     ]);
 
+  const filteredPurchaseRequests = [
+    ...(purchaseResponse?.data || []).filter((item) => item?.request_type !== "purchase_order"),
+    ...(requestResponse?.data || []).filter((item) => item?.request_type !== "purchase_order"),
+  ];
+
   return {
-    purchaseRequests: [
-      ...(purchaseResponse?.data || []),
-      ...(requestResponse?.data || []),
-    ],
+    purchaseRequests: filteredPurchaseRequests,
     gatePasses: gatePassResponse?.data || [],
   };
 }
@@ -1405,4 +1407,19 @@ export const pcmsApi = {
   deactivateUser: (id) => deactivateUser(id),
   systemSettings: () => fetchSystemSettings(),
   updateSystemSettings: (payload) => updateSystemSettings(payload),
+  
+  // Receiving & QC Workflow
+  logPoReceived: (id, payload) => request(`/purchase-requests/${id}/receiving/log-received`, {
+    method: 'POST',
+    body: payload,
+  }),
+  performPoQc: (id, payload) => request(`/purchase-requests/${id}/receiving/perform-qc`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  }),
+  updatePoStock: (id) => request(`/purchase-requests/${id}/receiving/update-stock`, {
+    method: 'POST',
+    body: JSON.stringify({}),
+  }),
+  getProcurementStatus: (id) => request(`/purchase-requests/${id}/procurement-status`),
 };

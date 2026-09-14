@@ -116,15 +116,13 @@ class NotificationController
      * with an explicit recipient_id — so they're deliberately excluded here.
      */
     /**
-     * Only System Administrator sees operational alerts (anomalies, low
-     * stock, maintenance, audits) in the bell. Every other role only sees
-     * notifications tied to their own step in the approval workflow
-     * (assignment_notifications / transfer_notifications, scoped by
-     * recipient_id) — handled separately in recipientNotifications().
+     * Inventory operations roles see operational alerts (anomalies, low
+     * stock, maintenance, audits) in the bell. Approval-chain roles and the
+     * Requester only see notifications tied to their workflow step.
      */
     protected function inventoryOperationsRoles(): array
     {
-        return ['System Administrator', 'OIC'];
+        return ['System Administrator', 'PPMO Staff', 'OIC'];
     }
 
     protected function notificationRecipientQuery($query, $user)
@@ -151,7 +149,7 @@ class NotificationController
             ->orderByDesc('created_at')
             ->limit(20)
             ->get()
-            ->map(function ($notice) {
+            ->map(function ($notice) use ($user) {
                 return [
                     'id' => $notice->id,
                     'source' => 'assignment',
@@ -175,7 +173,7 @@ class NotificationController
             ->orderByDesc('created_at')
             ->limit(20)
             ->get()
-            ->map(function ($notice) {
+            ->map(function ($notice) use ($user) {
                 return [
                     'id' => $notice->id,
                     'source' => 'transfer',
@@ -183,7 +181,7 @@ class NotificationController
                     'title' => $notice->title,
                     'message' => $notice->message,
                     'anomaly_id' => $notice->anomaly_alert_id ?? null,
-                    'url' => $this->notificationUrl($notice),
+                    'url' => $this->notificationUrl($notice, $user),
                     'time' => $this->formatTime($notice->created_at),
                     'created_at' => $this->formatTime($notice->created_at),
                     'urgent' => in_array($notice->type, ['pending_approval', 'temporary_transfer_due', 'maintenance_overdue', 'maintenance_due_today'], true),
@@ -207,6 +205,49 @@ class NotificationController
         if (! in_array($user?->role, $this->inventoryOperationsRoles(), true)) {
             return $notifications;
         }
+
+        DB::table('anomaly_alerts')
+            ->where('status', 'open')
+            ->orderByDesc('created_at')
+            ->limit(10)
+            ->get()
+            ->each(function ($anomaly) use (&$notifications, $user) {
+                $alreadyNotified = Schema::hasColumn('transfer_notifications', 'anomaly_alert_id')
+                    && DB::table('transfer_notifications')
+                        ->where('anomaly_alert_id', $anomaly->id)
+                        ->where('recipient_id', $user?->id)
+                        ->exists();
+
+                if ($alreadyNotified) {
+                    return;
+                }
+
+                $title = match ($anomaly->source_type) {
+                    'low_stock' => 'Low Stock Anomaly',
+                    'requester_frequency_anomaly' => 'Requester Frequency Alert',
+                    'quantity_anomaly' => 'AI Anomaly Alert',
+                    'untracked_transfer' => 'Untracked Transfer Alert',
+                    'repeat_repair' => 'Repeat Repair Alert',
+                    default => 'Inventory Anomaly Alert',
+                };
+                $monitoringUrl = $user?->role === 'System Administrator'
+                    ? '/?anomaly=' . $anomaly->id
+                    : '/ppmo/monitoring?anomaly=' . $anomaly->id;
+
+                $notifications->push([
+                    'id' => "global-anomaly-{$anomaly->id}",
+                    'source' => 'global',
+                    'type' => 'anomaly',
+                    'title' => $title,
+                    'message' => $anomaly->reason ?: ($anomaly->recommended_action ?: 'An inventory anomaly requires review.'),
+                    'anomaly_id' => $anomaly->id,
+                    'url' => $monitoringUrl,
+                    'time' => $this->formatTime($anomaly->created_at),
+                    'created_at' => $this->formatTime($anomaly->created_at),
+                    'urgent' => in_array($anomaly->priority, ['high', 'critical'], true),
+                    'read' => true,
+                ]);
+            });
 
         MaintenanceRecord::where('status', 'scheduled')
             ->whereBetween('scheduled_at', [now(), now()->addDays(7)])
@@ -296,7 +337,15 @@ class NotificationController
                 ]);
             });
 
-        return $notifications;
+        return $notifications
+            ->map(function (array $notification) use ($user) {
+                if (empty($notification['url'])) {
+                    $notification['url'] = $this->notificationUrl((object) $notification, $user);
+                }
+
+                return $notification;
+            })
+            ->values();
     }
 
     protected function formatTime($value): ?string
@@ -314,12 +363,52 @@ class NotificationController
         return $timestamp ? date('Y-m-d H:i:s', $timestamp) : null;
     }
 
-    protected function notificationUrl($notice): ?string
+    protected function notificationUrl($notice, $user = null): ?string
     {
-        if (($notice->type ?? null) === 'anomaly' && ! empty($notice->anomaly_alert_id)) {
-            return '/oic/monitoring?anomaly=' . $notice->anomaly_alert_id;
+        $type = $notice->type ?? null;
+        $anomalyId = $notice->anomaly_alert_id ?? $notice->anomaly_id ?? null;
+
+        if ($type === 'anomaly' && ! empty($anomalyId)) {
+            return $user?->role === 'System Administrator'
+                ? '/?anomaly=' . $anomalyId
+                : ($user?->role === 'PPMO Staff'
+                    ? '/ppmo/monitoring?anomaly=' . $anomalyId
+                    : '/oic/monitoring?anomaly=' . $anomalyId);
         }
 
-        return $notice->navigation_target ?? null;
+        if (! empty($notice->navigation_target) && ! str_starts_with((string) $notice->navigation_target, 'inventory-monitoring:')) {
+            return $notice->navigation_target;
+        }
+
+        if ($user?->role === 'System Administrator') {
+            $adminPage = match ($type) {
+                'low_stock', 'supply_released' => 'supplies',
+                'request_submitted', 'pending_approval' => 'purchases',
+                'maintenance', 'maintenance_due_today', 'maintenance_overdue', 'predicted_maintenance' => 'maintenance',
+                'audit' => 'audit',
+                'ocr' => 'ocr',
+                default => 'notifications',
+            };
+
+            return '/?page=' . $adminPage;
+        }
+
+        return match ($type) {
+            'low_stock', 'supply_released' => $user?->role === 'PPMO Staff' ? '/ppmo/supplies' : '/oic/monitoring',
+            'request_submitted', 'pending_approval' => match ($user?->role) {
+                'Department Head' => '/department-head/pending-approvals',
+                'Recommending Approver' => '/recommending-approver/review-queue',
+                'President', 'CEO' => '/president/approvals',
+                'Property Custodian', 'OIC' => '/oic/approvals',
+                'PPMO Staff' => '/ppmo/approved-release-queue',
+                default => '/requester',
+            },
+            'procurement_required', 'low_stock_requisition' => '/ppmo/purchases',
+            'request_released', 'request_status_update', 'request_rejected' => '/requester',
+            'maintenance', 'maintenance_due_today', 'maintenance_overdue', 'predicted_maintenance' => $user?->role === 'PPMO Staff' ? '/ppmo/maintenance' : '/oic/monitoring',
+            'audit' => $user?->role === 'PPMO Staff' ? '/ppmo/audit' : '/oic/audit',
+            'ocr' => '/ppmo/ocr',
+            default => '/notifications',
+        };
     }
 }
