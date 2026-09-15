@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\StockMovement;
 use App\Models\User;
+use App\Http\Controllers\SystemSettingController;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
@@ -81,7 +82,7 @@ class AnomalyDetectionService
                     ->where('id', $existingId)
                     ->update([
                         'risk_score' => 5.0,
-                        'priority' => 'medium',
+                        'priority' => self::priorityForRisk(5.0),
                         'reason' => $reason,
                         'recommended_action' => 'Review requester behavior and usage patterns',
                         'request_count' => $recentRequests,
@@ -100,7 +101,7 @@ class AnomalyDetectionService
                 'supply_id' => $supplyId,
                 'department_id' => $departmentId,
                 'risk_score' => 5.0,
-                'priority' => 'medium',
+                'priority' => self::priorityForRisk(5.0),
                 'reason' => $reason,
                 'recommended_action' => 'Review requester behavior and usage patterns',
                 'request_count' => $recentRequests,
@@ -136,7 +137,7 @@ class AnomalyDetectionService
             'source_id' => (string)$assetId,
             'found_department_id' => $physicallyFoundDepartmentId,
             'risk_score' => 7.5,
-            'priority' => 'high',
+            'priority' => self::priorityForRisk(7.5),
             'reason' => "Asset #{$assetId} found in department {$physicallyFoundDepartmentId} but recorded in department {$asset->department_id}",
             'recommended_action' => 'Review asset location and update department record if transfer is authorized',
             'status' => 'open',
@@ -217,7 +218,7 @@ class AnomalyDetectionService
                 ->where('id', $existingId)
                 ->update([
                     'risk_score' => 6.0,
-                    'priority' => 'medium',
+                    'priority' => self::priorityForRisk(6.0),
                     'reason' => $reason,
                     'recommended_action' => 'Review if this is an unusual request pattern',
                     'analysis_context' => json_encode($context),
@@ -232,7 +233,7 @@ class AnomalyDetectionService
             'source_type' => 'quantity_anomaly',
             'source_id' => (string)$departmentId,
             'risk_score' => 6.0,
-            'priority' => 'medium',
+            'priority' => self::priorityForRisk(6.0),
             'reason' => $reason,
             'recommended_action' => 'Review if this is an unusual request pattern',
             'analysis_context' => json_encode($context),
@@ -249,6 +250,17 @@ class AnomalyDetectionService
 
     return null;
 }
+
+    private static function priorityForRisk(float $riskScore): string
+    {
+        $threshold = SystemSettingController::integer('anomaly_risk_threshold', 8);
+
+        if ($riskScore >= $threshold) {
+            return 'high';
+        }
+
+        return $riskScore >= max(1, $threshold - 2) ? 'medium' : 'low';
+    }
 
     protected static function findOpenQuantityAnomalyId($departmentId, $supplyId): ?int
     {
@@ -284,6 +296,10 @@ class AnomalyDetectionService
 
     protected static function notifyQuantityAnomaly(int $anomalyId, array $context): void
     {
+        if (! SystemSettingController::bool('critical_anomaly_notifications_enabled', true)) {
+            return;
+        }
+
         if (! Schema::hasTable('transfer_notifications') || ! Schema::hasColumn('transfer_notifications', 'anomaly_alert_id')) {
             return;
         }

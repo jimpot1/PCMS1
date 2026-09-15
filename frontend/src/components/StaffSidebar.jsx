@@ -19,7 +19,6 @@ import {
   QrCode,
   RotateCcw,
   ShoppingCart,
-  Tags,
   Wrench,
   UserPlus
 } from 'lucide-react';
@@ -35,8 +34,7 @@ const sidebarSections = [
     title: 'Asset Management',
     items: [
       { id: 'assets', label: 'Asset Registry', icon: Boxes, to: '/ppmo/assets' },
-      { id: 'ocr', label: 'OCR Asset Tagging', icon: QrCode, to: '/ppmo/ocr' },
-      { id: 'categories', label: 'Asset Categories', icon: Tags, to: '/ppmo/categories' }
+      { id: 'ocr', label: 'OCR Asset Tagging', icon: QrCode, to: '/ppmo/ocr' }
     ]
   },
   {

@@ -17,15 +17,59 @@ class DashboardController
 {
     public function ppmoMetrics(): JsonResponse
     {
+        $thisWeekStart = now()->startOfWeek();
+        $thisWeekEnd = now()->endOfWeek();
+        $lastWeekStart = now()->subWeek()->startOfWeek();
+        $lastWeekEnd = now()->subWeek()->endOfWeek();
+
+        $currentPendingReturns = GatePass::where('status', 'approved')
+            ->whereNull('returned_at')
+            ->whereBetween('created_at', [$thisWeekStart, $thisWeekEnd])
+            ->count();
+
+        $previousPendingReturns = GatePass::where('status', 'approved')
+            ->whereNull('returned_at')
+            ->whereBetween('created_at', [$lastWeekStart, $lastWeekEnd])
+            ->count();
+
+        $currentStockCountTasks = DB::table('stock_movements')
+            ->where('movement_type', 'out')
+            ->whereBetween('created_at', [$thisWeekStart, $thisWeekEnd])
+            ->count();
+
+        $previousStockCountTasks = DB::table('stock_movements')
+            ->where('movement_type', 'out')
+            ->whereBetween('created_at', [$lastWeekStart, $lastWeekEnd])
+            ->count();
+
+        $currentDocumentsPendingPrint = GatePass::where('status', 'approved')
+            ->whereNull('returned_at')
+            ->whereBetween('created_at', [$thisWeekStart, $thisWeekEnd])
+            ->count();
+
+        $previousDocumentsPendingPrint = GatePass::where('status', 'approved')
+            ->whereNull('returned_at')
+            ->whereBetween('created_at', [$lastWeekStart, $lastWeekEnd])
+            ->count();
+
         return response()->json([
-            'pending_returns' => GatePass::where('status', 'approved')->count(),
-            'stock_count_tasks' => DB::table('stock_movements')
-                ->where('movement_type', 'out')
-                ->where('created_at', '>=', now()->subDays(7))
-                ->count(),
-            'documents_pending_print' => GatePass::where('status', 'approved')
-                ->whereNull('returned_at')
-                ->count(),
+            'pending_returns' => $currentPendingReturns,
+            'stock_count_tasks' => $currentStockCountTasks,
+            'documents_pending_print' => $currentDocumentsPendingPrint,
+            'weekly_summary' => [
+                'current' => [
+                    'label' => 'This week',
+                    'pending_returns' => $currentPendingReturns,
+                    'stock_count_tasks' => $currentStockCountTasks,
+                    'documents_pending_print' => $currentDocumentsPendingPrint,
+                ],
+                'previous' => [
+                    'label' => 'Last week',
+                    'pending_returns' => $previousPendingReturns,
+                    'stock_count_tasks' => $previousStockCountTasks,
+                    'documents_pending_print' => $previousDocumentsPendingPrint,
+                ],
+            ],
         ]);
     }
 

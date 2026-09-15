@@ -3,6 +3,7 @@ import { Bell, ChevronDown } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { pcmsApi } from '../services/api.js';
 import { ROLES, getRoleDisplayName } from '../services/roles.js';
+import ThemeToggle from './ThemeToggle.jsx';
 
 function getNotificationsPath(role) {
   switch (role) {
@@ -166,6 +167,7 @@ export default function HeaderActions({ currentUser, onLogout }) {
         {showProfileMenu && (
           <div ref={profileMenuRef} className="dropdown profile-dropdown">
             <div className="dropdown-list">
+              <ThemeToggle />
               <button type="button" className="dropdown-item" onClick={() => { setShowProfileMenu(false); navigate('/profile'); }}>Profile</button>
               <button type="button" className="dropdown-item" onClick={() => { setShowProfileMenu(false); navigate('/account-settings'); }}>Account Settings</button>
               {!isSystemAdmin && (

@@ -10,9 +10,9 @@ use Illuminate\Support\Facades\DB;
 class SystemSettingController extends Controller
 {
     private const DEFAULTS = [
-        'recommending_approver_enabled' => true,
+        'maintenance_reminders_enabled' => true,
         'maintenance_reminder_days' => 7,
-        'low_stock_auto_requisition_enabled' => false,
+        'critical_anomaly_notifications_enabled' => true,
         'ocr_confidence_threshold' => 80,
         'anomaly_risk_threshold' => 8,
     ];
@@ -29,9 +29,9 @@ class SystemSettingController extends Controller
     public function update(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'recommending_approver_enabled' => ['sometimes', 'boolean'],
+            'maintenance_reminders_enabled' => ['sometimes', 'boolean'],
             'maintenance_reminder_days' => ['sometimes', 'integer', 'in:1,3,7,14'],
-            'low_stock_auto_requisition_enabled' => ['sometimes', 'boolean'],
+            'critical_anomaly_notifications_enabled' => ['sometimes', 'boolean'],
             'ocr_confidence_threshold' => ['sometimes', 'integer', 'min:0', 'max:100'],
             'anomaly_risk_threshold' => ['sometimes', 'integer', 'min:1', 'max:10'],
         ]);

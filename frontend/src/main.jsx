@@ -128,7 +128,6 @@ import {
 } from "recharts";
 import {
   auditItems,
-  categories,
   departments as mockDepartments,
   maintenance,
   purchaseRequests,
@@ -150,6 +149,8 @@ import { ROLES, hasPermission } from "./services/roles.js";
 import { pcmsApi, assetQrCodeUrl } from "./services/api.js";
 import jsQR from "jsqr";
 import { TableSkeleton, ListSkeleton } from "./components/TableSkeleton.jsx";
+import ThemeToggle from "./components/ThemeToggle.jsx";
+import { applyAuthenticatedTheme, getSavedTheme } from "./services/theme.js";
 
 const sidebarSections = [
   {
@@ -165,7 +166,6 @@ const sidebarSections = [
     items: [
       { id: "assets", label: "Asset Registry", icon: Archive },
       { id: "ocr", label: "OCR Asset Tagging", icon: Camera },
-      { id: "categories", label: "Asset Categories", icon: Boxes },
     ],
   },
   {
@@ -240,7 +240,6 @@ const resolveActivePageFromPath = (pathname) => {
     dashboard: "dashboard",
     ppmo: "dashboard",
     assets: "assets",
-    categories: "categories",
     assignments: "assignments",
     transfers: "transfers",
     returns: "returns",
@@ -316,7 +315,6 @@ const getPagePathForRole = (pageId, role) => {
       dashboard: "/ppmo/dashboard",
       assets: "/ppmo/assets",
       ocr: "/ppmo/ocr",
-      categories: "/ppmo/categories",
       assignments: "/ppmo/assignments",
       transfers: "/ppmo/transfers",
       returns: "/ppmo/returns",
@@ -364,6 +362,17 @@ const getPagePathForRole = (pageId, role) => {
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [theme, setTheme] = useState(() => getSavedTheme());
+
+  useEffect(() => {
+    const handleThemeChange = (event) => setTheme(event.detail?.theme || getSavedTheme());
+    window.addEventListener('pcms:theme-changed', handleThemeChange);
+    return () => window.removeEventListener('pcms:theme-changed', handleThemeChange);
+  }, []);
+
+  useEffect(() => {
+    applyAuthenticatedTheme(isAuthenticated ? theme : 'light');
+  }, [isAuthenticated, theme]);
   const [activePage, setActivePage] = useState(() => {
     const hrefPath = window.location.pathname;
     const urlPage = resolveActivePageFromPath(hrefPath);
@@ -918,6 +927,7 @@ function App() {
                     >
                       Activity Log
                     </button>
+                    <ThemeToggle />
                     <button
                       type="button"
                       className="dropdown-item"
@@ -1104,7 +1114,6 @@ function App() {
                 element={<AssetRegistry currentUser={currentUser} />}
               />
               <Route path="ocr" element={<OcrPage />} />
-              <Route path="categories" element={<CategoryPage />} />
               <Route path="assignments" element={<EnhancedAssignmentsPage />} />
               <Route path="transfers" element={<TransferPage />} />
               <Route path="returns" element={<AssetReturnPage />} />
@@ -2448,7 +2457,6 @@ function renderPage(page, onNavigate, currentUser) {
   const pages = {
     dashboard: <Dashboard onNavigate={onNavigate} />,
     assets: <AssetRegistry currentUser={currentUser} />,
-    categories: <CategoryPage />,
     departments: <DepartmentsPage />,
     assignments: <EnhancedAssignmentsPage />,
     transfers: <TransferPage />,
@@ -3581,33 +3589,6 @@ function AssetRegistry({ currentUser }) {
           </div>
         </div>
       )}
-    </ModulePage>
-  );
-}
-
-function CategoryPage() {
-  return (
-    <ModulePage
-      title="Asset Categories"
-      subtitle="Maintain depreciation rules and category-level controls."
-      primary="New Category"
-      icon={Boxes}
-    >
-      <div className="card-grid">
-        {categories.map((category) => (
-          <div className="mini-card" key={category.name}>
-            <div className={`mini-icon tone-${category.tone}`}>
-              <category.icon size={20} />
-            </div>
-            <strong>{category.name}</strong>
-            <p>
-              {category.count} assets · {category.depreciation}% annual
-              depreciation
-            </p>
-            <span className="status success">Active</span>
-          </div>
-        ))}
-      </div>
     </ModulePage>
   );
 }
@@ -13596,6 +13577,61 @@ function NotificationsPage({ onNavigate }) {
     };
   }, []);
 
+  const handleNotificationClick = async (item) => {
+    if (item && !item.read && item.source && item.id) {
+      try {
+        await pcmsApi.markNotificationRead(item.source, item.id);
+        setItems((current) =>
+          current.map((notice) =>
+            notice.id === item.id && notice.source === item.source
+              ? { ...notice, read: true }
+              : notice,
+          ),
+        );
+      } catch {
+        // keep navigation responsive even if the read-state update fails
+      }
+    }
+
+    if (item?.anomaly_id || item?.url?.includes("anomaly=")) {
+      const anomalyId =
+        item.anomaly_id ||
+        new URL(item.url, window.location.origin).searchParams.get("anomaly");
+
+      if (anomalyId) {
+        window.history.pushState({}, "", `/?anomaly=${anomalyId}`);
+        onNavigate?.("monitoring");
+        return;
+      }
+    }
+
+    if (item?.url) {
+      const destination = new URL(item.url, window.location.origin);
+      const page = destination.searchParams.get("page");
+      const pageByPath = {
+        "/ppmo/supplies": "supplies",
+        "/ppmo/maintenance": "maintenance",
+        "/ppmo/audit": "audit",
+        "/ppmo/ocr": "ocr",
+        "/ppmo/approved-release-queue": "purchases",
+        "/ppmo/purchases": "purchases",
+        "/?page=supplies": "supplies",
+        "/?page=maintenance": "maintenance",
+        "/?page=audit": "audit",
+        "/?page=ocr": "ocr",
+        "/?page=purchases": "purchases",
+      };
+      const targetPage = page || pageByPath[destination.pathname];
+
+      if (targetPage) {
+        onNavigate?.(targetPage);
+        return;
+      }
+    }
+
+    onNavigate?.("notifications");
+  };
+
   const handleExport = () => {
     exportRowsToCsv("notifications.csv", items, [
       { label: "Type", value: (item) => item.type },
@@ -14348,8 +14384,8 @@ function SettingsPage() {
       {message && <div className="form-message success">{message}</div>}
       <div className="settings-grid">
         {[
-          ["Use recommending approver", "recommending_approver_enabled", "Adds the Recommending Approver stage to request approvals."],
-          ["Automatic low-stock requisitions", "low_stock_auto_requisition_enabled", "Creates a procurement request when a department supply reaches minimum stock."],
+          ["Maintenance reminders", "maintenance_reminders_enabled", "Sends due and overdue maintenance alerts to inventory operations staff."],
+          ["Critical anomaly notifications", "critical_anomaly_notifications_enabled", "Sends AI-detected inventory risk alerts to the responsible operations roles."],
         ].map(([label, key, description]) => (
           <div className="setting-row" key={key}>
             <div>

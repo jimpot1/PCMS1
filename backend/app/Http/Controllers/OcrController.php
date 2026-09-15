@@ -7,6 +7,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use App\Http\Controllers\SystemSettingController;
 use Illuminate\Support\Facades\Schema;
 
 class OcrController
@@ -92,15 +93,20 @@ class OcrController
         $scanId = DB::table('ocr_scans')->insertGetId($scanData);
 
         $confidence = max(0, min(100, (float) $result['confidence']));
+        $confidenceThreshold = SystemSettingController::integer('ocr_confidence_threshold', 80);
+        $needsReview = ! $result['success'] || $confidence < $confidenceThreshold;
 
         $details = $result['details'] ?? $fields;
 
         return response()->json([
             'success' => $result['success'],
-            'message' => $result['message'],
+            'message' => $needsReview && $result['success']
+                ? "OCR completed below the configured confidence threshold ({$confidenceThreshold}%). Review the extracted fields."
+                : $result['message'],
             'scan_id' => $scanId,
-            'processing_status' => $result['success'] ? 'completed' : 'needs_review',
+            'processing_status' => $needsReview ? 'needs_review' : 'completed',
             'confidence' => $confidence,
+            'confidence_threshold' => $confidenceThreshold,
             'data' => [
                 'property_number' => $details['property_number'] ?? null,
                 'serial_number' => $details['serial_number'] ?? null,

@@ -20,9 +20,23 @@ function normalizeProfile(profile = {}) {
 }
 
 function persistCurrentUser(user) {
-  if (user) {
+  if (!user) {
+    clearPcmsAuthState();
+    return;
+  }
+
+  const useLocalStorage =
+    localStorage.getItem(CURRENT_USER_KEY) !== null ||
+    sessionStorage.getItem(CURRENT_USER_KEY) === null;
+  persistSessionUser(user, useLocalStorage);
+}
+
+function persistSessionUser(user, remember = false) {
+  if (remember) {
     localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(user));
+    sessionStorage.removeItem(CURRENT_USER_KEY);
   } else {
+    sessionStorage.setItem(CURRENT_USER_KEY, JSON.stringify(user));
     localStorage.removeItem(CURRENT_USER_KEY);
   }
 
@@ -31,15 +45,19 @@ function persistCurrentUser(user) {
 
 function clearPcmsAuthState() {
   localStorage.removeItem(CURRENT_USER_KEY);
+  sessionStorage.removeItem(CURRENT_USER_KEY);
   window.dispatchEvent(new Event('pcms:auth-changed'));
 }
 
 export function getStoredUser() {
   try {
-    const rawUser = localStorage.getItem(CURRENT_USER_KEY);
+    const rawUser =
+      localStorage.getItem(CURRENT_USER_KEY) ||
+      sessionStorage.getItem(CURRENT_USER_KEY);
     return rawUser ? JSON.parse(rawUser) : null;
   } catch (error) {
     localStorage.removeItem(CURRENT_USER_KEY);
+    sessionStorage.removeItem(CURRENT_USER_KEY);
     return null;
   }
 }
@@ -92,7 +110,7 @@ export async function signInWithEmail(email, password, remember = false) {
   }
 
   const user = normalizeProfile(payload.user);
-  persistCurrentUser(user);
+  persistSessionUser(user, remember);
 
   return {
     data: { user },
@@ -120,10 +138,6 @@ export async function signOut() {
 }
 
 export async function getCurrentSession() {
-  if (!getStoredUser()) {
-    return null;
-  }
-
   const response = await fetch(`${API_BASE_URL}/auth/me`, {
     method: 'GET',
     credentials: 'include',

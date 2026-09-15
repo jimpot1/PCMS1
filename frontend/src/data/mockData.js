@@ -2,16 +2,11 @@ import {
   AlertTriangle,
   Archive,
   Bell,
-  Boxes,
   Building2,
   Camera,
   CheckCircle2,
-  Cpu,
   FileText,
-  FlaskConical,
-  Monitor,
   Package,
-  Printer,
   Sparkles,
   Wrench
 } from 'lucide-react';
@@ -25,15 +20,6 @@ export const assets = [
   { id: 'AST-2026-0006', propertyNo: 'BCP-COM-2025-0131', serial: 'HP-ELT-9134', name: 'HP EliteDesk Workstation', department: 'Computer Laboratory', custodian: 'Paolo Tan', value: 63000, condition: 'Good', status: 'Assigned' },
   { id: 'AST-2026-0007', propertyNo: 'BCP-PPMO-2024-0028', serial: 'CAM-CN-7231', name: 'Canon DSLR Kit', department: 'PPMO', custodian: 'Riza Molina', value: 81500, condition: 'Good', status: 'Available' },
   { id: 'AST-2026-0008', propertyNo: 'BCP-FAC-2023-0088', serial: 'GEN-4500-XY', name: 'Portable Generator', department: 'Facilities', custodian: 'Jun Herrera', value: 112000, condition: 'Under Inspection', status: 'Maintenance' }
-];
-
-export const categories = [
-  { name: 'Computers and Peripherals', count: 824, depreciation: 20, tone: 'blue', icon: Monitor },
-  { name: 'Office Equipment', count: 486, depreciation: 15, tone: 'green', icon: Printer },
-  { name: 'Laboratory Equipment', count: 218, depreciation: 10, tone: 'purple', icon: FlaskConical },
-  { name: 'Furniture and Fixtures', count: 612, depreciation: 8, tone: 'orange', icon: Boxes },
-  { name: 'Medical Equipment', count: 91, depreciation: 12, tone: 'teal', icon: Package },
-  { name: 'Network Devices', count: 200, depreciation: 18, tone: 'red', icon: Cpu }
 ];
 
 export const departments = [

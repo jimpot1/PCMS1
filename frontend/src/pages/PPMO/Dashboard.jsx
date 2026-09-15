@@ -1,10 +1,12 @@
 import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { Area, AreaChart, Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { PackageCheck, Boxes, Truck, RotateCcw, ClipboardList, Printer, QrCode, Barcode, FileText, CheckCircle2, Bell } from 'lucide-react';
 import StaffStatCard from '../../components/StaffStatCard.jsx';
-import StaffQuickActionCard from '../../components/StaffQuickActionCard.jsx';
 import { pcmsApi } from '../../services/api.js';
 
 export default function PPMODashboard() {
+  const navigate = useNavigate();
   const [stats, setStats] = useState(null);
   const [queue, setQueue] = useState([]);
   const [receiving, setReceiving] = useState([]);
@@ -33,13 +35,15 @@ export default function PPMODashboard() {
 
         setReceiving(receivingResponse.slice(0, 5).map((item) => ({ id: item.id, supplier: item.supplier_name || 'Supplier', purchaseOrder: item.purchase_order_number || item.id, items: item.items_count || 0, arrivalTime: item.arrival_time || item.updated_at || '', status: item.status || 'Pending' })));
         setVerification([{ id: 1, label: 'Stock verification needed', details: 'Select items pending physical verification.' }]);
+        const currentMetrics = metricsResponse?.weekly_summary?.current || {};
+
         setStats({
           approvedReleases: queueResponse.purchaseRequests.length + queueResponse.gatePasses.length,
           itemsReady: queueResponse.purchaseRequests.length + queueResponse.gatePasses.length,
           todaysDeliveries: receivingResponse.length,
-          pendingReturns: metricsResponse?.pending_returns || 0,
-          stockCountTasks: metricsResponse?.stock_count_tasks || 0,
-          documentsPendingPrint: metricsResponse?.documents_pending_print || 0
+          pendingReturns: currentMetrics.pending_returns ?? metricsResponse?.pending_returns ?? 0,
+          stockCountTasks: currentMetrics.stock_count_tasks ?? metricsResponse?.stock_count_tasks ?? 0,
+          documentsPendingPrint: currentMetrics.documents_pending_print ?? metricsResponse?.documents_pending_print ?? 0
         });
       } catch (err) {
         if (!mounted) return;
@@ -58,26 +62,106 @@ export default function PPMODashboard() {
     return <div className="staff-panel"><div className="form-message error">{error}</div></div>;
   }
 
+  const handleQuickAction = (route) => navigate(route);
+  const statCards = [
+    { icon: PackageCheck, label: 'Approved Releases This Week', value: stats?.approvedReleases ?? '—', tone: 'blue', route: '/ppmo/approved-release-queue' },
+    { icon: RotateCcw, label: 'Pending Returns This Week', value: stats?.pendingReturns ?? '—', tone: 'orange', route: '/ppmo/returns' },
+    { icon: Printer, label: 'Documents Pending Print This Week', value: stats?.documentsPendingPrint ?? '—', tone: 'indigo', route: '/ppmo/purchase-order-documents' }
+  ];
+
+  const releaseTrendData = [
+    { day: 'Mon', approved: 0, released: 0 },
+    { day: 'Tue', approved: 0, released: 0 },
+    { day: 'Wed', approved: 0, released: 0 },
+    { day: 'Thu', approved: 0, released: 0 },
+    { day: 'Fri', approved: 0, released: 0 },
+    { day: 'Sat', approved: 0, released: 0 }
+  ];
+
+  const operationalLoadData = [
+    { name: 'Release', value: 0 },
+    { name: 'Receiving', value: 0 },
+    { name: 'Audit', value: 0 },
+    { name: 'Returns', value: 0 }
+  ];
+
+  const quickActions = [
+    { label: 'Prepare Release', icon: PackageCheck, route: '/ppmo/release-receipt-preparation' },
+    { label: 'Print Gate Pass', icon: FileText, route: '/ppmo/gate-pass-preparation' },
+    { label: 'Supplies Inventory', icon: Boxes, route: '/ppmo/supplies' },
+    { label: 'OCR Asset Tagging', icon: QrCode, route: '/ppmo/ocr' }
+  ];
+
   return (
     <div className="staff-dashboard-page">
       <section className="staff-hero-card">
-        <div>
-          <p>Welcome back, Staff!</p>
+        <div className="staff-hero-copy">
+          <p>Operations overview</p>
           <h2>Assist in inventory operations, releases, receiving, and documentation.</h2>
         </div>
         <div className="staff-hero-actions">
-          <button className="primary-button" type="button">Prepare Release</button>
-          <button className="secondary-button" type="button">Receive Delivery</button>
+          <button className="primary-button" type="button" onClick={() => handleQuickAction('/ppmo/release-receipt-preparation')}>Prepare Release</button>
+          <button className="secondary-button" type="button" onClick={() => handleQuickAction('/ppmo/supplies')}>Supplies Inventory</button>
         </div>
       </section>
 
       <section className="staff-stats-grid">
-        <StaffStatCard icon={PackageCheck} label="Approved Releases Waiting" value={stats?.approvedReleases ?? '—'} tone="blue" />
-        <StaffStatCard icon={Boxes} label="Items Ready for Release" value={stats?.itemsReady ?? '—'} tone="blue" />
-        <StaffStatCard icon={Truck} label="Today's Deliveries" value={stats?.todaysDeliveries ?? '—'} tone="teal" />
-        <StaffStatCard icon={RotateCcw} label="Pending Returns" value={stats?.pendingReturns ?? '—'} tone="orange" />
-        <StaffStatCard icon={ClipboardList} label="Stock Count Tasks" value={stats?.stockCountTasks ?? '—'} tone="purple" />
-        <StaffStatCard icon={Printer} label="Documents Pending Print" value={stats?.documentsPendingPrint ?? '—'} tone="indigo" />
+        {statCards.map(({ icon, label, value, tone, route }) => (
+          <StaffStatCard key={label} icon={icon} label={label} value={value} tone={tone} onClick={() => handleQuickAction(route)} />
+        ))}
+      </section>
+
+      <section className="staff-analytics-grid">
+        <div className="staff-panel staff-chart-panel">
+          <div className="staff-panel-header">
+            <div>
+              <h3>Release Trend</h3>
+              <p>Approved vs released items across the week.</p>
+            </div>
+          </div>
+          <div className="chart-wrap">
+            <ResponsiveContainer width="100%" height={230}>
+              <AreaChart data={releaseTrendData}>
+                <defs>
+                  <linearGradient id="approvedFill" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#2563eb" stopOpacity={0.35} />
+                    <stop offset="95%" stopColor="#2563eb" stopOpacity={0.02} />
+                  </linearGradient>
+                  <linearGradient id="releasedFill" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#14b8a6" stopOpacity={0.28} />
+                    <stop offset="95%" stopColor="#14b8a6" stopOpacity={0.02} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
+                <XAxis dataKey="day" tickLine={false} axisLine={false} />
+                <YAxis tickLine={false} axisLine={false} allowDecimals={false} />
+                <Tooltip />
+                <Area type="monotone" dataKey="approved" stroke="#2563eb" strokeWidth={2.5} fill="url(#approvedFill)" />
+                <Area type="monotone" dataKey="released" stroke="#14b8a6" strokeWidth={2.5} fill="url(#releasedFill)" />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        <div className="staff-panel staff-chart-panel">
+          <div className="staff-panel-header">
+            <div>
+              <h3>Operational Load</h3>
+              <p>Current workload mix across workflow areas.</p>
+            </div>
+          </div>
+          <div className="chart-wrap">
+            <ResponsiveContainer width="100%" height={230}>
+              <BarChart data={operationalLoadData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
+                <XAxis dataKey="name" tickLine={false} axisLine={false} />
+                <YAxis tickLine={false} axisLine={false} allowDecimals={false} />
+                <Tooltip />
+                <Bar dataKey="value" radius={[8, 8, 0, 0]} fill="#6366f1" />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
       </section>
 
       <section className="staff-dashboard-grid">
@@ -185,17 +269,11 @@ export default function PPMODashboard() {
           </div>
         </div>
         <div className="staff-quick-grid">
-          {[
-            ['Prepare Release', PackageCheck],
-            ['Receive Delivery', Truck],
-            ['Print Gate Pass', FileText],
-            ['Print Receipt', FileText],
-            ['Scan QR', QrCode],
-            ['Scan Barcode', Barcode],
-            ['Stock Count', ClipboardList],
-            ['Inventory Verification', CheckCircle2]
-          ].map(([label, Icon]) => (
-            <button key={label} className="staff-quick-action" type="button"><Icon size={18} />{label}</button>
+          {quickActions.map(({ label, icon: Icon, route }) => (
+            <button key={label} className="staff-quick-action" type="button" onClick={() => handleQuickAction(route)}>
+              <Icon size={18} />
+              <span>{label}</span>
+            </button>
           ))}
         </div>
       </section>

@@ -2,7 +2,6 @@
 
 namespace App\Services;
 
-use App\Http\Controllers\SystemSettingController;
 use App\Models\Department;
 use App\Models\PurchaseRequest;
 use App\Models\Supply;
@@ -19,10 +18,6 @@ class LowStockRequisitionService
     public function sync(Supply $supply): ?PurchaseRequest
     {
         $this->syncLowStockAlert($supply);
-
-        if (! SystemSettingController::bool('low_stock_auto_requisition_enabled', true)) {
-            return null;
-        }
 
         if (! $supply->department_id || ! Schema::hasColumn('purchase_requests', 'replenishment_supply_id')) {
             return null;

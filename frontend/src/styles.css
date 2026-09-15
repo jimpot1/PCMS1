@@ -1651,6 +1651,293 @@ label.link-button.upload-approval-document.disabled {
   }
 }
 
+/* Authenticated dark theme. The body scope intentionally excludes the login page. */
+body.pcms-dark {
+  --background: #18191a;
+  --bg: #18191a;
+  --card: #242526;
+  --surface: #3a3b3c;
+  --surface-muted: #202122;
+  --input-surface: #3a3b3c;
+  --text: #e4e6eb;
+  --text-strong: #f5f6f7;
+  --text-light: #b0b3b8;
+  --text-muted: #b0b3b8;
+  --muted: #b0b3b8;
+  --border: #3e4042;
+  --hover: #3a3b3c;
+  --chart-grid: #4b4c4d;
+  background: var(--background);
+  color: var(--text);
+  color-scheme: dark;
+}
+
+body.pcms-dark .sms-app,
+body.pcms-dark .main,
+body.pcms-dark .content,
+body.pcms-dark .page-shell,
+body.pcms-dark .president-shell,
+body.pcms-dark .president-main,
+body.pcms-dark .president-content,
+body.pcms-dark .oic-shell,
+body.pcms-dark .oic-main,
+body.pcms-dark .oic-content,
+body.pcms-dark .recommending-shell,
+body.pcms-dark .recommending-main,
+body.pcms-dark .recommending-content,
+body.pcms-dark .requester-dashboard-shell,
+body.pcms-dark .requester-main-panel,
+body.pcms-dark .department-dashboard-shell,
+body.pcms-dark .department-main-panel {
+  background: var(--background) !important;
+  color: var(--text);
+}
+
+body.pcms-dark .sidebar,
+body.pcms-dark .president-sidebar,
+body.pcms-dark .oic-sidebar,
+body.pcms-dark .recommending-sidebar,
+body.pcms-dark .requester-sidebar,
+body.pcms-dark .department-sidebar,
+body.pcms-dark .brand,
+body.pcms-dark .president-brand,
+body.pcms-dark .oic-brand,
+body.pcms-dark .recommending-brand,
+body.pcms-dark .requester-brand,
+body.pcms-dark .department-brand,
+body.pcms-dark .topbar,
+body.pcms-dark .president-header,
+body.pcms-dark .oic-header,
+body.pcms-dark .recommending-header,
+body.pcms-dark .requester-header,
+body.pcms-dark .department-header {
+  background: rgba(36, 37, 38, 0.96) !important;
+  color: var(--text);
+  border-color: var(--border) !important;
+}
+
+body.pcms-dark .panel,
+body.pcms-dark .page-card,
+body.pcms-dark .stat-card,
+body.pcms-dark .mini-card,
+body.pcms-dark .table-card,
+body.pcms-dark .workflow-column,
+body.pcms-dark .workflow-card,
+body.pcms-dark .gate-pass,
+body.pcms-dark .capture-panel,
+body.pcms-dark .anomaly-card,
+body.pcms-dark .timeline,
+body.pcms-dark .stage,
+body.pcms-dark .requester-hero-card,
+body.pcms-dark .requester-panel-card,
+body.pcms-dark .requester-card,
+body.pcms-dark .requester-stat-card,
+body.pcms-dark .department-hero-card,
+body.pcms-dark .department-panel-card,
+body.pcms-dark .department-card,
+body.pcms-dark .department-stat-card,
+body.pcms-dark .oic-hero,
+body.pcms-dark .oic-stat-card,
+body.pcms-dark .oic-queue-card,
+body.pcms-dark .recommending-hero-card,
+body.pcms-dark .recommending-panel-card,
+body.pcms-dark .recommending-stat-card,
+body.pcms-dark .president-hero,
+body.pcms-dark .exec-stat-card,
+body.pcms-dark .exec-approval-card,
+body.pcms-dark .analytics-block,
+body.pcms-dark .notification-card,
+body.pcms-dark .setting-row {
+  background: var(--card) !important;
+  color: var(--text);
+  border-color: var(--border) !important;
+}
+
+body.pcms-dark .workflow-column,
+body.pcms-dark .empty-state,
+body.pcms-dark .department-empty-state,
+body.pcms-dark .recommending-empty-state,
+body.pcms-dark .zscore-note,
+body.pcms-dark .analytics-empty,
+body.pcms-dark .monitoring-card-metrics span,
+body.pcms-dark .requester-summary-box,
+body.pcms-dark .request-item-detail,
+body.pcms-dark .request-summary,
+body.pcms-dark .department-chart-card,
+body.pcms-dark .department-history-list div,
+body.pcms-dark .workflow-table th,
+body.pcms-dark th {
+  background: var(--surface-muted) !important;
+  color: var(--text);
+}
+
+body.pcms-dark input,
+body.pcms-dark select,
+body.pcms-dark textarea,
+body.pcms-dark .global-search,
+body.pcms-dark .search-input,
+body.pcms-dark .president-search,
+body.pcms-dark .oic-search,
+body.pcms-dark .recommending-search,
+body.pcms-dark .requester-search,
+body.pcms-dark .department-search,
+body.pcms-dark .field-row input,
+body.pcms-dark .field-row select,
+body.pcms-dark .field-row textarea,
+body.pcms-dark .form-grid input,
+body.pcms-dark .form-grid select,
+body.pcms-dark .form-grid textarea,
+body.pcms-dark .requester-field-group input,
+body.pcms-dark .requester-field-group select,
+body.pcms-dark .requester-field-group textarea {
+  background: var(--input-surface) !important;
+  color: var(--text) !important;
+  border-color: var(--border) !important;
+}
+
+body.pcms-dark input::placeholder,
+body.pcms-dark textarea::placeholder {
+  color: #8290a3;
+}
+
+body.pcms-dark .dropdown,
+body.pcms-dark .modal-card,
+body.pcms-dark .modal-overlay > .panel,
+body.pcms-dark .request-item-results,
+body.pcms-dark .requester-search-results {
+  background: var(--card) !important;
+  color: var(--text);
+  border-color: var(--border) !important;
+}
+
+body.pcms-dark .dropdown-item,
+body.pcms-dark .notification-item,
+body.pcms-dark .request-item-results button,
+body.pcms-dark .requester-search-results button,
+body.pcms-dark .secondary-button,
+body.pcms-dark .data-toolbar button,
+body.pcms-dark .panel-header button,
+body.pcms-dark .icon-button,
+body.pcms-dark .menu-button,
+body.pcms-dark .icon-btn,
+body.pcms-dark .workflow-icon-button,
+body.pcms-dark .pagination button,
+body.pcms-dark .inline-actions.small button,
+body.pcms-dark .requester-action-icon-button,
+body.pcms-dark .department-action-btn,
+body.pcms-dark .recommending-action-btn,
+body.pcms-dark .logout-btn,
+body.pcms-dark .requester-logout-btn,
+body.pcms-dark .department-logout-btn,
+body.pcms-dark .recommending-logout-btn {
+  background: var(--surface) !important;
+  color: var(--text) !important;
+  border-color: var(--border) !important;
+}
+
+body.pcms-dark .dropdown-item:hover,
+body.pcms-dark .notification-item:hover,
+body.pcms-dark button:not(:disabled):hover,
+body.pcms-dark .nav-link:hover,
+body.pcms-dark .staff-nav-item:hover,
+body.pcms-dark .requester-nav-item:hover,
+body.pcms-dark .department-nav-item:hover,
+body.pcms-dark .oic-nav-item:hover,
+body.pcms-dark .president-nav-item:hover,
+body.pcms-dark .recommending-nav-item:hover {
+  background: var(--hover) !important;
+}
+
+body.pcms-dark .nav-link.active,
+body.pcms-dark .staff-nav-item.active,
+body.pcms-dark .requester-nav-item.active,
+body.pcms-dark .department-nav-item.active,
+body.pcms-dark .oic-nav-item.active,
+body.pcms-dark .president-nav-item.active,
+body.pcms-dark .recommending-nav-item.active,
+body.pcms-dark .filter-tabs button.active,
+body.pcms-dark .recommending-queue-table tr.row-selected {
+  background: #3a3b3c !important;
+  color: #2e89ff !important;
+}
+
+body.pcms-dark td,
+body.pcms-dark th,
+body.pcms-dark .modal-header,
+body.pcms-dark .modal-footer,
+body.pcms-dark .purchase-details-header,
+body.pcms-dark .purchase-details-footer,
+body.pcms-dark .sticky-actions {
+  border-color: var(--border) !important;
+}
+
+body.pcms-dark .modal-header,
+body.pcms-dark .modal-footer,
+body.pcms-dark .purchase-details-header,
+body.pcms-dark .purchase-details-footer,
+body.pcms-dark .sticky-actions {
+  background: var(--card) !important;
+}
+
+body.pcms-dark .modal-header h3,
+body.pcms-dark .purchase-details-header h3,
+body.pcms-dark .modal-card h3,
+body.pcms-dark .modal-card h4,
+body.pcms-dark .exec-stat-card .stat-label,
+body.pcms-dark .recommending-summary-item strong,
+body.pcms-dark .asset-detail-value,
+body.pcms-dark .asset-detail-item strong {
+  color: var(--text-strong) !important;
+}
+
+body.pcms-dark .modal-overlay,
+body.pcms-dark .president-backdrop,
+body.pcms-dark .oic-backdrop,
+body.pcms-dark .department-drawer-backdrop,
+body.pcms-dark .staff-sidebar-backdrop,
+body.pcms-dark .requester-sidebar-backdrop {
+  background: rgba(3, 7, 18, 0.72) !important;
+}
+
+body.pcms-dark .theme-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+body.pcms-dark .skeleton-line,
+body.pcms-dark .skeleton-pill,
+body.pcms-dark .skeleton-actions,
+body.pcms-dark .asset-skeleton-line,
+body.pcms-dark .asset-skeleton-pill,
+body.pcms-dark .asset-skeleton-square,
+body.pcms-dark .asset-skeleton-actions,
+body.pcms-dark .table-skeleton-line {
+  background: #4a4b4d !important;
+}
+
+body.pcms-dark .skeleton-line::after,
+body.pcms-dark .skeleton-pill::after,
+body.pcms-dark .skeleton-actions::after,
+body.pcms-dark .asset-skeleton-line::after,
+body.pcms-dark .asset-skeleton-pill::after,
+body.pcms-dark .asset-skeleton-square::after,
+body.pcms-dark .asset-skeleton-actions::after,
+body.pcms-dark .table-skeleton-line::after {
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.18), transparent);
+}
+
+body.pcms-dark .recharts-text,
+body.pcms-dark .recharts-cartesian-axis-tick-value {
+  fill: #a8b3c2 !important;
+}
+
+body.pcms-dark .recharts-default-tooltip {
+  background: var(--card) !important;
+  border-color: var(--border) !important;
+  color: var(--text) !important;
+}
+
 /* ==========================================
    PRESIDENT DASHBOARD STYLES
 ========================================== */
@@ -8989,4 +9276,82 @@ button.notification-card {
     > span:not(.nav-link-icon):last-child {
     display: none;
   }
+}
+
+/* Final authenticated label contrast pass. */
+body.pcms-dark .brand strong,
+body.pcms-dark .topbar strong,
+body.pcms-dark .page-heading h1,
+body.pcms-dark .page-heading h2,
+body.pcms-dark .page-header h1,
+body.pcms-dark .panel-header h2,
+body.pcms-dark .panel-header h3,
+body.pcms-dark .panel-header h4,
+body.pcms-dark .workflow-page-header h1,
+body.pcms-dark .requester-hero-card h2,
+body.pcms-dark .requester-panel-header h3,
+body.pcms-dark .department-hero-card h2,
+body.pcms-dark .department-panel-header h3,
+body.pcms-dark .oic-hero h2,
+body.pcms-dark .oic-panel h3,
+body.pcms-dark .recommending-hero-card h2,
+body.pcms-dark .recommending-panel-header h3,
+body.pcms-dark .president-hero h2,
+body.pcms-dark .exec-stat-card .stat-value,
+body.pcms-dark .stat-card strong,
+body.pcms-dark .mini-card strong,
+body.pcms-dark .notification-title,
+body.pcms-dark .setting-row strong {
+  color: #f5f6f7 !important;
+}
+
+body.pcms-dark .nav-link,
+body.pcms-dark .nav-link-dashboard,
+body.pcms-dark .nav-section-label,
+body.pcms-dark .brand span,
+body.pcms-dark .breadcrumb,
+body.pcms-dark .profile-name,
+body.pcms-dark .profile-role,
+body.pcms-dark .profile-button,
+body.pcms-dark .workflow-filter-grid label,
+body.pcms-dark .field-row label,
+body.pcms-dark .form-grid label,
+body.pcms-dark .detail-label,
+body.pcms-dark .data-table th,
+body.pcms-dark .workflow-table th,
+body.pcms-dark .pagination,
+body.pcms-dark .dropdown-item,
+body.pcms-dark .dropdown-header,
+body.pcms-dark .stage,
+body.pcms-dark .requester-field-group label,
+body.pcms-dark .department-section-title,
+body.pcms-dark .oic-section-title,
+body.pcms-dark .recommending-section-title,
+body.pcms-dark .president-section-title {
+  color: #e4e6eb !important;
+}
+
+body.pcms-dark .nav-link-icon,
+body.pcms-dark .profile-chevron,
+body.pcms-dark .workflow-empty-icon,
+body.pcms-dark .dropdown-item svg,
+body.pcms-dark .notification-message,
+body.pcms-dark .notification-meta,
+body.pcms-dark .muted,
+body.pcms-dark .text-muted,
+body.pcms-dark .stat-card span,
+body.pcms-dark .stat-card p,
+body.pcms-dark .panel-header p,
+body.pcms-dark .page-heading p,
+body.pcms-dark .page-header p {
+  color: #b0b3b8 !important;
+}
+
+body.pcms-dark .data-table td,
+body.pcms-dark .workflow-table td,
+body.pcms-dark .requester-items-table td,
+body.pcms-dark .department-queue-table td,
+body.pcms-dark .recommending-queue-table td,
+body.pcms-dark .recommending-items-table td {
+  color: #e4e6eb;
 }

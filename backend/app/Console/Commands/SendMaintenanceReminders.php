@@ -18,6 +18,12 @@ class SendMaintenanceReminders extends Command
 
     public function handle(): int
     {
+        if (! SystemSettingController::bool('maintenance_reminders_enabled', true)) {
+            $this->info('Maintenance reminders are disabled.');
+
+            return self::SUCCESS;
+        }
+
         if (! Schema::hasTable('transfer_notifications')) {
             $this->warn('Notification table is unavailable.');
 

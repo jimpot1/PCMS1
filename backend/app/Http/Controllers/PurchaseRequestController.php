@@ -1496,7 +1496,7 @@ class PurchaseRequestController extends Controller
         $stages = $requestType === 'request' && in_array($workflowDestination, ['asset_assignment', 'supplies_inventory_release'], true)
             ? self::INVENTORY_REQUEST_STAGES
             : self::PURCHASE_STAGES;
-        return SystemSettingController::bool('recommending_approver_enabled', true)
+        return true
             ? $stages
             : array_values(array_filter($stages, fn ($stage) => $stage !== 'recommending_approver'));
     }
