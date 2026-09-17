@@ -7,6 +7,7 @@ use App\Services\RepairFrequencyService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 class MaintenanceController extends Controller
 {
@@ -36,14 +37,35 @@ class MaintenanceController extends Controller
             'type' => ['required', 'string', 'max:60'],
             'priority' => ['required', 'in:low,medium,high,critical'],
             'technician' => ['nullable', 'string', 'max:160'],
-            'scheduled_at' => ['nullable', 'date'],
+            'scheduled_at' => ['nullable', 'date', 'after_or_equal:today'],
             'cost' => ['nullable', 'numeric', 'min:0'],
             'notes' => ['nullable', 'string'],
         ]);
 
+        $asset = \App\Models\Asset::findOrFail($validated['asset_id']);
+        if (in_array($asset->status, ['lost', 'unserviceable', 'disposed'], true)) {
+            return response()->json(['message' => 'Maintenance cannot be scheduled for a lost, unserviceable, or disposed asset.'], 422);
+        }
+
+        $duplicate = MaintenanceRecord::query()
+            ->where('asset_id', $asset->id)
+            ->where('type', $validated['type'])
+            ->whereIn('status', ['scheduled', 'in_progress'])
+            ->when($validated['scheduled_at'] ?? null, fn ($query, $date) => $query->whereDate('scheduled_at', $date))
+            ->exists();
+        if ($duplicate) {
+            return response()->json(['message' => 'An active maintenance record already exists for this asset and schedule.'], 422);
+        }
+
         $validated['status'] = 'scheduled';
 
-        $record = MaintenanceRecord::create($validated);
+        $record = DB::transaction(function () use ($validated, $asset, $request) {
+            $record = MaintenanceRecord::create($validated);
+            $asset->update(['status' => 'maintenance']);
+            $this->notifyOperations($record, 'scheduled');
+
+            return $record;
+        });
         $this->logActivity('maintenance_scheduled', $record, $request);
 
         return response()->json($record->fresh()->load('asset'), 201);
@@ -84,7 +106,7 @@ class MaintenanceController extends Controller
             'priority' => ['sometimes', 'in:low,medium,high,critical'],
             'status' => ['sometimes', 'in:scheduled,in_progress,completed,cancelled'],
             'technician' => ['sometimes', 'nullable', 'string', 'max:160'],
-            'scheduled_at' => ['sometimes', 'nullable', 'date'],
+            'scheduled_at' => ['sometimes', 'nullable', 'date', 'after_or_equal:today'],
             'completed_at' => ['sometimes', 'nullable', 'date'],
             'cost' => ['sometimes', 'nullable', 'numeric', 'min:0'],
             'notes' => ['sometimes', 'nullable', 'string'],
@@ -95,7 +117,17 @@ class MaintenanceController extends Controller
             $validated['completed_at'] = now();
         }
 
-        $record->update($validated);
+        DB::transaction(function () use ($record, $validated, $request) {
+            $record->update($validated);
+
+            if (($validated['status'] ?? null) === 'completed') {
+                $asset = \App\Models\Asset::find($record->asset_id);
+                if ($asset && ! in_array($asset->status, ['lost', 'unserviceable', 'disposed'], true)) {
+                    $asset->update(['status' => 'available']);
+                }
+                $this->notifyOperations($record, 'completed');
+            }
+        });
 
         // If this maintenance was just completed, check for repeat repair anomaly
         if ($record->status === 'completed' && ($validated['status'] ?? null) === 'completed') {
@@ -130,5 +162,42 @@ class MaintenanceController extends Controller
             'created_at' => now(),
             'updated_at' => now(),
         ]);
+    }
+
+    protected function notifyOperations(MaintenanceRecord $record, string $state): void
+    {
+        if (! Schema::hasTable('transfer_notifications')) {
+            return;
+        }
+
+        $assetName = $record->asset?->name ?? "Asset #{$record->asset_id}";
+        $recipients = \App\Models\User::query()
+            ->where('status', 'active')
+            ->whereIn('role', ['System Administrator', 'PPMO Staff', 'Property Custodian', 'OIC'])
+            ->get(['id', 'role']);
+
+        foreach ($recipients as $recipient) {
+            $target = "/ppmo/maintenance?record={$record->id}";
+            $exists = DB::table('transfer_notifications')
+                ->where('recipient_id', $recipient->id)
+                ->where('type', "maintenance_{$state}")
+                ->where('navigation_target', $target)
+                ->exists();
+            if ($exists) {
+                continue;
+            }
+
+            DB::table('transfer_notifications')->insert([
+                'transfer_id' => null,
+                'recipient_id' => $recipient->id,
+                'recipient_role' => $recipient->role,
+                'type' => "maintenance_{$state}",
+                'title' => 'Maintenance update',
+                'message' => "{$assetName} maintenance is {$state}.",
+                'navigation_target' => $target,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
     }
 }

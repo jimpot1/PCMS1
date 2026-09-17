@@ -245,7 +245,7 @@ class NotificationController
                     'time' => $this->formatTime($anomaly->created_at),
                     'created_at' => $this->formatTime($anomaly->created_at),
                     'urgent' => in_array($anomaly->priority, ['high', 'critical'], true),
-                    'read' => true,
+                    'read' => false,
                 ]);
             });
 
@@ -265,7 +265,7 @@ class NotificationController
                     'time' => $this->formatTime($record->scheduled_at),
                     'created_at' => $this->formatTime($record->scheduled_at),
                     'urgent' => false,
-                    'read' => true,
+                    'read' => false,
                 ]);
             });
 
@@ -280,7 +280,7 @@ class NotificationController
                     'time' => $this->formatTime($prediction['last_completed_at']),
                     'created_at' => $this->formatTime($prediction['last_completed_at']),
                     'urgent' => $prediction['is_overdue'],
-                    'read' => true,
+                    'read' => false,
                 ]);
             });
 
@@ -297,7 +297,7 @@ class NotificationController
                     'time' => $this->formatTime($supply->updated_at),
                     'created_at' => $this->formatTime($supply->updated_at),
                     'urgent' => true,
-                    'read' => true,
+                    'read' => false,
                 ]);
             });
 
@@ -315,7 +315,7 @@ class NotificationController
                     'time' => $this->formatTime($audit->updated_at),
                     'created_at' => $this->formatTime($audit->updated_at),
                     'urgent' => false,
-                    'read' => true,
+                    'read' => false,
                 ]);
             });
 
@@ -333,7 +333,7 @@ class NotificationController
                     'time' => $this->formatTime($scan->created_at),
                     'created_at' => $this->formatTime($scan->created_at),
                     'urgent' => false,
-                    'read' => true,
+                    'read' => false,
                 ]);
             });
 

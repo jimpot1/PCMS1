@@ -7,6 +7,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
+use Illuminate\Validation\Rules\Password;
 
 class UserController
 {
@@ -47,12 +48,16 @@ class UserController
             'middle_name' => ['nullable', 'string', 'max:80'],
             'last_name' => ['required', 'string', 'max:80'],
             'email' => ['required', 'email', 'max:160', 'unique:users,email'],
-            'password' => ['nullable', 'string', 'min:8'],
+            'password' => ['nullable', 'string', 'confirmed', Password::min(8)->mixedCase()->numbers()->symbols()],
+            'password_confirmation' => ['nullable', 'string'],
             'role' => ['required', 'string', 'in:' . implode(',', self::ROLES)],
             'department' => ['nullable', 'string', 'max:160'],
+        ], [
+            'password.min' => 'Password must be at least 8 characters long.',
+            'password.confirmed' => 'Password confirmation does not match.',
         ]);
 
-        $temporaryPassword = $validated['password'] ?? Str::password(12, symbols: false);
+        $temporaryPassword = $validated['password'] ?? Str::password(12, symbols: true);
         $fullName = trim("{$validated['first_name']} " . (($validated['middle_name'] ?? null) ? "{$validated['middle_name']} " : '') . $validated['last_name']);
 
         $user = User::create([
@@ -87,9 +92,14 @@ class UserController
             'middle_name' => ['sometimes', 'nullable', 'string', 'max:80'],
             'last_name' => ['sometimes', 'string', 'max:80'],
             'email' => ['sometimes', 'email', 'max:160', 'unique:users,email,' . $user->id],
+            'password' => ['sometimes', 'nullable', 'string', 'confirmed', Password::min(8)->mixedCase()->numbers()->symbols()],
+            'password_confirmation' => ['sometimes', 'nullable', 'string'],
             'role' => ['sometimes', 'string', 'in:' . implode(',', self::ROLES)],
             'department' => ['sometimes', 'nullable', 'string', 'max:160'],
             'status' => ['sometimes', 'in:active,inactive'],
+        ], [
+            'password.min' => 'Password must be at least 8 characters long.',
+            'password.confirmed' => 'Password confirmation does not match.',
         ]);
 
         if (isset($validated['first_name']) || isset($validated['last_name']) || isset($validated['middle_name'])) {
@@ -98,6 +108,11 @@ class UserController
             $lastName = $validated['last_name'] ?? $user->last_name;
             $validated['full_name'] = trim("{$firstName} " . ($middleName ? "{$middleName} " : '') . $lastName);
         }
+
+        if (filled($validated['password'] ?? null)) {
+            $user->password_hash = Hash::make($validated['password']);
+        }
+        unset($validated['password']);
 
         $user->update($validated);
 

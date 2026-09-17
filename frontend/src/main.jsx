@@ -149,6 +149,7 @@ import {
 } from "./services/auth.js";
 import { ROLES, hasPermission } from "./services/roles.js";
 import { pcmsApi, assetQrCodeUrl } from "./services/api.js";
+import { getPasswordRequirements, validateStrongPassword } from "./utils/passwordRules.js";
 import jsQR from "jsqr";
 import { TableSkeleton, ListSkeleton } from "./components/TableSkeleton.jsx";
 import ThemeToggle from "./components/ThemeToggle.jsx";
@@ -595,10 +596,17 @@ function App() {
     }
 
     async function initAuth() {
-      const session = await getCurrentSession();
-      setIsAuthenticated(!!session);
-      await loadUserProfile(session);
-      setIsLoadingAuth(false);
+      try {
+        const session = await getCurrentSession();
+        setIsAuthenticated(!!session);
+        await loadUserProfile(session);
+      } catch (error) {
+        setAuthError(error.message || 'Unable to verify your session.');
+        setIsAuthenticated(false);
+        setCurrentUser(null);
+      } finally {
+        setIsLoadingAuth(false);
+      }
     }
     initAuth();
     // Note: persistCurrentUser() (called by signInWithEmail/signOut/getCurrentSession)
@@ -1378,6 +1386,30 @@ function App() {
                 }
               />
               <Route path="*" element={<Navigate to="dashboard" replace />} />
+            </Route>
+          )}
+
+          {isRequester && (
+            <Route
+              path="/requester/*"
+              element={
+                <RequesterDashboard
+                  currentUser={currentUser}
+                  onLogout={handleLogout}
+                />
+              }
+            >
+              <Route index element={<RequesterDashboard currentUser={currentUser} onLogout={handleLogout} />} />
+              <Route
+                path="notifications"
+                element={
+                  <UserNotificationsPage
+                    title="Notifications"
+                    subtitle="Your notifications and workflow updates."
+                  />
+                }
+              />
+              <Route path="*" element={<Navigate to="/requester" replace />} />
             </Route>
           )}
 
@@ -4022,6 +4054,7 @@ function AssetReturnPage() {
   const [error, setError] = useState(null);
   const [message, setMessage] = useState(null);
   const [returnAssignment, setReturnAssignment] = useState(null);
+  const [returnSource, setReturnSource] = useState("inspect");
   const [returnValues, setReturnValues] = useState({ condition_after: "good", notes: "" });
   const [saving, setSaving] = useState(false);
 
@@ -4048,11 +4081,22 @@ function AssetReturnPage() {
 
   useEffect(() => { loadReturns(); }, []);
 
-  const openReturn = (assignment) => {
+  const openReturn = (assignment, source = "inspect") => {
     setMessage(null);
     setError(null);
     setReturnValues({ condition_after: "good", notes: "" });
     setReturnAssignment(assignment);
+    setReturnSource(source);
+  };
+
+  const handleStartReturn = () => {
+    if (!active[0]) return;
+    openReturn(active[0], "start");
+  };
+
+  const handleInspectReturn = (assignment) => {
+    if (!assignment) return;
+    openReturn(assignment, "inspect");
   };
 
   const submitReturn = async (event) => {
@@ -4080,7 +4124,7 @@ function AssetReturnPage() {
   const employeeName = (assignment) => formatAssignmentUser(assignment.assigned_to || assignment.assignedTo || {});
 
   return (
-    <ModulePage title="Asset Return" subtitle="Inspect assigned property, record its condition, and return it to available inventory." primary="Start Return" icon={PackageCheck} onPrimary={() => active[0] && openReturn(active[0])}>
+    <ModulePage title="Asset Return" subtitle="Inspect assigned property, record its condition, and return it to available inventory." primary="Start Return" icon={PackageCheck} onPrimary={handleStartReturn}>
       {error && <div className="form-message error">{error}</div>}
       {message && <div className="form-message success">{message}</div>}
       <section className="metric-grid compact">
@@ -4094,7 +4138,7 @@ function AssetReturnPage() {
           <div className="approval-list">{active.map((assignment) => (
             <article className="approval-card" key={assignment.id}>
               <div><strong>{assignment.asset?.name || `Asset #${assignment.asset_id}`}</strong><p>{assignment.asset?.property_number || "No property number"} · Physical Unit {unitNumber(assignment)}</p><small>{employeeName(assignment)} · Assigned {formatAssignmentDate(assignment.assigned_at)}</small></div>
-              <button className="primary-button" type="button" onClick={() => openReturn(assignment)}><PackageCheck size={16} /> Inspect & Return</button>
+              <button className="primary-button" type="button" onClick={() => handleInspectReturn(assignment)}><PackageCheck size={16} /> Inspect & Return</button>
             </article>
           ))}</div>
         )}
@@ -4103,7 +4147,7 @@ function AssetReturnPage() {
         <PanelHeader title="Return History" subtitle="Previously checked-in assets and their recorded condition." />
         {returned.length === 0 ? <p className="empty-state">No completed returns yet.</p> : <div className="table-card"><table><thead><tr><th>Asset</th><th>Employee</th><th>Physical Unit</th><th>Returned</th><th>Condition</th></tr></thead><tbody>{returned.map((assignment) => <tr key={assignment.id}><td><strong>{assignment.asset?.name || `Asset #${assignment.asset_id}`}</strong><span>{assignment.asset?.property_number || "N/A"}</span></td><td>{employeeName(assignment)}</td><td>{unitNumber(assignment)}</td><td>{formatAssignmentDate(assignment.returned_at)}</td><td><span className="status success">{assignment.condition_after || "good"}</span></td></tr>)}</tbody></table></div>}
       </section>
-      {returnAssignment && <div className="modal-overlay" role="dialog" aria-modal="true"><div className="modal-card"><div className="modal-header"><h3>Inspect & Return Asset</h3><button className="icon-button" type="button" onClick={() => setReturnAssignment(null)} aria-label="Close"><X size={18} /></button></div><div className="asset-description-card"><strong>{returnAssignment.asset?.name || `Asset #${returnAssignment.asset_id}`}</strong><p>Property No.: {returnAssignment.asset?.property_number || "N/A"}</p><p>Physical Unit: {unitNumber(returnAssignment)}</p><p>Assigned to: {employeeName(returnAssignment)}</p></div><form className="register-form" onSubmit={submitReturn}><label>Condition After Return<select value={returnValues.condition_after} onChange={(event) => setReturnValues((current) => ({ ...current, condition_after: event.target.value }))}><option value="excellent">Excellent</option><option value="good">Good</option><option value="fair">Fair</option><option value="needs_repair">Needs Repair</option><option value="damaged">Damaged</option></select></label><label>Inspection Notes<textarea rows={3} value={returnValues.notes} onChange={(event) => setReturnValues((current) => ({ ...current, notes: event.target.value }))} placeholder="Record inspection findings or return notes" /></label><div className="modal-actions"><button className="secondary-button" type="button" onClick={() => setReturnAssignment(null)}>Cancel</button><button className="primary-button" type="submit" disabled={saving}>{saving ? "Recording..." : "Confirm Return"}</button></div></form></div></div>}
+      {returnAssignment && <div className="modal-overlay" role="dialog" aria-modal="true"><div className="modal-card return-asset-modal"><div className="modal-header"><h3>Inspect &amp; Return Asset</h3><button className="icon-button" type="button" onClick={() => setReturnAssignment(null)} aria-label="Close"><X size={18} /></button></div><div className="asset-description-card return-asset-summary"><div className="return-asset-row"><span>Asset</span><strong>{returnAssignment.asset?.name || `Asset #${returnAssignment.asset_id}`}</strong></div><div className="return-asset-row"><span>Property No.</span><strong>{returnAssignment.asset?.property_number || "N/A"}</strong></div><div className="return-asset-row"><span>Physical Unit</span><strong>{unitNumber(returnAssignment)}</strong></div><div className="return-asset-row"><span>Assigned To</span><strong>{employeeName(returnAssignment)}</strong></div></div><form className="return-form" onSubmit={submitReturn}><div className="return-field"><label htmlFor="return-condition">Condition After Return</label><select id="return-condition" value={returnValues.condition_after} onChange={(event) => setReturnValues((current) => ({ ...current, condition_after: event.target.value }))}><option value="excellent">Excellent</option><option value="good">Good</option><option value="fair">Fair</option><option value="needs_repair">Needs Repair</option><option value="damaged">Damaged</option></select></div><div className="return-field"><label htmlFor="return-notes">Inspection Notes</label><textarea id="return-notes" rows={3} value={returnValues.notes} onChange={(event) => setReturnValues((current) => ({ ...current, notes: event.target.value }))} placeholder="Record inspection findings or return notes" /></div><div className="modal-actions"><button className="secondary-button" type="button" onClick={() => setReturnAssignment(null)}>Cancel</button><button className="primary-button" type="submit" disabled={saving}>{saving ? "Recording..." : "Confirm Return"}</button></div></form></div></div>}
     </ModulePage>
   );
 }
@@ -4111,6 +4155,9 @@ function AssetReturnPage() {
 function EnhancedAssignmentsPage() {
   const makeEmptyForm = () => ({
     asset_id: "",
+    asset_unit_id: "",
+    asset_unit_ids: [],
+    asset_unit_search: "",
     assigned_to: "",
     assignment_type: "permanent",
     assigned_at: new Date().toISOString().slice(0, 10),
@@ -4125,6 +4172,11 @@ function EnhancedAssignmentsPage() {
     remarks: "",
   });
   const [assignmentsData, setAssignmentsData] = useState([]);
+  const [assetRequestQueue, setAssetRequestQueue] = useState([]);
+  const [requestDepartments, setRequestDepartments] = useState([]);
+  const [requestViewTarget, setRequestViewTarget] = useState(null);
+  const [requestEditTarget, setRequestEditTarget] = useState(null);
+  const [selectedAssetRequestId, setSelectedAssetRequestId] = useState(null);
   const [dashboardData, setDashboardData] = useState(null);
   const [assetsList, setAssetsList] = useState([]);
   const [assetUnits, setAssetUnits] = useState([]);
@@ -4209,14 +4261,17 @@ function EnhancedAssignmentsPage() {
     assignment?.assetUnit || assignment?.asset_unit || {};
 
   const loadAssignments = async (nextFilters = filters) => {
-    const [assignments, dashboard] = await Promise.allSettled([
+    const [assignments, dashboard, requests] = await Promise.allSettled([
       pcmsApi.assignments({ ...nextFilters, limit: 200 }),
       pcmsApi.assignmentDashboard(),
+      pcmsApi.assetAssignmentQueue(),
     ]);
     if (assignments.status === "fulfilled")
       setAssignmentsData(assignments.value || []);
     if (dashboard.status === "fulfilled")
       setDashboardData(dashboard.value || null);
+    if (requests.status === "fulfilled")
+      setAssetRequestQueue(requests.value || []);
   };
 
   const loadAssets = async () => {
@@ -4228,12 +4283,14 @@ function EnhancedAssignmentsPage() {
     async function load() {
       setIsLoading(true);
       try {
-        const [assignments, dashboard, assets, users] =
+        const [assignments, dashboard, assets, users, requests, departments] =
           await Promise.allSettled([
             pcmsApi.assignments({ limit: 200 }),
             pcmsApi.assignmentDashboard(),
             pcmsApi.assets({ limit: 200 }),
             pcmsApi.assignmentUsers(),
+            pcmsApi.assetAssignmentQueue(),
+            pcmsApi.departments(),
           ]);
 
         if (assignments.status === "fulfilled")
@@ -4242,6 +4299,8 @@ function EnhancedAssignmentsPage() {
           setDashboardData(dashboard.value || null);
         if (assets.status === "fulfilled") setAssetsList(assets.value || []);
         if (users.status === "fulfilled") setUsersList(users.value || []);
+        if (requests.status === "fulfilled") setAssetRequestQueue(requests.value || []);
+        if (departments.status === "fulfilled") setRequestDepartments(departments.value || []);
       } finally {
         setIsLoading(false);
       }
@@ -4268,8 +4327,22 @@ function EnhancedAssignmentsPage() {
           Number(asset?.quantity || 1) -
             Number(activeQuantityByAsset[asset?.id] || 0),
         );
+  const availableAssetUnits = useMemo(
+    () => (assetUnits || []).filter((unit) => unit.status === "available" && !["lost", "disposed", "damaged", "maintenance", "unserviceable", "reserved"].includes(unit.status)),
+    [assetUnits],
+  );
+  const selectedUnitIds = useMemo(
+    () => (formValues.asset_unit_ids || []).map((id) => Number(id)).filter(Number.isInteger),
+    [formValues.asset_unit_ids],
+  );
+  const requestedQuantity = Math.max(1, Number(formValues.quantity || 1));
+  const hasTrackedUnits = Boolean(formValues.asset_id) && assetUnits.length > 0;
+  const unitSelectionInvalid = hasTrackedUnits && selectedUnitIds.length !== requestedQuantity;
   const selectedAsset = assetsList.find(
     (asset) => String(asset.id) === String(formValues.asset_id),
+  );
+  const assignmentSelectionBlocked = Boolean(selectedAsset) && (
+    unitSelectionInvalid || (!hasTrackedUnits && requestedQuantity > 1)
   );
   const selectedUser = usersList.find(
     (user) => String(user.id) === String(formValues.assigned_to),
@@ -4358,11 +4431,51 @@ function EnhancedAssignmentsPage() {
     return () => { ignore = true; };
   }, [formValues.asset_id]);
 
+  useEffect(() => {
+    if (!formValues.asset_id) return;
+    const availableIds = availableAssetUnits.map((unit) => Number(unit.id));
+    setFormValues((current) => {
+      const validSelected = (current.asset_unit_ids || [])
+        .map((id) => Number(id))
+        .filter((id) => availableIds.includes(id));
+      const nextSelected = validSelected.slice(0, Math.max(1, Number(current.quantity || 1)));
+      for (const id of availableIds) {
+        if (nextSelected.length >= Math.max(1, Number(current.quantity || 1))) break;
+        if (!nextSelected.includes(id)) nextSelected.push(id);
+      }
+      if (JSON.stringify(nextSelected) === JSON.stringify(current.asset_unit_ids || [])) return current;
+      return { ...current, asset_unit_ids: nextSelected, asset_unit_id: nextSelected[0] || "" };
+    });
+  }, [availableAssetUnits, formValues.asset_id, formValues.quantity]);
+
   const openCreateDialog = () => {
     setCreateError(null);
     setCreateSuccess(null);
     setFormValues(makeEmptyForm());
+    setSelectedAssetRequestId(null);
     setAssetQuery("");
+    setShowAssetSuggestions(false);
+    setRecommendations([]);
+    setEmployeeProfile(null);
+    setAssetUnits([]);
+    setShowCreateDialog(true);
+  };
+
+  const processAssetRequest = (purchaseRequest) => {
+    const lineItem = (purchaseRequest.line_items || [])[0] || {};
+    const asset = assetsList.find((item) => String(item.id) === String(lineItem.source_id));
+    setCreateError(null);
+    setCreateSuccess(null);
+    setSelectedAssetRequestId(purchaseRequest.id);
+    setFormValues({
+      ...makeEmptyForm(),
+      asset_id: asset?.id ? String(asset.id) : String(lineItem.source_id || ""),
+      asset_unit_ids: [],
+      assigned_to: purchaseRequest.requested_by || "",
+      quantity: String(lineItem.approved_qty || lineItem.approved_quantity || lineItem.qty || lineItem.quantity || 1),
+      purpose: purchaseRequest.purpose || "",
+    });
+    setAssetQuery(asset ? `${asset.name} - ${asset.property_number || asset.asset_id || asset.id}` : lineItem.item || "");
     setShowAssetSuggestions(false);
     setRecommendations([]);
     setEmployeeProfile(null);
@@ -4399,10 +4512,22 @@ function EnhancedAssignmentsPage() {
     setCreateLoading(true);
     try {
       const assetId = resolveSelectedAssetId();
+      const selectedQuantity = Number(formValues.quantity || 1);
+      const selectedPhysicalUnitIds = selectedUnitIds;
+
+      if (hasTrackedUnits && selectedPhysicalUnitIds.length !== selectedQuantity) {
+        setCreateError(`Select exactly ${selectedQuantity} available physical units before creating the assignment.`);
+        return;
+      }
+
       const created = await pcmsApi.createAssignment({
         ...formValues,
+        purchase_request_id: selectedAssetRequestId,
         asset_id: Number(assetId) || assetId,
-        quantity: Number(formValues.quantity || 1),
+        asset_unit_id: selectedPhysicalUnitIds[0] || null,
+        asset_unit_ids: selectedPhysicalUnitIds,
+        physical_unit_ids: selectedPhysicalUnitIds,
+        quantity: selectedQuantity,
         due_date: formValues.due_date || null,
         assigned_at: formValues.assigned_at || null,
         purpose: formValues.purpose || null,
@@ -4701,6 +4826,7 @@ function EnhancedAssignmentsPage() {
   return (
     <>
       <ModulePage
+        className="asset-assignment-page"
         title="Asset Assignment"
         subtitle="Accountability, employee acceptance, return monitoring, and assignment history."
         primary="Create Assignment"
@@ -4739,6 +4865,59 @@ function EnhancedAssignmentsPage() {
           ["Overdue", `${stats.overdue_assignments ?? 0}`, AlertTriangle],
         ]}
       >
+        <div className="panel asset-assignment-queue-panel" style={{ marginBottom: 20 }}>
+          <PanelHeader
+            title="ASSET REQUESTS FOR ASSIGNMENT"
+            subtitle="Approved asset requests ready for physical asset selection and accountability."
+          />
+          <div className="table-responsive">
+            <table className="data-table asset-assignment-queue-table">
+              <thead>
+                <tr>
+                  <th>Request No.</th>
+                  <th>Requester</th>
+                  <th>Department</th>
+                  <th>Requested Asset</th>
+                  <th>Quantity</th>
+                  <th>Date Needed</th>
+                  <th>Status</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {assetRequestQueue.length === 0 ? (
+                  <tr><td colSpan="8" className="empty-state">No approved asset requests awaiting assignment</td></tr>
+                ) : assetRequestQueue.map((purchaseRequest) => {
+                  const lineItem = (purchaseRequest.line_items || [])[0] || {};
+                  return (
+                    <tr key={purchaseRequest.id}>
+                      <td className="font-mono">{purchaseRequest.request_number}</td>
+                      <td>{purchaseRequest.requester?.email || purchaseRequest.requested_by_name || purchaseRequest.walk_in_requester_name || "-"}</td>
+                      <td>{purchaseRequest.department?.name || purchaseRequest.department_name || "-"}</td>
+                      <td>{lineItem.item || lineItem.particular || "-"}</td>
+                      <td>{lineItem.approved_qty || lineItem.approved_quantity || lineItem.qty || lineItem.quantity || 0}</td>
+                      <td>{purchaseRequest.date_needed ? new Date(purchaseRequest.date_needed).toLocaleDateString() : "-"}</td>
+                      <td><span className="badge badge-pending">{purchaseRequest.status}</span></td>
+                      <td>
+                        <div className="assignment-request-actions">
+                          <button className="staff-action-button" type="button" title="View request" aria-label={`View ${purchaseRequest.request_number}`} onClick={() => setRequestViewTarget(purchaseRequest)}>
+                            <Eye size={15} />
+                          </button>
+                          <button className="staff-action-button" type="button" title="Edit request" aria-label={`Edit ${purchaseRequest.request_number}`} onClick={() => setRequestEditTarget(purchaseRequest)}>
+                            <Pencil size={15} />
+                          </button>
+                          <button className="staff-action-button primary" type="button" title="Process assignment" aria-label={`Process ${purchaseRequest.request_number}`} onClick={() => processAssetRequest(purchaseRequest)}>
+                            <PackageCheck size={16} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
         {actionError && <div className="alert danger">{actionError}</div>}
         {actionSuccess && <div className="alert success">{actionSuccess}</div>}
         {clearanceOpen && (
@@ -5050,6 +5229,48 @@ function EnhancedAssignmentsPage() {
         </div>
       </ModulePage>
 
+      {requestViewTarget && (
+        <div className="modal-overlay" role="dialog" aria-modal="true" onClick={() => setRequestViewTarget(null)}>
+          <div className="request-view-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="request-view-header">
+              <div>
+                <span className="request-view-eyebrow">Approved Asset Request</span>
+                <h3>{requestViewTarget.request_number}</h3>
+              </div>
+              <button className="icon-button" type="button" aria-label="Close request details" onClick={() => setRequestViewTarget(null)}><X size={18} /></button>
+            </div>
+            <div className="request-view-grid">
+              <div><span>Requester</span><strong>{requestViewTarget.requester?.email || requestViewTarget.requested_by_name || requestViewTarget.walk_in_requester_name || "-"}</strong></div>
+              <div><span>Department</span><strong>{requestViewTarget.department?.name || requestViewTarget.department_name || "-"}</strong></div>
+              <div><span>Date Needed</span><strong>{requestViewTarget.date_needed ? new Date(requestViewTarget.date_needed).toLocaleDateString() : "-"}</strong></div>
+              <div><span>Status</span><strong className="request-view-status">{requestViewTarget.status}</strong></div>
+            </div>
+            <div className="request-view-item">
+              <span>Requested Asset</span>
+              <strong>{requestViewTarget.line_items?.[0]?.item || requestViewTarget.line_items?.[0]?.particular || "-"}</strong>
+              <small>Quantity: {requestViewTarget.line_items?.[0]?.approved_qty || requestViewTarget.line_items?.[0]?.approved_quantity || requestViewTarget.line_items?.[0]?.qty || requestViewTarget.line_items?.[0]?.quantity || 0}</small>
+            </div>
+            {requestViewTarget.purpose && <div className="request-view-purpose"><span>Purpose</span><p>{requestViewTarget.purpose}</p></div>}
+            <div className="request-view-footer">
+              <button className="secondary-button" type="button" onClick={() => setRequestViewTarget(null)}>Close</button>
+              <button className="primary-button" type="button" onClick={() => { setRequestEditTarget(requestViewTarget); setRequestViewTarget(null); }}><Pencil size={15} /> Edit Request</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {requestEditTarget && (
+        <RequestEditModal
+          request={requestEditTarget}
+          departments={requestDepartments}
+          onClose={() => setRequestEditTarget(null)}
+          onSaved={async () => {
+            await loadAssignments();
+            setActionSuccess("Asset request updated successfully.");
+          }}
+        />
+      )}
+
       {showCreateDialog && (
         <div className="modal-overlay" role="dialog" aria-modal="true">
           <div className="modal-card wide-modal">
@@ -5226,33 +5447,73 @@ function EnhancedAssignmentsPage() {
                     required
                   />
                 </label>
-                {Number(formValues.quantity || 1) === 1 && (
-                  <label>
-                    Physical Unit
-                    <select
-                      value={formValues.asset_unit_id || ""}
-                      onChange={(event) =>
-                        updateField("asset_unit_id", event.target.value)
-                      }
-                      disabled={!selectedAsset || assetUnits.length === 0}
-                    >
-                      <option value="">
-                        {assetUnits.length
-                          ? "Auto-select available unit"
-                          : "No unit records available"}
-                      </option>
-                      {assetUnits
-                        .filter((unit) => unit.status === "available")
-                        .map((unit) => (
-                          <option key={unit.id} value={unit.id}>
-                            ID {unit.id} - {unit.unit_code || "No unit code"}
-                            {unit.serial_number
-                              ? ` - SN ${unit.serial_number}`
-                              : ""}
-                          </option>
-                        ))}
-                    </select>
-                  </label>
+                {selectedAsset && (
+                  <div className="physical-unit-selector full-width">
+                    <div className="physical-unit-selector-header">
+                      <div>
+                        <strong>Physical Units</strong>
+                        <span>Only available units for the selected asset can be assigned.</span>
+                      </div>
+                      <strong>{selectedUnitIds.length} of {requestedQuantity} selected</strong>
+                    </div>
+                    {assetUnits.length === 0 ? (
+                      <div className="physical-unit-empty">
+                        No individually tracked physical units are available for this asset.
+                        {requestedQuantity > 1 && <strong> Multi-unit assignment is unavailable until physical units are registered.</strong>}
+                      </div>
+                    ) : (
+                      <>
+                        <div className="physical-unit-toolbar">
+                          <input
+                            type="search"
+                            placeholder="Search physical unit..."
+                            value={formValues.asset_unit_search || ""}
+                            onChange={(event) => updateField("asset_unit_search", event.target.value)}
+                          />
+                          <button
+                            type="button"
+                            className="secondary-button"
+                            onClick={() => updateField("asset_unit_ids", availableAssetUnits.slice(0, requestedQuantity).map((unit) => unit.id))}
+                          >
+                            Auto-select available units
+                          </button>
+                        </div>
+                        <div className="physical-unit-list">
+                          {assetUnits
+                            .filter((unit) => unit.status === "available" && !["lost", "disposed", "damaged", "maintenance", "unserviceable", "reserved"].includes(unit.status))
+                            .filter((unit) => {
+                              const search = String(formValues.asset_unit_search || "").trim().toLowerCase();
+                              if (!search) return true;
+                              return [unit.unit_code, unit.serial_number, unit.id].some((value) => String(value || "").toLowerCase().includes(search));
+                            })
+                            .map((unit) => {
+                              const checked = selectedUnitIds.includes(Number(unit.id));
+                              return (
+                                <label className={`physical-unit-option ${checked ? "selected" : ""}`} key={unit.id}>
+                                  <input
+                                    type="checkbox"
+                                    checked={checked}
+                                    onChange={() => {
+                                      const next = checked
+                                        ? selectedUnitIds.filter((id) => id !== Number(unit.id))
+                                        : [...selectedUnitIds, Number(unit.id)];
+                                      if (next.length <= requestedQuantity) updateField("asset_unit_ids", next);
+                                    }}
+                                  />
+                                  <span className="physical-unit-copy">
+                                    <strong>{unit.unit_code || `Unit ${unit.id}`}</strong>
+                                    <small>Asset ID: {unit.id} | Condition: {unit.condition || selectedAsset.condition || "Good"} | Available</small>
+                                  </span>
+                                </label>
+                              );
+                            })}
+                        </div>
+                        {unitSelectionInvalid && (
+                          <p className="physical-unit-warning">Only {availableAssetUnits.length} of {requestedQuantity} requested physical units are currently available, or the selection is incomplete.</p>
+                        )}
+                      </>
+                    )}
+                  </div>
                 )}
                 <label>
                   Condition Before Assignment
@@ -5342,11 +5603,6 @@ function EnhancedAssignmentsPage() {
                     - Warranty{" "}
                     {formatAssignmentDate(selectedAsset.warranty_until)}
                   </p>
-                  {Number(formValues.quantity || 1) === 1 && (
-                    <p style={{ margin: "6px 0 0" }}>
-                      Unit ID: {formValues.asset_unit_id || "Auto-selected on save"} - Unit Code: {assetUnits.find((unit) => String(unit.id) === String(formValues.asset_unit_id))?.unit_code || "N/A"}
-                    </p>
-                  )}
                   {selectedAsset.qr_code_path && (
                     <img
                       src={assetQrCodeUrl(selectedAsset.qr_code_path)}
@@ -5421,7 +5677,7 @@ function EnhancedAssignmentsPage() {
                 <button
                   type="submit"
                   className="primary-button"
-                  disabled={createLoading}
+                  disabled={createLoading || assignmentSelectionBlocked}
                 >
                   {createLoading ? "Creating..." : "Create Assignment"}
                 </button>
@@ -6930,6 +7186,7 @@ function RequesterAssignedAssets({ assignments = [], onChanged }) {
                   Expected Return Date
                   <input
                     type="date"
+                    min={todayIso}
                     value={transferForm.expected_return_date}
                     onChange={(event) =>
                       setTransferForm((current) => ({
@@ -8425,6 +8682,7 @@ function TransferPage() {
 }
 
 function MaintenancePage() {
+  const todayIso = new Date().toISOString().slice(0, 10);
   const [records, setRecords] = useState([]);
   const [predictions, setPredictions] = useState([]);
   const [assetsList, setAssetsList] = useState([]);
@@ -8534,10 +8792,24 @@ function MaintenancePage() {
       {success && <div className="form-message success">{success}</div>}
 
       {showForm && (
-        <div className="panel form-panel">
-          <h3>Schedule Maintenance</h3>
-          <form onSubmit={handleSubmit}>
-            <div className="field-row">
+        <div className="modal-overlay maintenance-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="schedule-maintenance-title">
+          <div className="modal-card maintenance-modal-card">
+            <div className="modal-header maintenance-modal-header">
+              <div className="maintenance-modal-heading">
+                <span className="maintenance-modal-icon"><Wrench size={18} /></span>
+                <div>
+                  <p className="modal-eyebrow">Preventive Maintenance</p>
+                  <h3 id="schedule-maintenance-title">Schedule maintenance</h3>
+                  <p className="modal-subtitle">Plan the next service visit and keep the asset history complete.</p>
+                </div>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setShowForm(false)} aria-label="Close maintenance form">
+                <X size={18} />
+              </button>
+            </div>
+            <form className="maintenance-form" onSubmit={handleSubmit}>
+              <div className="maintenance-form-grid">
+                <div className="field-row maintenance-field asset-field">
               <label>Asset</label>
               <div style={{ position: "relative" }}>
                 <input
@@ -8624,7 +8896,7 @@ function MaintenancePage() {
                 )}
               </div>
             </div>
-            <div className="field-row">
+            <div className="field-row maintenance-field">
               <label>Maintenance Type</label>
               <select
                 value={formData.maintenance_type}
@@ -8638,7 +8910,7 @@ function MaintenancePage() {
                 <option value="corrective">Corrective</option>
               </select>
             </div>
-            <div className="field-row">
+            <div className="field-row maintenance-field maintenance-field-wide">
               <label>Description</label>
               <textarea
                 value={formData.description}
@@ -8649,48 +8921,11 @@ function MaintenancePage() {
                 required
               />
             </div>
-            {movementData.movement_type === "in" && (
-              <>
-                <div className="field-row">
-                  <label>Supplier / Source</label>
-                  <input
-                    value={movementData.supplier_source}
-                    onChange={(e) =>
-                      setMovementData({
-                        ...movementData,
-                        supplier_source: e.target.value,
-                      })
-                    }
-                  />
-                </div>
-                <div className="field-row">
-                  <label>Reference No. / PO No.</label>
-                  <input
-                    value={movementData.reference_no}
-                    onChange={(e) =>
-                      setMovementData({
-                        ...movementData,
-                        reference_no: e.target.value,
-                      })
-                    }
-                  />
-                </div>
-                <div className="field-row">
-                  <label>Date</label>
-                  <input
-                    type="date"
-                    value={movementData.date}
-                    onChange={(e) =>
-                      setMovementData({ ...movementData, date: e.target.value })
-                    }
-                  />
-                </div>
-              </>
-            )}
-            <div className="field-row">
+            <div className="field-row maintenance-field">
               <label>Scheduled Date</label>
               <input
                 type="date"
+                min={todayIso}
                 value={formData.scheduled_date}
                 onChange={(e) =>
                   setFormData({ ...formData, scheduled_date: e.target.value })
@@ -8698,7 +8933,7 @@ function MaintenancePage() {
                 required
               />
             </div>
-            <div className="field-row">
+            <div className="field-row maintenance-field">
               <label>Technician Name</label>
               <input
                 value={formData.technician_name}
@@ -8708,7 +8943,8 @@ function MaintenancePage() {
                 required
               />
             </div>
-            <div className="inline-actions">
+              </div>
+            <div className="modal-actions maintenance-modal-actions">
               <button className="primary-button" type="submit">
                 Create Record
               </button>
@@ -8723,7 +8959,8 @@ function MaintenancePage() {
                 Cancel
               </button>
             </div>
-          </form>
+            </form>
+          </div>
         </div>
       )}
 
@@ -8833,6 +9070,7 @@ function DamagePage() {
   const [formData, setFormData] = useState({
     asset_id: "",
     incident_type: "damaged",
+    incident_date: new Date().toISOString().slice(0, 10),
     severity: "moderate",
     description: "",
   });
@@ -8866,6 +9104,7 @@ function DamagePage() {
       const submitData = {
         asset_id: parseInt(formData.asset_id),
         incident_type: formData.incident_type,
+        incident_date: formData.incident_date,
         severity: formData.severity,
         description: formData.description,
       };
@@ -8885,6 +9124,7 @@ function DamagePage() {
       setFormData({
         asset_id: "",
         incident_type: "damaged",
+        incident_date: new Date().toISOString().slice(0, 10),
         severity: "moderate",
         description: "",
       });
@@ -8919,10 +9159,24 @@ function DamagePage() {
       {success && <div className="form-message success">{success}</div>}
 
       {showForm && (
-        <div className="panel form-panel">
-          <h3>Report Damage</h3>
-          <form onSubmit={handleSubmit}>
-            <div className="field-row">
+        <div className="modal-overlay damage-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="report-damage-title">
+          <div className="modal-card damage-modal-card">
+            <div className="modal-header damage-modal-header">
+              <div className="damage-modal-heading">
+                <span className="damage-modal-icon"><AlertTriangle size={18} /></span>
+                <div>
+                  <p className="modal-eyebrow">Asset Incident</p>
+                  <h3 id="report-damage-title">Report an issue</h3>
+                  <p className="modal-subtitle">Capture the condition clearly so the asset can be assessed and protected.</p>
+                </div>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setShowForm(false)} aria-label="Close damage report form">
+                <X size={18} />
+              </button>
+            </div>
+            <form className="damage-form" onSubmit={handleSubmit}>
+              <div className="damage-form-grid">
+                <div className="field-row damage-field damage-field-wide">
               <label>Asset ID</label>
               <input
                 type="number"
@@ -8932,31 +9186,20 @@ function DamagePage() {
                 }
                 required
               />
-            </div>
-            <div className="field-row">
-              <label>Photo</label>
-              <div className="photo-upload">
-                {photoPreview ? (
-                  <img
-                    src={photoPreview}
-                    alt="damage preview"
-                    style={{ maxWidth: "200px" }}
-                  />
-                ) : (
-                  <Camera size={48} />
-                )}
-              </div>
-              <label className="primary-button upload-button">
-                <Camera size={16} /> Upload Photo
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={(e) => handlePhotoSelect(e.target.files?.[0])}
-                  hidden
-                />
-              </label>
-            </div>
-            <div className="field-row">
+                </div>
+                <div className="field-row damage-field damage-field-wide">
+                  <label>Evidence photo <span className="field-optional">Optional</span></label>
+                  <div className="damage-upload-row">
+                    <div className={`photo-upload ${photoPreview ? "has-preview" : ""}`}>
+                      {photoPreview ? <img src={photoPreview} alt="Damage preview" /> : <><Camera size={24} /><span>Attach a clear photo</span></>}
+                    </div>
+                    <label className="secondary-button upload-button">
+                      <Camera size={16} /> {photoPreview ? "Replace photo" : "Choose photo"}
+                      <input type="file" accept="image/*" onChange={(e) => handlePhotoSelect(e.target.files?.[0])} hidden />
+                    </label>
+                  </div>
+                </div>
+            <div className="field-row damage-field">
               <label>Incident Type</label>
               <select
                 value={formData.incident_type}
@@ -8970,7 +9213,18 @@ function DamagePage() {
                 <option value="unserviceable">Unserviceable</option>
               </select>
             </div>
-            <div className="field-row">
+            <div className="field-row damage-field">
+              <label>Incident Date</label>
+              <input
+                type="date"
+                value={formData.incident_date}
+                onChange={(e) =>
+                  setFormData({ ...formData, incident_date: e.target.value })
+                }
+                required
+              />
+            </div>
+            <div className="field-row damage-field">
               <label>Severity</label>
               <select
                 value={formData.severity}
@@ -8985,7 +9239,7 @@ function DamagePage() {
                 <option value="critical">Critical</option>
               </select>
             </div>
-            <div className="field-row">
+            <div className="field-row damage-field damage-field-wide">
               <label>Description</label>
               <textarea
                 value={formData.description}
@@ -8996,7 +9250,8 @@ function DamagePage() {
                 required
               />
             </div>
-            <div className="inline-actions">
+              </div>
+            <div className="modal-actions damage-modal-actions">
               <button className="primary-button" type="submit">
                 Submit Report
               </button>
@@ -9008,7 +9263,8 @@ function DamagePage() {
                 Cancel
               </button>
             </div>
-          </form>
+            </form>
+          </div>
         </div>
       )}
 
@@ -9093,7 +9349,7 @@ function SuppliesPage({ currentUser }) {
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
   const [formData, setFormData] = useState({
-    name: "",
+    area: "",
     unit: "pieces",
     category: "",
     quantity: 0,
@@ -9106,6 +9362,7 @@ function SuppliesPage({ currentUser }) {
     supply_id: "",
     movement_type: "in",
     quantity: 0,
+    write_off_category: "",
     notes: "",
     reference_no: "",
     supplier_source: "",
@@ -9225,7 +9482,7 @@ function SuppliesPage({ currentUser }) {
           : "Supply added successfully",
       );
       setFormData({
-        name: "",
+        area: "",
         unit: "pieces",
         category: "",
         quantity: 0,
@@ -9267,23 +9524,11 @@ function SuppliesPage({ currentUser }) {
       return;
     }
     setMovementDepartmentId(selectedDepartmentId);
-    if (type === "out") {
-      const eligibleRequest = supplyRequests.find(
-        (request) =>
-          requestStatus(request) === "Approved" &&
-          requestQuantities(request).remaining > 0,
-      );
-      if (eligibleRequest) {
-        setReleaseQuantity(0);
-        setReleaseDepartmentId(selectedDepartmentId);
-        setReleaseRequest(eligibleRequest);
-        return;
-      }
-    }
     setMovementData({
       supply_id: "",
       movement_type: type,
       quantity: 0,
+      write_off_category: "",
       notes: "",
       reference_no: "",
       supplier_source: "",
@@ -9306,8 +9551,11 @@ function SuppliesPage({ currentUser }) {
         throw new Error(
           "Select a supply and enter a quantity greater than zero.",
         );
-      if (movementData.movement_type === "out")
-        throw new Error("Use an approved supply request to issue supplies.");
+      if (
+        movementData.movement_type === "write_off" &&
+        !movementData.write_off_category
+      )
+        throw new Error("Select a write-off category.");
       await pcmsApi.recordStockMovement({
         ...movementData,
         department_id: movementDepartmentId,
@@ -9324,6 +9572,7 @@ function SuppliesPage({ currentUser }) {
         supply_id: "",
         movement_type: "in",
         quantity: 0,
+        write_off_category: "",
         notes: "",
       });
       setSupplyQuery("");
@@ -9546,7 +9795,7 @@ function SuppliesPage({ currentUser }) {
   return (
     <ModulePage
       title="Supplies Inventory"
-      subtitle="Consumables, stock-in, stock-out, minimum stock alerts, and issuance."
+      subtitle="Consumables, stock-in, write-offs, minimum stock alerts, and issuance."
       icon={Archive}
       actions={
         <>
@@ -9592,9 +9841,9 @@ function SuppliesPage({ currentUser }) {
           <button
             className="secondary-button"
             type="button"
-            onClick={() => openMovementForm("out")}
+            onClick={() => openMovementForm("write_off")}
           >
-            <PackageOpen size={16} /> Stock Out
+            <PackageOpen size={16} /> Write Off
           </button>
           <button
             className="secondary-button"
@@ -9616,7 +9865,7 @@ function SuppliesPage({ currentUser }) {
               <h3>
                 {movementData.movement_type === "in"
                   ? "Stock In Supplies"
-                  : "Inventory Adjustment"}
+                  : "Write Off Supplies"}
               </h3>
               <button
                 className="icon-button"
@@ -9627,7 +9876,7 @@ function SuppliesPage({ currentUser }) {
                 <X size={18} />
               </button>
             </div>
-            <form onSubmit={handleRecordMovement}>
+            <form className="supply-modal-form" onSubmit={handleRecordMovement}>
               <div className="field-row">
                 <label>Department</label>
                 <select
@@ -9759,19 +10008,38 @@ function SuppliesPage({ currentUser }) {
                   required
                 >
                   <option value="in">Stock In</option>
-                  <option value="out">Stock Out</option>
+                  <option value="write_off">Write Off</option>
                 </select>
               </div>
-              <div className="field-row">
-                {movementData.movement_type === "out" && (
-                  <div className="form-message error">
-                    No approved supply request is available for this supply.
-                    Stock Out should only be used for authorized inventory
-                    adjustments.
+              {movementData.movement_type === "write_off" ? (
+                <div className="write-off-layout">
+                  <div className="form-message error write-off-warning">
+                    This permanently removes unusable, damaged, expired, lost,
+                    or otherwise invalid stock from inventory.
                   </div>
-                )}
-                {movementData.movement_type === "in" &&
-                  movementData.supply_id && (
+                  <div className="quantity-group">
+                    <label>
+                      Quantity per {supplies.find(
+                        (item) =>
+                          String(item.id) === String(movementData.supply_id),
+                      )?.unit || "piece"}
+                    </label>
+                    <input
+                      type="number"
+                      value={movementData.quantity}
+                      onChange={(e) =>
+                        setMovementData({
+                          ...movementData,
+                          quantity: parseInt(e.target.value) || 0,
+                        })
+                      }
+                      required
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="field-row">
+                  {movementData.supply_id && (
                     <p className="supply-modal-summary">
                       Current Stock:{" "}
                       <strong>
@@ -9792,24 +10060,47 @@ function SuppliesPage({ currentUser }) {
                       </strong>
                     </p>
                   )}
-                <label>
-                  Quantity per {supplies.find(
-                    (item) =>
-                      String(item.id) === String(movementData.supply_id),
-                  )?.unit || "piece"}
-                </label>
-                <input
-                  type="number"
-                  value={movementData.quantity}
-                  onChange={(e) =>
-                    setMovementData({
-                      ...movementData,
-                      quantity: parseInt(e.target.value) || 0,
-                    })
-                  }
-                  required
-                />
-              </div>
+                  <label>
+                    Quantity per {supplies.find(
+                      (item) =>
+                        String(item.id) === String(movementData.supply_id),
+                    )?.unit || "piece"}
+                  </label>
+                  <input
+                    type="number"
+                    value={movementData.quantity}
+                    onChange={(e) =>
+                      setMovementData({
+                        ...movementData,
+                        quantity: parseInt(e.target.value) || 0,
+                      })
+                    }
+                    required
+                  />
+                </div>
+              )}
+              {movementData.movement_type === "write_off" && (
+                <div className="field-row">
+                  <label>Write-off Category</label>
+                  <select
+                    value={movementData.write_off_category}
+                    onChange={(e) =>
+                      setMovementData({
+                        ...movementData,
+                        write_off_category: e.target.value,
+                      })
+                    }
+                    required
+                  >
+                    <option value="">Select category</option>
+                    <option value="damaged">Damaged</option>
+                    <option value="expired">Expired</option>
+                    <option value="lost">Lost</option>
+                    <option value="unusable">Unusable</option>
+                    <option value="other">Other</option>
+                  </select>
+                </div>
+              )}
               <div className="field-row">
                 <label>Notes</label>
                 <textarea
@@ -9830,7 +10121,7 @@ function SuppliesPage({ currentUser }) {
                     ? "Processing..."
                     : movementData.movement_type === "in"
                       ? "Confirm Stock In"
-                      : "Confirm Adjustment"}
+                      : "Confirm Write Off"}
                 </button>
                 <button
                   className="secondary-button"
@@ -11153,6 +11444,7 @@ function GatePassPage() {
   const [showForm, setShowForm] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
   const [error, setError] = useState(null);
+  const todayIso = new Date().toISOString().slice(0, 10);
   const [success, setSuccess] = useState(null);
   const [formData, setFormData] = useState({
     asset_id: "",
@@ -11162,9 +11454,15 @@ function GatePassPage() {
     status: "pending",
   });
   const [scanId, setScanId] = useState("");
+  const [assetsList, setAssetsList] = useState([]);
+  const [assetQuery, setAssetQuery] = useState("");
+  const [showAssetSuggestions, setShowAssetSuggestions] = useState(false);
 
   useEffect(() => {
     loadPasses();
+    pcmsApi.assets({ limit: 200 })
+      .then(setAssetsList)
+      .catch((err) => setError(err.message));
   }, []);
 
   const loadPasses = async () => {
@@ -11181,6 +11479,10 @@ function GatePassPage() {
 
   const handleCreatePass = async (e) => {
     e.preventDefault();
+    if (!formData.asset_id) {
+      setError("Select an asset from the search results.");
+      return;
+    }
     try {
       await pcmsApi.createGatePass(formData);
       setSuccess("Gate pass created successfully");
@@ -11191,6 +11493,8 @@ function GatePassPage() {
         valid_until: "",
         status: "pending",
       });
+      setAssetQuery("");
+      setShowAssetSuggestions(false);
       setShowForm(false);
       loadPasses();
     } catch (err) {
@@ -11243,21 +11547,70 @@ function GatePassPage() {
       {success && <div className="form-message success">{success}</div>}
 
       {showForm && (
-        <div className="panel form-panel">
-          <h3>Generate Gate Pass</h3>
-          <form onSubmit={handleCreatePass}>
-            <div className="field-row">
-              <label>Asset ID</label>
-              <input
-                type="number"
-                value={formData.asset_id}
-                onChange={(e) =>
-                  setFormData({ ...formData, asset_id: e.target.value })
-                }
-                required
-              />
+        <div className="modal-overlay gate-pass-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="generate-gate-pass-title">
+          <div className="modal-card gate-pass-modal-card">
+            <div className="modal-header gate-pass-modal-header">
+              <div className="gate-pass-modal-heading">
+                <span className="gate-pass-modal-icon"><QrCode size={18} /></span>
+                <div>
+                  <p className="modal-eyebrow">Controlled Asset Movement</p>
+                  <h3 id="generate-gate-pass-title">Generate gate pass</h3>
+                  <p className="modal-subtitle">Create a scannable pass for an approved asset movement.</p>
+                </div>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setShowForm(false)} aria-label="Close gate pass form">
+                <X size={18} />
+              </button>
             </div>
-            <div className="field-row">
+            <form className="gate-pass-form" onSubmit={handleCreatePass}>
+              <div className="gate-pass-form-grid">
+                <div className="field-row gate-pass-field gate-pass-asset-field">
+                  <label>Asset</label>
+                  <div className="gate-pass-asset-picker">
+                    <input
+                      value={assetQuery}
+                      onChange={(e) => {
+                        setAssetQuery(e.target.value);
+                        setShowAssetSuggestions(true);
+                        setFormData({ ...formData, asset_id: "" });
+                      }}
+                      onFocus={() => setShowAssetSuggestions(true)}
+                      onBlur={() => setTimeout(() => setShowAssetSuggestions(false), 150)}
+                      placeholder="Search asset name or property number..."
+                      required
+                    />
+                    {showAssetSuggestions && (
+                      <ul className="gate-pass-asset-suggestions">
+                        {assetsList
+                          .filter((asset) => {
+                            const query = assetQuery.trim().toLowerCase();
+                            if (!query) return true;
+                            return [asset.name, asset.property_number, asset.asset_id]
+                              .some((value) => String(value || "").toLowerCase().includes(query));
+                          })
+                          .slice(0, 10)
+                          .map((asset) => (
+                            <li
+                              key={asset.id}
+                              onMouseDown={(event) => {
+                                event.preventDefault();
+                                setFormData({ ...formData, asset_id: asset.id });
+                                setAssetQuery(`${asset.name} · ${asset.property_number || asset.asset_id || asset.id}`);
+                                setShowAssetSuggestions(false);
+                              }}
+                            >
+                              <strong>{asset.name}</strong>
+                              <span>{asset.property_number || asset.asset_id || `Asset #${asset.id}`}</span>
+                            </li>
+                          ))}
+                        {assetsList.length === 0 && (
+                          <li className="gate-pass-asset-empty">No assets available.</li>
+                        )}
+                      </ul>
+                    )}
+                  </div>
+                </div>
+            <div className="field-row gate-pass-field">
               <label>Purpose</label>
               <select
                 value={formData.purpose}
@@ -11273,7 +11626,7 @@ function GatePassPage() {
                 <option value="other">Other</option>
               </select>
             </div>
-            <div className="field-row">
+            <div className="field-row gate-pass-field">
               <label>Receiver Name</label>
               <input
                 value={formData.receiver_name}
@@ -11283,10 +11636,11 @@ function GatePassPage() {
                 required
               />
             </div>
-            <div className="field-row">
+            <div className="field-row gate-pass-field">
               <label>Valid Until</label>
               <input
                 type="date"
+                min={todayIso}
                 value={formData.valid_until}
                 onChange={(e) =>
                   setFormData({ ...formData, valid_until: e.target.value })
@@ -11294,7 +11648,8 @@ function GatePassPage() {
                 required
               />
             </div>
-            <div className="inline-actions">
+              </div>
+            <div className="modal-actions gate-pass-modal-actions">
               <button className="primary-button" type="submit">
                 Create Pass
               </button>
@@ -11306,15 +11661,29 @@ function GatePassPage() {
                 Cancel
               </button>
             </div>
-          </form>
+            </form>
+          </div>
         </div>
       )}
 
       {showScanner && (
-        <div className="panel form-panel">
-          <h3>Scan Gate Pass</h3>
-          <form onSubmit={handleScan}>
-            <div className="field-row">
+        <div className="modal-overlay gate-pass-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="scan-gate-pass-title">
+          <div className="modal-card gate-pass-scan-card">
+            <div className="modal-header gate-pass-modal-header">
+              <div className="gate-pass-modal-heading">
+                <span className="gate-pass-modal-icon"><QrCode size={18} /></span>
+                <div>
+                  <p className="modal-eyebrow">Gate Pass Verification</p>
+                  <h3 id="scan-gate-pass-title">Scan gate pass</h3>
+                  <p className="modal-subtitle">Enter the pass number or scanned QR value to verify movement.</p>
+                </div>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setShowScanner(false)} aria-label="Close gate pass scanner">
+                <X size={18} />
+              </button>
+            </div>
+            <form className="gate-pass-form" onSubmit={handleScan}>
+              <div className="field-row gate-pass-field gate-pass-field-wide">
               <label>Gate Pass ID or QR Code</label>
               <input
                 value={scanId}
@@ -11323,7 +11692,7 @@ function GatePassPage() {
                 required
               />
             </div>
-            <div className="inline-actions">
+            <div className="modal-actions gate-pass-modal-actions">
               <button className="primary-button" type="submit">
                 Scan
               </button>
@@ -11335,7 +11704,8 @@ function GatePassPage() {
                 Cancel
               </button>
             </div>
-          </form>
+            </form>
+          </div>
         </div>
       )}
 
@@ -11444,11 +11814,9 @@ function AuditPage({ currentUser }) {
   const [deleteAudit, setDeleteAudit] = useState(null);
   const [actionLoading, setActionLoading] = useState(false);
   const [formData, setFormData] = useState({
-    name: "",
+    area: "",
     department_id: "",
     scheduled_date: "",
-    auditor_name: "",
-    status: "pending",
   });
   const [scanData, setScanData] = useState({
     audit_id: "",
@@ -11490,11 +11858,9 @@ function AuditPage({ currentUser }) {
       await pcmsApi.createAudit(formData);
       setSuccess("Audit scheduled successfully");
       setFormData({
-        name: "",
+        area: "",
         department_id: "",
         scheduled_date: "",
-        auditor_name: "",
-        status: "pending",
       });
       setShowForm(false);
       loadAudits();
@@ -11506,13 +11872,14 @@ function AuditPage({ currentUser }) {
   const handleScanAsset = async (e) => {
     e.preventDefault();
     try {
+      if (!scanData.asset_id) {
+        throw new Error("Select an asset or scan its QR code first.");
+      }
       const payload = {
         ...scanData,
-        audit_id: parseInt(scanData.audit_id),
-        asset_id: parseInt(scanData.asset_id),
-        found_department_id: scanData.found_department_id
-          ? parseInt(scanData.found_department_id)
-          : null,
+        audit_id: scanData.audit_id,
+        asset_id: scanData.asset_id,
+        found_department_id: scanData.found_department_id || null,
       };
       await pcmsApi.scanAuditAsset(scanData.audit_id, payload);
       setSuccess("Asset scanned successfully");
@@ -11601,15 +11968,27 @@ function AuditPage({ currentUser }) {
       {success && <div className="form-message success">{success}</div>}
 
       {showForm && (
-        <div className="panel form-panel">
-          <h3>Schedule Audit</h3>
-          <form onSubmit={handleCreateAudit}>
+        <div className="modal-overlay audit-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="schedule-audit-title">
+          <div className="modal-card audit-modal-card">
+            <div className="modal-header audit-modal-header">
+              <div className="audit-modal-heading">
+                <span className="audit-modal-icon"><ClipboardCheck size={18} /></span>
+                <div>
+                  <p className="modal-eyebrow">Physical Inventory</p>
+                  <h3 id="schedule-audit-title">Schedule audit</h3>
+                  <p className="modal-subtitle">Create an audit session and scan registered asset tags.</p>
+                </div>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setShowForm(false)} aria-label="Close audit form"><X size={18} /></button>
+            </div>
+            <form className="audit-form" onSubmit={handleCreateAudit}>
+              <div className="audit-form-grid">
             <div className="field-row">
-              <label>Audit Name</label>
+              <label>Audit Area</label>
               <input
-                value={formData.name}
+                value={formData.area}
                 onChange={(e) =>
-                  setFormData({ ...formData, name: e.target.value })
+                  setFormData({ ...formData, area: e.target.value })
                 }
                 required
               />
@@ -11642,17 +12021,8 @@ function AuditPage({ currentUser }) {
                 required
               />
             </div>
-            <div className="field-row">
-              <label>Auditor Name</label>
-              <input
-                value={formData.auditor_name}
-                onChange={(e) =>
-                  setFormData({ ...formData, auditor_name: e.target.value })
-                }
-                required
-              />
-            </div>
-            <div className="inline-actions">
+              </div>
+            <div className="modal-actions audit-modal-actions">
               <button className="primary-button" type="submit">
                 Schedule Audit
               </button>
@@ -11664,14 +12034,27 @@ function AuditPage({ currentUser }) {
                 Cancel
               </button>
             </div>
-          </form>
+            </form>
+          </div>
         </div>
       )}
 
       {showScan && selectedAudit && (
-        <div className="panel form-panel">
-          <h3>Scan Asset - {selectedAudit.area}</h3>
-          <form onSubmit={handleScanAsset}>
+        <div className="modal-overlay audit-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="manual-audit-scan-title">
+          <div className="modal-card audit-scan-modal-card">
+            <div className="modal-header audit-modal-header">
+              <div className="audit-modal-heading">
+                <span className="audit-modal-icon"><QrCode size={18} /></span>
+                <div>
+                  <p className="modal-eyebrow">Asset Verification</p>
+                  <h3 id="manual-audit-scan-title">Scan audit asset</h3>
+                  <p className="modal-subtitle">Select the department where the asset was physically found.</p>
+                </div>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setShowScan(false)} aria-label="Close scan form"><X size={18} /></button>
+            </div>
+            <form className="audit-form" onSubmit={handleScanAsset}>
+              <div className="audit-form-grid">
             <div className="field-row">
               <label>Asset</label>
               <div style={{ position: "relative" }}>
@@ -11780,7 +12163,8 @@ function AuditPage({ currentUser }) {
                 <option value="wrong_department">Wrong Department</option>
               </select>
             </div>
-            <div className="inline-actions">
+              </div>
+            <div className="modal-actions audit-modal-actions">
               <button className="primary-button" type="submit">
                 Record Scan
               </button>
@@ -11792,7 +12176,8 @@ function AuditPage({ currentUser }) {
                 Done Scanning
               </button>
             </div>
-          </form>
+            </form>
+          </div>
         </div>
       )}
 
@@ -11882,7 +12267,7 @@ function AuditPage({ currentUser }) {
                             onClick={() =>
                               setEditAudit({
                                 ...item,
-                                name: item.area || "",
+                                area: item.area || "",
                                 scheduled_date: item.scheduled_at
                                   ? item.scheduled_at.slice(0, 10)
                                   : "",
@@ -11906,7 +12291,10 @@ function AuditPage({ currentUser }) {
                         {item.status !== "completed" && (
                           <>
                             <button
-                              className="small-button"
+                              className="icon-button audit-action-button"
+                              type="button"
+                              title="Manual scan"
+                              aria-label={`Manual scan ${item.audit_number}`}
                               onClick={() => {
                                 setSelectedAudit(item);
                                 setScanData({
@@ -11917,22 +12305,28 @@ function AuditPage({ currentUser }) {
                                 setShowScan(true);
                               }}
                             >
-                              Manual Scan
+                              <QrCode size={14} />
                             </button>
                             <button
-                              className="small-button"
+                              className="icon-button audit-action-button audit-action-button-primary"
+                              type="button"
+                              title="Scan with camera"
+                              aria-label={`Scan with camera ${item.audit_number}`}
                               onClick={() => {
                                 setSelectedAudit(item);
                                 setShowMobileScan(true);
                               }}
                             >
-                              <Camera size={14} /> Scan with Camera
+                              <Camera size={14} />
                             </button>
                             <button
-                              className="small-button success"
+                              className="icon-button audit-action-button audit-action-button-success"
+                              type="button"
+                              title="Complete audit"
+                              aria-label={`Complete audit ${item.audit_number}`}
                               onClick={() => handleCompleteAudit(item.id)}
                             >
-                              Complete
+                              <CheckCircle2 size={14} />
                             </button>
                           </>
                         )}
@@ -11964,9 +12358,9 @@ function AuditPage({ currentUser }) {
               </button>
             </div>
             <form className="register-form" onSubmit={handleUpdateAudit}>
-              <label>Audit Name<input value={editAudit.name || editAudit.area || ""} onChange={(e) => setEditAudit({ ...editAudit, name: e.target.value })} required /></label>
+              <label>Audit Area<input value={editAudit.area || ""} onChange={(e) => setEditAudit({ ...editAudit, area: e.target.value })} required /></label>
               <label>Department<select value={editAudit.department_id || ""} onChange={(e) => setEditAudit({ ...editAudit, department_id: e.target.value })} required><option value="">Select department</option>{departments.map((dept) => <option key={dept.id} value={dept.id}>{dept.name}</option>)}</select></label>
-              <label>Scheduled Date<input type="date" value={editAudit.scheduled_date || ""} onChange={(e) => setEditAudit({ ...editAudit, scheduled_date: e.target.value })} required /></label>
+              <label>Scheduled Date<input type="date" min={todayIso} value={editAudit.scheduled_date || ""} onChange={(e) => setEditAudit({ ...editAudit, scheduled_date: e.target.value })} required /></label>
               <div className="modal-actions"><button className="secondary-button" type="button" onClick={() => setEditAudit(null)} disabled={actionLoading}>Cancel</button><button className="primary-button" type="submit" disabled={actionLoading}>{actionLoading ? "Saving..." : "Save Changes"}</button></div>
             </form>
           </div>
@@ -12004,6 +12398,25 @@ function AuditVerificationModal({ details, onClose, onPrint }) {
 
 const QR_SCAN_COOLDOWN_MS = 3000;
 
+function normalizeAssetQrValue(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+
+  try {
+    const parsed = JSON.parse(raw);
+    return String(parsed.property_number || parsed.asset_id || parsed.id || raw).trim();
+  } catch {
+    // Asset Registry QR codes currently contain the property number directly.
+  }
+
+  try {
+    const url = new URL(raw);
+    return url.searchParams.get("property_number") || url.searchParams.get("asset_id") || url.pathname.split("/").filter(Boolean).pop() || raw;
+  } catch {
+    return raw.replace(/^PCMS[-_ ]?ASSET[:#\- ]*/i, "").trim();
+  }
+}
+
 function MobileAuditScanner({ audit, departments, onClose }) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
@@ -12024,6 +12437,7 @@ function MobileAuditScanner({ audit, departments, onClose }) {
   const processCode = async (code) => {
     const trimmed = (code || "").trim();
     if (!trimmed || !foundDepartmentId) return;
+    const assetQrValue = normalizeAssetQrValue(trimmed);
 
     const now = Date.now();
     if (
@@ -12037,15 +12451,17 @@ function MobileAuditScanner({ audit, departments, onClose }) {
     setBusy(true);
     setToast(null);
     try {
-      const matches = await pcmsApi.assets({ search: trimmed, limit: 5 });
+      const matches = await pcmsApi.assets({ search: assetQrValue, limit: 10 });
       const asset =
         matches.find(
           (a) =>
-            (a.property_number || "").toLowerCase() === trimmed.toLowerCase(),
+            [a.property_number, a.asset_id, a.id]
+              .map((value) => String(value || "").toLowerCase())
+              .includes(assetQrValue.toLowerCase()),
         ) || matches[0];
 
       if (!asset) {
-        setToast({ type: "error", text: `No asset found for "${trimmed}".` });
+        setToast({ type: "error", text: `No registered asset found for "${assetQrValue}".` });
         return;
       }
 
@@ -12512,10 +12928,13 @@ function OcrPage() {
     await runOcrForImage(selectedImage, { force: true });
   };
 
+  const [fieldErrors, setFieldErrors] = useState({});
+
   const handleSubmit = async (event) => {
     event.preventDefault();
     setError("");
     setSuccessMessage("");
+    setFieldErrors({});
 
     try {
       const quantity = Number(formValues.quantity);
@@ -12565,12 +12984,34 @@ function OcrPage() {
         status: "available",
       });
     } catch (submitError) {
-      setError(submitError.message || "Asset registration failed.");
+      let parsedError = null;
+      try {
+        parsedError = JSON.parse(submitError?.message || "{}");
+      } catch {
+        parsedError = null;
+      }
+
+      const validationErrors = parsedError?.payload?.errors || {};
+      const fieldMessages = Object.fromEntries(
+        Object.entries(validationErrors).map(([key, value]) => [key, Array.isArray(value) ? value[0] : String(value)])
+      );
+
+      if (Object.keys(fieldMessages).length > 0) {
+        setFieldErrors(fieldMessages);
+      }
+
+      setError(
+        parsedError?.userMessage ||
+        submitError?.message ||
+        "Asset registration failed."
+      );
     }
   };
 
-  const updateField = (field, value) =>
+  const updateField = (field, value) => {
     setFormValues((current) => ({ ...current, [field]: value }));
+    setFieldErrors((current) => ({ ...current, [field]: "" }));
+  };
 
   return (
     <ModulePage
@@ -12684,15 +13125,21 @@ function OcrPage() {
             <div className="form-message success">{successMessage}</div>
           )}
           <form onSubmit={handleSubmit} className="ocr-form">
-            <div className="field-row">
+            <div className={`field-row ${fieldErrors.property_number ? "has-error" : ""}`}>
               <label>Property Number</label>
               <input
                 value={formValues.property_number}
                 onChange={(event) =>
                   updateField("property_number", event.target.value)
                 }
+                aria-invalid={Boolean(fieldErrors.property_number)}
               />
-              <small>{ocrResult?.confidence >= 85 ? "High" : "Review"}</small>
+              {fieldErrors.property_number && (
+                <small className="input-error-message">{fieldErrors.property_number}</small>
+              )}
+              {!fieldErrors.property_number && (
+                <small>{ocrResult?.confidence >= 85 ? "High" : "Review"}</small>
+              )}
             </div>
             <div className="field-row">
               <label>Asset Name</label>
@@ -12980,6 +13427,8 @@ function MonitoringPage({ currentUser }) {
 
   const isQuantityAnomaly = (flag) => flag.source_type === "quantity_anomaly";
   const isLowStockAlert = (flag) => flag.source_type === "low_stock";
+  const isTransferAnomaly = (flag) =>
+    ["untracked_transfer", "asset_location_mismatch", "custodian_mismatch", "audit_mismatch"].includes(flag.source_type);
   const supplyName = (flag) =>
     flag.asset_name ||
     (flag?.source_type === "untracked_transfer"
@@ -13046,7 +13495,8 @@ function MonitoringPage({ currentUser }) {
     const matchesType =
       filters.type === "all" ||
       (filters.type === "low_stock" && isLowStockAlert(flag)) ||
-      (filters.type === "quantity_anomaly" && isQuantityAnomaly(flag));
+      (filters.type === "quantity_anomaly" && isQuantityAnomaly(flag)) ||
+      (filters.type === "transfer" && isTransferAnomaly(flag));
     const matchesDepartment =
       filters.department === "all" || flag.department === filters.department;
     const matchesRisk =
@@ -13198,14 +13648,14 @@ function MonitoringPage({ currentUser }) {
           <p><strong>Next process:</strong> {resolutionResult.nextAction}</p>
           <div className="inline-actions">
             <button
-              className="small-button"
+              className="small-button anomaly-secondary-action"
               type="button"
               onClick={() => setFilters((current) => ({ ...current, status: "resolved" }))}
             >
               <Eye size={14} /> Show Resolved Alerts
             </button>
             <button
-              className="small-button"
+              className="small-button anomaly-secondary-action"
               type="button"
               onClick={handleRunAnalysis}
               disabled={analysisRunning}
@@ -13270,6 +13720,7 @@ function MonitoringPage({ currentUser }) {
           <option value="all">All Types</option>
           <option value="low_stock">Low Stock</option>
           <option value="quantity_anomaly">Supply Stock Anomaly</option>
+          <option value="transfer">Asset / Audit Mismatch</option>
         </select>
         <select
           value={filters.department}
@@ -13396,7 +13847,7 @@ function MonitoringPage({ currentUser }) {
                 </div>
                 <div className="card-actions monitoring-actions">
                   <button
-                    className="small-button"
+                    className="small-button anomaly-secondary-action"
                     type="button"
                     onClick={() => setSelectedAnomaly(flag)}
                   >
@@ -13405,7 +13856,7 @@ function MonitoringPage({ currentUser }) {
                   </button>
                   {flag.status !== "resolved" && (
                     <button
-                      className="small-button"
+                      className="small-button anomaly-resolve-action"
                       type="button"
                       onClick={() => handleResolveAnomaly(flag.id)}
                     >
@@ -13681,45 +14132,86 @@ function ReportsPage() {
     { id: "transfer-summary", name: "Transfer Summary", icon: Truck, description: "Department transfers and approval status" },
   ];
 
+  const flattenReportRows = (data) => {
+    if (!data) return [];
+    if (Array.isArray(data)) return data;
+    if (typeof data !== "object") return [{ value: String(data) }];
+
+    const candidates = Object.values(data).filter((value) => value && typeof value === "object");
+    const rows = candidates.find((value) => Array.isArray(value)) || [];
+    if (rows.length > 0) return rows;
+
+    const firstTable = candidates.find((value) => !Array.isArray(value) && typeof value === "object");
+    if (firstTable && Object.keys(firstTable).length) {
+      return [firstTable];
+    }
+
+    return [{ ...data }];
+  };
+
+  const reportRows = () => flattenReportRows(reportData);
+
+  const reportHeaders = () => {
+    const rows = reportRows();
+    if (!rows.length) return ["value"];
+    const keys = [...new Set(rows.flatMap((row) => Object.keys(row || {})))];
+    return keys.length > 0 ? keys : ["value"];
+  };
+
   const handleGenerateReport = async (reportType) => {
     try {
       setLoading(true);
       setError(null);
       const response = await pcmsApi.generateReport(reportType);
-      setReportData(response?.data);
+      const payload = response?.data || response || {};
+      setReportData(payload);
       setSelectedReport(reportType);
-      setSuccess("Report generated successfully");
+      setSuccess("Report generated successfully.");
     } catch (err) {
-      setError(err.message);
+      setError(err?.message || "Unable to generate the report.");
     } finally {
       setLoading(false);
     }
   };
 
-  const reportRows = () => {
-    const collection = Object.values(reportData || {}).find((value) => Array.isArray(value));
-    return collection || [];
-  };
-
   const handleDownload = async (format) => {
     if (!reportData) return;
-    if (format === "pdf") {
-      await exportElementToPdf(reportRef.current, `${selectedReport}.pdf`);
+
+    const rows = reportRows();
+    const headers = reportHeaders();
+    const escapeCsv = (value) => `"${String(value ?? "").replaceAll('"', '""')}"`;
+
+    if (format === "csv") {
+      const csv = [headers.map(escapeCsv).join(","), ...rows.map((row) => headers.map((key) => escapeCsv(row?.[key])).join(","))].join("\n");
+      const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${selectedReport || "report"}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
       return;
     }
-    const rows = reportRows();
-    const headers = [...new Set(rows.flatMap((row) => Object.keys(row || {})))];
-    const escapeCsv = (value) => `"${String(value ?? "").replaceAll('"', '""')}"`;
-    const csv = [headers.map(escapeCsv).join(","), ...rows.map((row) => headers.map((key) => escapeCsv(row[key])).join(","))].join("\n");
-    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
-    const link = document.createElement("a"); link.href = url; link.download = `${selectedReport}.csv`; link.click(); URL.revokeObjectURL(url);
+
+    if (format === "print") {
+      window.print();
+      return;
+    }
+
+    if (format === "pdf") {
+      if (reportRef.current) {
+        await exportElementToPdf(reportRef.current, `${selectedReport || "report"}.pdf`);
+      } else {
+        window.print();
+      }
+    }
   };
 
   return (
     <ModulePage
       title="Reports"
       subtitle="Export PDF, Excel, and CSV reports for all property workflows."
-      primary="Generate Report"
       icon={FileBarChart2}
     >
       {error && <div className="form-message error">{error}</div>}
@@ -13749,7 +14241,11 @@ function ReportsPage() {
         <div className="panel">
           <div className="report-header">
             <h3>Report: {selectedReport}</h3>
-            <button onClick={() => setReportData(null)}>
+            <button
+              className="secondary-button report-back-button"
+              type="button"
+              onClick={() => setReportData(null)}
+            >
               ← Back to Reports
             </button>
           </div>
@@ -13761,23 +14257,51 @@ function ReportsPage() {
             >
               <Download size={16} /> Download CSV
             </button>
-            <button className="secondary-button" onClick={() => handleDownload("pdf")}><Printer size={16} /> Download PDF</button>
+            <button className="secondary-button" onClick={() => handleDownload("pdf")}>
+              <Printer size={16} /> Download PDF
+            </button>
+            <button className="secondary-button" onClick={() => handleDownload("print")}>
+              <Printer size={16} /> Print Report
+            </button>
           </div>
 
           <div className="report-content" ref={reportRef}>
-            <h2>{reportData.report_type}</h2>
-            <p>Generated: {new Date(reportData.generated_at).toLocaleString()}</p>
-            <pre
-              style={{
-                maxHeight: "500px",
-                overflowY: "auto",
-                background: "#f5f5f5",
-                padding: "15px",
-                borderRadius: "5px",
-              }}
-            >
-              {JSON.stringify(reportData, null, 2)}
-            </pre>
+            <h2>{selectedReport || reportData.report_type || "Report"}</h2>
+            <p>Generated: {reportData.generated_at ? new Date(reportData.generated_at).toLocaleString() : new Date().toLocaleString()}</p>
+            {reportRows().length > 0 ? (
+              <div className="table-card" style={{ marginTop: 16 }}>
+                <table>
+                  <thead>
+                    <tr>
+                      {reportHeaders().map((header) => (
+                        <th key={header}>{header}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {reportRows().map((row, index) => (
+                      <tr key={`report-row-${index}`}>
+                        {reportHeaders().map((header) => (
+                          <td key={`${header}-${index}`}>{row?.[header] ?? "-"}</td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <pre
+                style={{
+                  maxHeight: "500px",
+                  overflowY: "auto",
+                  background: "#f5f5f5",
+                  padding: "15px",
+                  borderRadius: "5px",
+                }}
+              >
+                {JSON.stringify(reportData, null, 2)}
+              </pre>
+            )}
           </div>
         </div>
       )}
@@ -13937,15 +14461,18 @@ function UsersPage() {
   const [saving, setSaving] = useState(false);
   const [temporaryPassword, setTemporaryPassword] = useState(null);
   const [showInvitePassword, setShowInvitePassword] = useState(false);
+  const [showInvitePasswordConfirm, setShowInvitePasswordConfirm] = useState(false);
   const [formData, setFormData] = useState({
     first_name: "",
     middle_name: "",
     last_name: "",
     email: "",
     password: "",
+    password_confirmation: "",
     role: "",
     department: "",
   });
+  const invitePasswordRules = getPasswordRequirements(formData.password, formData.password_confirmation || "");
   const [editingUser, setEditingUser] = useState(null);
   const [editFormData, setEditFormData] = useState({
     first_name: "",
@@ -13958,6 +14485,7 @@ function UsersPage() {
   });
   const [editSaving, setEditSaving] = useState(false);
   const [showEditPassword, setShowEditPassword] = useState(false);
+  const [showEditPasswordConfirm, setShowEditPasswordConfirm] = useState(false);
 
   useEffect(() => {
     loadUsers();
@@ -13984,6 +14512,13 @@ function UsersPage() {
     setError(null);
     setSuccess(null);
     setTemporaryPassword(null);
+
+    const passwordResult = validateStrongPassword(formData.password, formData.password_confirmation);
+    if (!passwordResult.valid) {
+      setError(passwordResult.message);
+      return;
+    }
+
     setSaving(true);
     try {
       const response = await pcmsApi.createUser(formData);
@@ -13997,6 +14532,7 @@ function UsersPage() {
         last_name: "",
         email: "",
         password: "",
+        password_confirmation: "",
         role: "",
         department: "",
       });
@@ -14030,6 +14566,8 @@ function UsersPage() {
     }
   };
 
+  const editPasswordRules = getPasswordRequirements(editFormData.password, editFormData.password_confirmation || "");
+
   const openEditDialog = (user) => {
     setError(null);
     setSuccess(null);
@@ -14041,6 +14579,7 @@ function UsersPage() {
       last_name: user.last_name || "",
       email: user.email || "",
       password: "",
+      password_confirmation: "",
       role: user.role || "",
       department: user.department || "",
     });
@@ -14049,11 +14588,18 @@ function UsersPage() {
   const handleEditSubmit = async (e) => {
     e.preventDefault();
     setError(null);
+
+    if (editFormData.password && !validateStrongPassword(editFormData.password, editFormData.password_confirmation).valid) {
+      setError(validateStrongPassword(editFormData.password, editFormData.password_confirmation).message);
+      return;
+    }
+
     setEditSaving(true);
     try {
       const payload = { ...editFormData };
       if (!payload.password || !payload.password.trim()) {
         delete payload.password;
+        delete payload.password_confirmation;
       }
 
       await pcmsApi.updateUser(editingUser.id, payload);
@@ -14220,6 +14766,38 @@ function UsersPage() {
                       )}
                     </button>
                   </span>
+                  <div className="password-checklist" style={{ marginTop: 8 }}>
+                    {invitePasswordRules.map((rule) => (
+                      <div key={rule.id} style={{ display: 'flex', alignItems: 'center', gap: 8, color: rule.valid ? '#166534' : '#475569' }}>
+                        <span aria-hidden="true" style={{ fontWeight: 700 }}>{rule.valid ? '✓' : '•'}</span>
+                        <span>{rule.label}</span>
+                      </div>
+                    ))}
+                  </div>
+                </label>
+                <label className="full-width">
+                  Confirm Password
+                  <span className="password-input-wrapper">
+                    <input
+                      type={showInvitePasswordConfirm ? "text" : "password"}
+                      value={formData.password_confirmation}
+                      onChange={(e) =>
+                        setFormData({ ...formData, password_confirmation: e.target.value })
+                      }
+                      minLength={8}
+                      required
+                      autoComplete="new-password"
+                      placeholder="Re-enter password"
+                    />
+                    <button
+                      className="password-toggle"
+                      type="button"
+                      onClick={() => setShowInvitePasswordConfirm((value) => !value)}
+                      aria-label={showInvitePasswordConfirm ? "Hide confirmation password" : "Show confirmation password"}
+                    >
+                      {showInvitePasswordConfirm ? <EyeOff size={18} /> : <Eye size={18} />}
+                    </button>
+                  </span>
                 </label>
               </div>
               <div className="modal-actions">
@@ -14377,6 +14955,40 @@ function UsersPage() {
                       ) : (
                         <Eye size={18} />
                       )}
+                    </button>
+                  </span>
+                  <div className="password-checklist" style={{ marginTop: 8 }}>
+                    {editPasswordRules.map((rule) => (
+                      <div key={rule.id} style={{ display: 'flex', alignItems: 'center', gap: 8, color: rule.valid ? '#166534' : '#475569' }}>
+                        <span aria-hidden="true" style={{ fontWeight: 700 }}>{rule.valid ? '✓' : '•'}</span>
+                        <span>{rule.label}</span>
+                      </div>
+                    ))}
+                  </div>
+                </label>
+                <label className="full-width">
+                  Confirm New Password
+                  <span className="password-input-wrapper">
+                    <input
+                      type={showEditPasswordConfirm ? "text" : "password"}
+                      value={editFormData.password_confirmation}
+                      onChange={(e) =>
+                        setEditFormData({
+                          ...editFormData,
+                          password_confirmation: e.target.value,
+                        })
+                      }
+                      minLength={8}
+                      autoComplete="new-password"
+                      placeholder="Re-enter new password"
+                    />
+                    <button
+                      className="password-toggle"
+                      type="button"
+                      onClick={() => setShowEditPasswordConfirm((value) => !value)}
+                      aria-label={showEditPasswordConfirm ? "Hide password confirmation" : "Show password confirmation"}
+                    >
+                      {showEditPasswordConfirm ? <EyeOff size={18} /> : <Eye size={18} />}
                     </button>
                   </span>
                 </label>
@@ -14542,11 +15154,8 @@ function ActivityPage() {
       { label: "Action", value: (log) => log.action },
       { label: "Description", value: (log) => log.text },
       { label: "User", value: (log) => log.user },
-      { label: "Email", value: (log) => log.email },
       { label: "IP", value: (log) => log.ip },
-      { label: "User Agent", value: (log) => log.user_agent },
       { label: "Status", value: (log) => log.status },
-      { label: "Details", value: (log) => JSON.stringify(log.payload || {}) },
     ]);
   };
 
@@ -14568,7 +15177,7 @@ function ActivityPage() {
           ) : (
             <table className="activity-log-table">
               <thead>
-                <tr><th>Time</th><th>Action</th><th>Description</th><th>User</th><th>Email</th><th>IP Address</th><th>User Agent</th><th>Status</th><th>Details</th></tr>
+                <tr><th>Time</th><th>Action</th><th>Description</th><th>User</th><th>IP Address</th><th>Status</th></tr>
               </thead>
               <tbody>
                 {logs.map((log) => (
@@ -14577,11 +15186,8 @@ function ActivityPage() {
                     <td><span className="status info">{log.action || "activity"}</span></td>
                     <td>{log.text || "-"}</td>
                     <td>{log.user || "-"}</td>
-                    <td>{log.email || "-"}</td>
                     <td>{log.ip || "-"}</td>
-                    <td className="activity-user-agent">{log.user_agent || "-"}</td>
                     <td>{log.status || "-"}</td>
-                    <td><pre className="activity-log-details">{JSON.stringify(log.payload || {}, null, 2)}</pre></td>
                   </tr>
                 ))}
               </tbody>
@@ -14637,6 +15243,7 @@ function SettingsPage() {
 }
 
 function ModulePage({
+  className,
   title,
   subtitle,
   primary,
@@ -14649,7 +15256,7 @@ function ModulePage({
   actions,
 }) {
   return (
-    <>
+    <div className={className || undefined}>
       <div className="page-heading">
         <div>
           <span className="eyebrow">
@@ -14661,13 +15268,15 @@ function ModulePage({
         <div className="heading-actions">
           {actions || (
             <>
-              <button
-                className="primary-button"
-                type="button"
-                onClick={onPrimary}
-              >
-                <Icon size={16} /> {primary}
-              </button>
+              {primary && (
+                <button
+                  className="primary-button"
+                  type="button"
+                  onClick={onPrimary}
+                >
+                  <Icon size={16} /> {primary}
+                </button>
+              )}
               {secondaryActions}
             </>
           )}
@@ -14688,7 +15297,7 @@ function ModulePage({
         </section>
       )}
       {children}
-    </>
+    </div>
   );
 }
 

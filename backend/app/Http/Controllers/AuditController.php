@@ -37,7 +37,7 @@ class AuditController extends Controller
         $validated = $request->validate([
             'area' => ['required', 'string', 'max:180'],
             'department_id' => ['nullable', 'exists:departments,id'],
-            'scheduled_at' => ['required', 'date'],
+            'scheduled_at' => ['required', 'date', 'after_or_equal:today'],
         ]);
 
         $audit = PhysicalAudit::create([
@@ -83,7 +83,7 @@ class AuditController extends Controller
         $validated = $request->validate([
             'area' => ['sometimes', 'string', 'max:180'],
             'department_id' => ['sometimes', 'nullable', 'exists:departments,id'],
-            'scheduled_at' => ['sometimes', 'date'],
+            'scheduled_at' => ['sometimes', 'date', 'after_or_equal:today'],
         ]);
 
         $audit->update($validated);
@@ -125,6 +125,17 @@ class AuditController extends Controller
         $asset = Asset::findOrFail($validated['asset_id']);
         $foundDepartmentId = $validated['found_department_id'];
         $auditDepartmentId = $audit->department_id ?? $asset->department_id;
+
+        $existingScan = AuditScan::query()
+            ->where('audit_id', $audit->id)
+            ->where('asset_id', $asset->id)
+            ->first();
+        if ($existingScan) {
+            return response()->json([
+                'message' => 'This asset has already been scanned in this audit.',
+                'scan' => $existingScan->load('asset', 'foundDepartment'),
+            ], 409);
+        }
 
         // Determine result
         $result = 'verified';
@@ -203,6 +214,8 @@ class AuditController extends Controller
                             'reported_by' => $request->user()?->id,
                             'department_id' => $audit->department_id,
                             'severity' => 'critical',
+                            'incident_type' => 'lost',
+                            'incident_date' => now()->toDateString(),
                             'description' => "Physical audit {$audit->audit_number} could not verify this asset.",
                             'status' => 'submitted',
                         ]);

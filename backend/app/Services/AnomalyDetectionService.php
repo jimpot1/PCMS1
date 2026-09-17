@@ -131,8 +131,18 @@ class AnomalyDetectionService
             return;
         }
 
-        // Insert anomaly alert for untracked transfer
-        DB::table('anomaly_alerts')->insert([
+        $existing = DB::table('anomaly_alerts')
+            ->where('source_type', 'untracked_transfer')
+            ->where('source_id', (string) $assetId)
+            ->where('found_department_id', $physicallyFoundDepartmentId)
+            ->where('status', '!=', 'resolved')
+            ->first();
+
+        if ($existing) {
+            return;
+        }
+
+        $anomalyId = DB::table('anomaly_alerts')->insertGetId([
             'source_type' => 'untracked_transfer',
             'source_id' => (string)$assetId,
             'found_department_id' => $physicallyFoundDepartmentId,
@@ -144,6 +154,45 @@ class AnomalyDetectionService
             'created_at' => now(),
             'updated_at' => now(),
         ]);
+
+        DB::table('activity_logs')->insert([
+            'action' => 'untracked_transfer_anomaly_detected',
+            'payload' => json_encode([
+                'anomaly_id' => $anomalyId,
+                'asset_id' => $assetId,
+                'found_department_id' => $physicallyFoundDepartmentId,
+            ]),
+            'status' => 'active',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        if (Schema::hasTable('transfer_notifications')) {
+            $recipients = User::query()
+                ->whereIn('role', ['OIC', 'PPMO Staff', 'Property Custodian', 'System Administrator'])
+                ->where(function ($query) {
+                    $query->whereNull('status')->orWhere('status', 'active');
+                })
+                ->get(['id', 'role']);
+
+            foreach ($recipients as $recipient) {
+                $notification = [
+                    'transfer_id' => null,
+                    'anomaly_alert_id' => $anomalyId,
+                    'recipient_id' => $recipient->id,
+                    'recipient_role' => $recipient->role,
+                    'type' => 'anomaly',
+                    'title' => 'Untracked Transfer Detected',
+                    'message' => "{$asset->name} was found in another department.",
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ];
+                if (Schema::hasColumn('transfer_notifications', 'navigation_target')) {
+                    $notification['navigation_target'] = "inventory-monitoring:{$anomalyId}";
+                }
+                DB::table('transfer_notifications')->insertOrIgnore($notification);
+            }
+        }
     }
 
     /**

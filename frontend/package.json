@@ -19,5 +19,8 @@
     "react-router-dom": "^7.18.3",
     "recharts": "^2.15.0",
     "vite": "^7.0.0"
+  },
+  "devDependencies": {
+    "playwright": "^1.63.0"
   }
 }

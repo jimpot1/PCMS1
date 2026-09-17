@@ -42,7 +42,7 @@ class GatePassController extends Controller
         $validated = $request->validate([
             'asset_id' => ['required', 'exists:assets,id'],
             'purpose' => ['required', 'string'],
-            'valid_until' => ['required', 'date'],
+            'valid_until' => ['required', 'date', 'after_or_equal:today'],
             'destination' => ['nullable', 'string', 'max:180'],
             'vehicle' => ['nullable', 'string', 'max:120'],
             'driver' => ['nullable', 'string', 'max:120'],
@@ -106,7 +106,7 @@ class GatePassController extends Controller
             'department_id' => ['nullable', 'exists:departments,id'],
             'asset_id' => ['required', 'exists:assets,id'],
             'purpose' => ['required', 'string'],
-            'valid_until' => ['required', 'date'],
+            'valid_until' => ['required', 'date', 'after_or_equal:today'],
             'destination' => ['nullable', 'string', 'max:180'],
             'vehicle' => ['nullable', 'string', 'max:120'],
             'driver' => ['nullable', 'string', 'max:120'],
@@ -192,7 +192,7 @@ class GatePassController extends Controller
     {
         $validated = $request->validate([
             'purpose' => ['sometimes', 'string'],
-            'valid_until' => ['sometimes', 'date'],
+            'valid_until' => ['sometimes', 'date', 'after_or_equal:today'],
         ]);
 
         $gatePass->update($validated);

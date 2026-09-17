@@ -24,6 +24,10 @@ function normalizeLineItem(line) {
     unit: line?.unit || '',
     unit_price: String(unitPrice),
     amount: String(amount),
+    type: line?.type || line?.source_type || 'new',
+    source_type: line?.source_type || line?.type || 'new',
+    source_id: line?.source_id || '',
+    source_ref: line?.source_ref || null,
   };
 }
 
@@ -112,6 +116,10 @@ export default function RequestEditModal({ request, departments, onClose, onSave
             unitPrice: unitPrice,
             amount,
             estimated_cost: amount,
+            type: line.type,
+            source_type: line.source_type,
+            source_id: line.source_id || null,
+            source_ref: line.source_ref || null,
           };
         });
 

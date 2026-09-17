@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { ArrowLeft, Eye, EyeOff, LockKeyhole } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { getStoredUser } from '../services/auth.js';
 import { ROLES, getRoleDisplayName } from '../services/roles.js';
+import { getPasswordRequirements, validateStrongPassword } from '../utils/passwordRules.js';
 
 function resolveDashboardPath(role) {
   switch (role) {
@@ -35,6 +36,9 @@ export default function AccountSettings() {
   const [message, setMessage] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
 
+  const passwordRules = useMemo(() => getPasswordRequirements(newPassword, confirmPassword), [newPassword, confirmPassword]);
+  const passwordValidation = useMemo(() => validateStrongPassword(newPassword, confirmPassword), [newPassword, confirmPassword]);
+
   const name = [user?.first_name, user?.last_name].filter(Boolean).join(' ') || user?.full_name || user?.email || 'User';
   const roleName = getRoleDisplayName(user?.role);
   const fallback = resolveDashboardPath(user?.role);
@@ -51,9 +55,12 @@ export default function AccountSettings() {
     if (!currentPassword || !newPassword || !confirmPassword) {
       return { valid: false, error: 'Please fill in all password fields.' };
     }
-    if (newPassword !== confirmPassword) {
-      return { valid: false, error: 'New password and confirmation must match.' };
+
+    const result = validateStrongPassword(newPassword, confirmPassword);
+    if (!result.valid) {
+      return { valid: false, error: result.message };
     }
+
     return { valid: true };
   };
 
@@ -72,7 +79,11 @@ export default function AccountSettings() {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({ current_password: currentPassword, new_password: newPassword })
+        body: JSON.stringify({
+          current_password: currentPassword,
+          new_password: newPassword,
+          new_password_confirmation: confirmPassword,
+        })
       });
       const payload = await resp.json().catch(() => ({}));
       if (!resp.ok) throw new Error(payload.message || 'Failed to change password');
@@ -204,8 +215,13 @@ export default function AccountSettings() {
             </div>
 
             <div className="field-row" style={{ gridColumn: '1 / -1' }}>
-              <div>
-                <small>Use a strong password with at least eight characters, including numbers and symbols.</small>
+              <div className="password-requirements" style={{ display: 'grid', gap: 8, padding: 12, background: '#f8fafc', borderRadius: 10, border: '1px solid #e2e8f0' }}>
+                {passwordRules.map((rule) => (
+                  <div key={rule.id} style={{ display: 'flex', alignItems: 'center', gap: 8, color: rule.valid ? '#166534' : '#475569' }}>
+                    <span aria-hidden="true" style={{ fontWeight: 700 }}>{rule.valid ? '✓' : '•'}</span>
+                    <span>{rule.label}</span>
+                  </div>
+                ))}
               </div>
             </div>
 

@@ -5,12 +5,14 @@ namespace App\Http\Controllers;
 use App\Models\Asset;
 use App\Models\AssetAssignment;
 use App\Models\AssetUnit;
+use App\Models\PurchaseRequest;
 use App\Models\User;
 use App\Services\AssetUnitService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class AssetAssignmentController extends Controller
@@ -129,6 +131,10 @@ class AssetAssignmentController extends Controller
         $validated = $request->validate([
             'asset_id' => ['required', 'exists:assets,id'],
             'asset_unit_id' => ['nullable', 'integer', 'exists:asset_units,id'],
+            'asset_unit_ids' => ['nullable', 'array'],
+            'asset_unit_ids.*' => ['integer', 'exists:asset_units,id'],
+            'physical_unit_ids' => ['nullable', 'array'],
+            'physical_unit_ids.*' => ['integer', 'exists:asset_units,id'],
             'assigned_to' => ['bail', 'required', 'uuid', 'exists:users,id'],
             'assigned_by' => ['bail', 'nullable', 'uuid', 'exists:users,id'],
             'assignment_type' => ['nullable', 'in:permanent,temporary,borrowed'],
@@ -142,12 +148,19 @@ class AssetAssignmentController extends Controller
             'custodian_signature' => ['nullable', 'string'],
             'accept_now' => ['nullable', 'boolean'],
             'remarks' => ['nullable', 'string'],
+            'purchase_request_id' => ['nullable', 'integer', 'exists:purchase_requests,id'],
         ]);
 
-        $asset = Asset::with('category', 'department')->whereKey($validated['asset_id'])->lockForUpdate()->firstOrFail();
+        $asset = Asset::with('category', 'department')->whereKey($validated['asset_id'])->firstOrFail();
         $employee = User::findOrFail($validated['assigned_to']);
-        $quantity = (int) ($validated['quantity'] ?? 1);
-        $availableQuantity = $this->availableQuantity($asset);
+        $requestedQuantity = (int) ($validated['quantity'] ?? 1);
+        $submittedUnitIds = array_key_exists('physical_unit_ids', $validated)
+            ? $validated['physical_unit_ids']
+            : ($validated['asset_unit_ids'] ?? []);
+        if (count(array_unique($submittedUnitIds)) !== count($submittedUnitIds)) {
+            throw ValidationException::withMessages(['physical_unit_ids' => 'Physical unit IDs must be unique.']);
+        }
+        $providedUnitIds = array_values(array_map('intval', $submittedUnitIds));
 
         if (($employee->status ?? 'active') !== 'active') {
             return response()->json(['message' => 'Selected employee is not active.'], 422);
@@ -161,79 +174,216 @@ class AssetAssignmentController extends Controller
             return response()->json(['message' => 'Damaged assets must be repaired before assignment.'], 422);
         }
 
-        if ($availableQuantity < $quantity) {
-            return response()->json(['message' => "Only {$availableQuantity} unit(s) are available for assignment."], 422);
-        }
-
-        if (
-            AssetAssignment::where('asset_id', $asset->id)
-                ->where('assigned_to', $employee->id)
-                ->whereIn('status', ['active', 'pending_acceptance'])
-                ->exists()
-        ) {
-            return response()->json(['message' => 'This asset is already assigned to the selected employee.'], 422);
-        }
-
         $photoPath = $request->hasFile('photo') ? $request->file('photo')->store('assignment-photos', 'public') : null;
         $status = $request->boolean('accept_now') || ! empty($validated['employee_signature']) ? 'active' : 'pending_acceptance';
 
-        $assignment = DB::transaction(function () use ($validated, $request, $asset, $employee, $quantity, $photoPath, $status) {
-            $unit = null;
-            if ($quantity === 1) {
-                $unit = app(AssetUnitService::class)->allocate($asset, $validated['asset_unit_id'] ?? null);
-                if (! $unit && ! empty($validated['asset_unit_id'])) {
-                    throw new \RuntimeException('No identifiable available unit exists for this asset.');
+        $assignment = DB::transaction(function () use ($validated, $request, $asset, $employee, $requestedQuantity, $providedUnitIds, $photoPath, $status) {
+            $lockedAsset = Asset::whereKey($asset->id)->lockForUpdate()->firstOrFail();
+            $purchaseRequest = null;
+            if (! empty($validated['purchase_request_id'])) {
+                $purchaseRequest = PurchaseRequest::query()->lockForUpdate()->findOrFail($validated['purchase_request_id']);
+                $requestedLine = collect($purchaseRequest->line_items ?? [])
+                    ->first(fn ($lineItem) => ($lineItem['source_type'] ?? $lineItem['type'] ?? null) === 'asset'
+                        && (string) ($lineItem['source_id'] ?? '') === (string) $lockedAsset->id);
+
+                if ($purchaseRequest->status !== 'approved' || $purchaseRequest->workflow_destination !== 'asset_assignment' || ! $requestedLine) {
+                    throw ValidationException::withMessages([
+                        'purchase_request_id' => 'The selected request is not an approved request for this asset.',
+                    ]);
+                }
+
+                $approvedQuantity = (int) ($requestedLine['approved_qty'] ?? $requestedLine['approved_quantity'] ?? $requestedLine['qty'] ?? $requestedLine['quantity'] ?? 0);
+                if ($requestedQuantity !== $approvedQuantity) {
+                    throw ValidationException::withMessages([
+                        'quantity' => "The assignment quantity must match the approved request quantity of {$approvedQuantity}.",
+                    ]);
+                }
+            }
+            $hasTrackedUnits = AssetUnit::where('asset_id', $lockedAsset->id)->exists();
+            $availableUnits = AssetUnit::where('asset_id', $lockedAsset->id)
+                ->whereIn('status', ['available'])
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get();
+
+            if ($hasTrackedUnits) {
+                if (count($providedUnitIds) !== $requestedQuantity) {
+                    throw ValidationException::withMessages([
+                        'physical_unit_ids' => "Select exactly {$requestedQuantity} physical unit(s) for this assignment.",
+                    ]);
+                }
+                $selectedUnitIds = $this->resolveSelectedUnitIds($lockedAsset, $requestedQuantity, $providedUnitIds, $availableUnits);
+                $resolvedQuantity = count($selectedUnitIds);
+
+                if ($resolvedQuantity < $requestedQuantity) {
+                    $availableCount = count($availableUnits);
+                    throw ValidationException::withMessages([
+                        'asset' => "Only {$availableCount} of {$requestedQuantity} requested assets are currently available.",
+                    ]);
+                }
+            } else {
+                if ($requestedQuantity > 1) {
+                    throw ValidationException::withMessages([
+                        'asset' => 'This asset has no individually tracked physical units for multi-unit assignment.',
+                    ]);
+                }
+                $assignedQuantity = AssetAssignment::where('asset_id', $lockedAsset->id)
+                    ->whereIn('status', ['active', 'pending_acceptance'])
+                    ->sum('quantity');
+                $availableQuantity = max(0, (int) ($lockedAsset->quantity ?? 1) - (int) $assignedQuantity);
+                if ($availableQuantity < $requestedQuantity) {
+                    throw ValidationException::withMessages([
+                        'asset' => "Only {$availableQuantity} of {$requestedQuantity} requested assets are currently available.",
+                    ]);
+                }
+                $selectedUnitIds = [];
+                $resolvedQuantity = $requestedQuantity;
+            }
+
+            if ($lockedAsset->quantity !== null && $resolvedQuantity > (int) $lockedAsset->quantity) {
+                throw ValidationException::withMessages([
+                    'asset' => 'Selected asset units exceed the available quantity for this asset.',
+                ]);
+            }
+
+            if (
+                AssetAssignment::where('asset_id', $lockedAsset->id)
+                    ->where('assigned_to', $employee->id)
+                    ->whereIn('status', ['active', 'pending_acceptance'])
+                    ->exists()
+            ) {
+                throw ValidationException::withMessages([
+                    'employee' => 'This asset is already assigned to the selected employee.',
+                ]);
+            }
+
+            $selectedUnits = $hasTrackedUnits
+                ? AssetUnit::whereIn('id', $selectedUnitIds)
+                    ->where('asset_id', $lockedAsset->id)
+                    ->lockForUpdate()
+                    ->get()
+                : collect();
+
+            if ($hasTrackedUnits && $selectedUnits->count() !== count($selectedUnitIds)) {
+                throw ValidationException::withMessages([
+                    'asset' => 'Selected assets are no longer available for assignment.',
+                ]);
+            }
+
+            foreach ($selectedUnits as $unit) {
+                if ($unit->status !== 'available') {
+                    throw ValidationException::withMessages([
+                        'asset' => 'Selected assets are no longer available for assignment.',
+                    ]);
                 }
             }
 
-            $assignment = AssetAssignment::create([
-                'asset_id' => $asset->id,
-                'asset_unit_id' => $unit?->id,
-                'assigned_to' => $employee->id,
-                'assigned_by' => $validated['assigned_by'] ?? optional($request->user())->id ?? null,
-                'department_id' => $asset->department_id,
-                'assignment_type' => $validated['assignment_type'] ?? 'permanent',
-                'quantity' => $quantity,
-                'purpose' => $validated['purpose'] ?? null,
-                'condition_before' => $validated['condition_before'] ?? $asset->condition,
-                'photo_path' => $photoPath,
-                'assigned_at' => $validated['assigned_at'] ?? now(),
-                'due_date' => $validated['due_date'] ?? null,
-                'accepted_at' => $status === 'active' ? now() : null,
-                'employee_signature' => $validated['employee_signature'] ?? null,
-                'custodian_signature' => $validated['custodian_signature'] ?? null,
-                'status' => $status,
-                'approval_status' => 'not_required',
-                'notes' => $validated['remarks'] ?? null,
-            ]);
+            $assignmentUnits = $hasTrackedUnits ? $selectedUnits : collect([null]);
+            $assignments = collect();
+            foreach ($assignmentUnits as $selectedUnit) {
+                $unit = null;
+                if ($selectedUnit) {
+                    $unit = app(AssetUnitService::class)->allocate($lockedAsset, $selectedUnit->id);
+                    if (! $unit) {
+                        throw new \RuntimeException('One or more selected physical units are no longer available.');
+                    }
+                }
 
-            $this->syncAssetInventory($asset->fresh(), $status === 'active' ? $assignment : null);
-            if ($unit && $status === 'active') {
-                $unit->update([
-                    'status' => 'assigned',
-                    'department_id' => $asset->department_id,
-                    'custodian_id' => $employee->id,
+                $assignment = AssetAssignment::create([
+                    'asset_id' => $lockedAsset->id,
+                    'asset_unit_id' => $unit?->id,
+                    'purchase_request_id' => $purchaseRequest?->id,
+                    'assigned_to' => $employee->id,
+                    'assigned_by' => $validated['assigned_by'] ?? optional($request->user())->id ?? null,
+                    'department_id' => $lockedAsset->department_id,
+                    'assignment_type' => $validated['assignment_type'] ?? 'permanent',
+                    'quantity' => 1,
+                    'purpose' => $validated['purpose'] ?? null,
+                    'condition_before' => $selectedUnit?->condition ?? ($validated['condition_before'] ?? $lockedAsset->condition),
+                    'photo_path' => $photoPath,
+                    'assigned_at' => $validated['assigned_at'] ?? now(),
+                    'due_date' => $validated['due_date'] ?? null,
+                    'accepted_at' => $status === 'active' ? now() : null,
+                    'employee_signature' => $validated['employee_signature'] ?? null,
+                    'custodian_signature' => $validated['custodian_signature'] ?? null,
+                    'status' => $status,
+                    'approval_status' => 'not_required',
+                    'notes' => $validated['remarks'] ?? null,
                 ]);
-                app(AssetUnitService::class)->recordMovement($unit, 'assignment', [
-                    'to_department_id' => $asset->department_id,
-                    'to_custodian_id' => $employee->id,
-                    'reference_type' => 'asset_assignment',
-                    'reference_id' => $assignment->id,
+
+                if ($selectedUnit) {
+                    $selectedUnit->update([
+                        'status' => 'assigned',
+                        'department_id' => $lockedAsset->department_id,
+                        'custodian_id' => $employee->id,
+                        'location' => $lockedAsset->location,
+                    ]);
+                    app(AssetUnitService::class)->recordMovement($selectedUnit, 'assignment', [
+                        'to_department_id' => $lockedAsset->department_id,
+                        'to_custodian_id' => $employee->id,
+                        'reference_type' => 'asset_assignment',
+                        'reference_id' => $assignment->id,
+                    ]);
+                }
+
+                $this->syncAssetInventory($lockedAsset->fresh(), $status === 'active' ? $assignment : null);
+                $this->createAccountabilityForm($assignment, $lockedAsset, $employee);
+                $this->recordHistory($assignment, 'created', $request, [
+                    'quantity' => 1,
+                    'status' => $status,
+                    'selected_units' => $selectedUnit ? [$selectedUnit->id] : [],
+                    'available_before' => $this->availableQuantity($lockedAsset),
                 ]);
+                $this->logActivity($status === 'active' ? 'asset_assigned' : 'assignment_pending_acceptance', $assignment, $request);
+                $this->notifyAssignment($assignment, $status === 'active' ? 'assignment_approved' : 'new_assignment', $request);
+                $assignments->push($assignment);
             }
-            $this->createAccountabilityForm($assignment, $asset, $employee);
-            $this->recordHistory($assignment, 'created', $request, [
-                'quantity' => $quantity,
-                'status' => $status,
-                'available_before' => $this->availableQuantity($asset),
-            ]);
-            $this->logActivity($status === 'active' ? 'asset_assigned' : 'assignment_pending_acceptance', $assignment, $request);
-            $this->notifyAssignment($assignment, $status === 'active' ? 'assignment_approved' : 'new_assignment', $request);
+            $assignment = $assignments->last();
 
-            return $assignment;
+            if ($purchaseRequest) {
+                $assignmentIds = $assignments->pluck('id')->values()->all();
+                $purchaseRequest->update([
+                    'status' => 'released',
+                    'current_stage' => 'released',
+                    'released_by' => $request->user()?->id,
+                    'released_at' => now(),
+                    'timeline' => array_merge($purchaseRequest->timeline ?? [], [[
+                        'stage' => 'Asset Assignment',
+                        'status' => 'released',
+                        'performed_by' => $request->user()?->id,
+                        'assignment_id' => $assignmentIds[0] ?? null,
+                        'assignment_ids' => $assignmentIds,
+                        'timestamp' => now()->toIso8601String(),
+                    ]]),
+                ]);
+
+                if (Schema::hasTable('transfer_notifications') && $purchaseRequest->requested_by) {
+                    DB::table('transfer_notifications')->insert([
+                        'transfer_id' => null,
+                        'recipient_id' => $purchaseRequest->requested_by,
+                        'recipient_role' => 'Requester',
+                        'type' => 'asset_assignment_completed',
+                        'title' => 'Asset Assignment Completed',
+                        'message' => "Your asset request {$purchaseRequest->request_number} has been assigned.",
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ]);
+                }
+            }
+
+            return [
+                'primary' => $assignment,
+                'assignments' => $assignments->values()->all(),
+            ];
         });
 
-        return response()->json($assignment->fresh()->load('asset', 'assetUnit', 'assignedTo', 'assignedBy'), 201);
+        $primary = $assignment['primary']->fresh()->load('asset', 'assetUnit', 'assignedTo', 'assignedBy');
+        $primary->setAttribute('assignments', collect($assignment['assignments'])
+            ->map(fn (AssetAssignment $record) => $record->fresh()->load('asset', 'assetUnit', 'assignedTo', 'assignedBy'))
+            ->values()
+            ->all());
+
+        return response()->json($primary, 201);
     }
 
     public function show($id): JsonResponse
@@ -406,16 +556,15 @@ class AssetAssignmentController extends Controller
                 if ($unit) {
                     $fromDepartmentId = $unit->department_id;
                     $unit->update([
-                        'status' => in_array($conditionAfter, ['needs_repair', 'damaged'], true) ? ($conditionAfter === 'damaged' ? 'damaged' : 'maintenance') : 'available',
+                        'status' => 'available',
                         'custodian_id' => null,
-                        'condition' => $conditionAfter,
                     ]);
                     app(AssetUnitService::class)->recordMovement($unit, 'return', [
                         'from_department_id' => $fromDepartmentId,
                         'from_custodian_id' => $record->assigned_to,
                         'reference_type' => 'asset_assignment',
                         'reference_id' => $record->id,
-                        'remarks' => $validated['notes'] ?? null,
+                        'remarks' => $record->notes,
                     ]);
                 }
             }
@@ -853,7 +1002,7 @@ class AssetAssignmentController extends Controller
 
         $unitQuery = AssetUnit::where('asset_id', $asset->id);
         if ($unitQuery->exists()) {
-            return $unitQuery->where('status', 'available')->count();
+            return $unitQuery->whereIn('status', ['available'])->count();
         }
 
         $assigned = AssetAssignment::where('asset_id', $asset->id)
@@ -861,6 +1010,34 @@ class AssetAssignmentController extends Controller
             ->sum('quantity');
 
         return max(0, (int) ($asset->quantity ?? 1) - (int) $assigned);
+    }
+
+    protected function resolveSelectedUnitIds(Asset $asset, int $requestedQuantity, array $providedUnitIds, $availableUnits): array
+    {
+        if ($availableUnits->isEmpty()) {
+            return [];
+        }
+
+        $availableUnitIds = $availableUnits->pluck('id')->all();
+        if (! empty($providedUnitIds)) {
+            $providedUnitIds = array_values(array_intersect($availableUnitIds, $providedUnitIds));
+            $unitIds = array_values(array_unique($providedUnitIds));
+            if (count($unitIds) < $requestedQuantity) {
+                return $unitIds;
+            }
+
+            return array_slice($unitIds, 0, $requestedQuantity);
+        }
+
+        if ($requestedQuantity <= 0) {
+            return [];
+        }
+
+        if (count($availableUnitIds) < $requestedQuantity) {
+            return $availableUnitIds;
+        }
+
+        return array_slice($availableUnitIds, 0, $requestedQuantity);
     }
 
     protected function syncAssetInventory(?Asset $asset, ?AssetAssignment $currentAssignment = null): void

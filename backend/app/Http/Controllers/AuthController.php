@@ -10,6 +10,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\Rules\Password;
 
 class AuthController extends Controller
 {
@@ -139,9 +140,11 @@ class AuthController extends Controller
             session()->regenerate();
         }
 
+        $authenticatedUser = Auth::guard('web')->user();
+
         return response()->json([
             'message' => 'Verification successful.',
-            'user' => Auth::guard('web')->user(),
+            'user' => $authenticatedUser,
         ]);
     }
 
@@ -188,14 +191,32 @@ class AuthController extends Controller
 
     public function me(Request $request)
     {
-        return response()->json($request->user());
+        $guardUser = Auth::guard('web')->user();
+
+        if (! $guardUser) {
+            return response()->json([
+                'authenticated' => false,
+                'user' => null,
+            ]);
+        }
+
+        return response()->json([
+            'authenticated' => true,
+            'user' => $guardUser,
+        ]);
     }
 
     public function changePassword(Request $request)
     {
         $request->validate([
-            'current_password' => 'required|string',
-            'new_password' => 'required|string|min:8|confirmed',
+            'current_password' => ['required', 'string'],
+            'new_password' => ['required', 'string', 'confirmed', Password::min(8)->mixedCase()->numbers()->symbols()],
+            'new_password_confirmation' => ['required', 'string'],
+        ], [
+            'new_password.required' => 'New password is required.',
+            'new_password.confirmed' => 'Password confirmation does not match.',
+            'new_password.min' => 'Password must be at least 8 characters long.',
+            'new_password_confirmation.required' => 'Password confirmation is required.',
         ]);
 
         $user = $request->user();

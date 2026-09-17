@@ -322,6 +322,13 @@ class TransferController extends Controller
         $photoAfter = $request->hasFile('photo_after') ? $request->file('photo_after')->store('transfer-photos', 'public') : null;
 
         DB::transaction(function () use ($transfer, $asset, $request, $validated, $actualQuantity, $photoBefore, $photoAfter, $destinationCustodianId) {
+            $transfer = AssetTransfer::query()->lockForUpdate()->findOrFail($transfer->id);
+            if ($transfer->status !== 'ready_for_transfer') {
+                throw new \RuntimeException('This transfer has already been executed or is no longer ready.');
+            }
+
+            $asset = Asset::query()->lockForUpdate()->findOrFail($transfer->asset_id);
+
             $previous = [
                 'department_id' => $asset->department_id,
                 'custodian_id' => $asset->custodian_id,
@@ -389,7 +396,7 @@ class TransferController extends Controller
                 ->where('asset_id', $asset->id)
                 ->whereIn('status', ['active', 'pending_acceptance'])
                 ->update([
-                    'assigned_to' => $transfer->to_custodian_id,
+                    'assigned_to' => $destinationCustodianId,
                     'department_id' => $transfer->to_department_id,
                     'updated_at' => now(),
                 ]);

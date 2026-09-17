@@ -92,6 +92,8 @@ export default function RequesterRequestForm({ currentUser, onSubmitted, summary
       .catch((err) => setError(err.message || 'Unable to load the original request for procurement.'));
   }, [procurementForId]);
 
+  const todayIso = new Date().toISOString().slice(0, 10);
+
   const updateField = (field, value) => setForm((current) => ({ ...current, [field]: value }));
   const addLineItem = () => setLineItems((current) => [...current, emptyRequestLine()]);
   const removeLineItem = (index) => setLineItems((current) => current.filter((_, itemIndex) => itemIndex !== index));
@@ -320,7 +322,7 @@ export default function RequesterRequestForm({ currentUser, onSubmitted, summary
                 </div>
                 <div className="requester-field-group">
                   <label>Expected Return Date</label>
-                  <input type="date" value={form.valid_until} onChange={(event) => updateField('valid_until', event.target.value)} required />
+                  <input type="date" min={todayIso} value={form.valid_until} onChange={(event) => updateField('valid_until', event.target.value)} required />
                 </div>
               </>
             ) : (
@@ -345,7 +347,7 @@ export default function RequesterRequestForm({ currentUser, onSubmitted, summary
                 </div>
                 <div className="requester-field-group">
                   <label>Date Needed</label>
-                  <input type="date" value={form.date_needed} onChange={(event) => updateField('date_needed', event.target.value)} />
+                  <input type="date" min={todayIso} value={form.date_needed} onChange={(event) => updateField('date_needed', event.target.value)} />
                 </div>
                 <div className="requester-field-group">
                   <label>Requested By</label>

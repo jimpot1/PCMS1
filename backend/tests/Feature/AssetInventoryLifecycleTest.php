@@ -45,6 +45,342 @@ class AssetInventoryLifecycleTest extends TestCase
         $this->assertFalse(\App\Http\Controllers\SystemSettingController::bool('low_stock_auto_requisition_enabled', false));
     }
 
+    public function test_duplicate_property_number_returns_field_specific_validation_message(): void
+    {
+        $staff = $this->makeUser('PPMO Staff', 'Staff');
+        $this->actingAs($staff);
+
+        Asset::create([
+            'asset_id' => 'AST-' . Str::upper(Str::random(8)),
+            'property_number' => 'DUP-1001',
+            'name' => 'Existing Laptop',
+            'quantity' => 1,
+            'available_quantity' => 1,
+            'condition' => 'good',
+            'status' => 'available',
+            'purchase_cost' => 1500,
+            'purchase_date' => now()->toDateString(),
+        ]);
+
+        $response = $this->postJson('/api/assets', [
+            'property_number' => 'DUP-1001',
+            'name' => 'New Laptop',
+            'quantity' => 1,
+        ]);
+
+        $response->assertStatus(422)
+            ->assertJsonPath('errors.property_number.0', 'This property number already exists. Please review the existing asset record or choose a different number.');
+    }
+
+    public function test_online_supply_request_routes_to_release_queue_and_deducts_stock_once_on_release(): void
+    {
+        $requester = $this->makeUser('Requester', 'Employee');
+        $ppmoStaff = $this->makeUser('PPMO Staff', 'PPMO');
+        $this->actingAs($ppmoStaff);
+
+        $supply = \App\Models\Supply::create([
+            'name' => 'Bond Paper',
+            'sku' => 'BP-01',
+            'category' => 'Office Supplies',
+            'description' => 'A4 bond paper',
+            'stock' => 10,
+            'minimum_stock' => 2,
+            'unit_price' => 60,
+            'department_id' => null,
+        ]);
+
+        $request = new \Illuminate\Http\Request([
+            'department_id' => null,
+            'request_type' => 'request',
+            'date_needed' => now()->addDay()->toDateString(),
+            'purpose' => 'Office supply replenishment',
+            'line_items' => [[
+                'type' => 'supply',
+                'source_type' => 'supply',
+                'source_id' => $supply->id,
+                'item' => 'Bond Paper',
+                'qty' => 2,
+                'quantity' => 2,
+                'unit_price' => 60,
+            ]],
+        ]);
+        $request->setUserResolver(fn () => $requester);
+
+        $response = app(\App\Http\Controllers\PurchaseRequestController::class)->store($request);
+        $purchaseRequest = \App\Models\PurchaseRequest::query()->latest('id')->firstOrFail();
+        $data = $response->getData(true)['data'] ?? [];
+
+        $this->assertSame('supplies_inventory_release', $purchaseRequest->workflow_destination);
+        $this->assertSame('supplies_inventory_release', $data['workflow_destination'] ?? $purchaseRequest->workflow_destination);
+
+        $purchaseRequest->update(['status' => 'approved', 'current_stage' => 'ppmo_staff']);
+
+        $releaseRequest = new \Illuminate\Http\Request();
+        $releaseRequest->setUserResolver(fn () => $ppmoStaff);
+        $releaseResponse = app(\App\Http\Controllers\PurchaseRequestController::class)->release($releaseRequest, $purchaseRequest);
+        $payload = $releaseResponse->getData(true);
+
+        $this->assertSame('released', $purchaseRequest->fresh()->status);
+        $this->assertSame(8, (int) $supply->fresh()->stock);
+        $this->assertSame(2, (int) \App\Models\StockMovement::query()->where('supply_id', $supply->id)->where('movement_type', 'out')->sum('quantity'));
+        $this->assertNotEmpty($payload['data'] ?? null);
+    }
+
+    public function test_walk_in_supply_request_routes_to_release_queue_and_releases_stock_once(): void
+    {
+        $staff = $this->makeUser('PPMO Staff', 'PPMO');
+        $this->actingAs($staff);
+
+        $supply = \App\Models\Supply::create([
+            'name' => 'Stapler Pins',
+            'sku' => 'SP-01',
+            'category' => 'Office Supplies',
+            'description' => 'Stapler pins',
+            'stock' => 5,
+            'minimum_stock' => 1,
+            'unit_price' => 15,
+            'department_id' => null,
+        ]);
+
+        $request = new \Illuminate\Http\Request([
+            'has_account' => false,
+            'walk_in_requester_name' => 'Walk-in Requester',
+            'department_id' => null,
+            'request_type' => 'request',
+            'date_needed' => now()->addDay()->toDateString(),
+            'purpose' => 'Office supply issuance',
+            'line_items' => [[
+                'type' => 'supply',
+                'source_type' => 'supply',
+                'source_id' => $supply->id,
+                'item' => 'Stapler Pins',
+                'qty' => 3,
+                'quantity' => 3,
+                'unit_price' => 15,
+            ]],
+        ]);
+        $request->setUserResolver(fn () => $staff);
+
+        $response = app(\App\Http\Controllers\PurchaseRequestController::class)->storeWalkIn($request);
+        $purchaseRequest = \App\Models\PurchaseRequest::query()->latest('id')->firstOrFail();
+        $data = $response->getData(true)['data'] ?? [];
+
+        $this->assertSame('supplies_inventory_release', $purchaseRequest->workflow_destination);
+        $this->assertSame('approved', $purchaseRequest->status);
+        $this->assertSame('supplies_inventory_release', $data['workflow_destination'] ?? $purchaseRequest->workflow_destination);
+
+        $purchaseRequest->update(['status' => 'approved', 'current_stage' => 'ppmo_staff']);
+
+        $releaseRequest = new \Illuminate\Http\Request();
+        $releaseRequest->setUserResolver(fn () => $staff);
+        app(\App\Http\Controllers\PurchaseRequestController::class)->release($releaseRequest, $purchaseRequest);
+
+        $this->assertSame('released', $purchaseRequest->fresh()->status);
+        $this->assertSame(2, (int) $supply->fresh()->stock);
+        $this->assertSame(3, (int) \App\Models\StockMovement::query()->where('supply_id', $supply->id)->where('movement_type', 'out')->sum('quantity'));
+    }
+
+    public function test_online_asset_request_routes_to_assignment_queue(): void
+    {
+        $requester = $this->makeUser('Requester', 'Employee');
+        $staff = $this->makeUser('PPMO Staff', 'PPMO');
+        $this->actingAs($staff);
+
+        $asset = Asset::create([
+            'asset_id' => 'AST-' . Str::upper(Str::random(8)),
+            'property_number' => 'INV-ASSIGN-1001',
+            'name' => 'Laptop Dock',
+            'quantity' => 3,
+            'available_quantity' => 3,
+            'condition' => 'good',
+            'status' => 'available',
+            'purchase_cost' => 2500,
+            'purchase_date' => now()->toDateString(),
+        ]);
+
+        $request = new \Illuminate\Http\Request([
+            'department_id' => null,
+            'request_type' => 'request',
+            'date_needed' => now()->addDay()->toDateString(),
+            'purpose' => 'Office equipment issuance',
+            'line_items' => [[
+                'type' => 'asset',
+                'source_type' => 'asset',
+                'source_id' => $asset->id,
+                'item' => 'Laptop Dock',
+                'qty' => 2,
+                'quantity' => 2,
+                'unit_price' => 2500,
+            ]],
+        ]);
+        $request->setUserResolver(fn () => $requester);
+
+        app(\App\Http\Controllers\PurchaseRequestController::class)->store($request);
+        $purchaseRequest = \App\Models\PurchaseRequest::query()->latest('id')->firstOrFail();
+
+        $this->assertSame('asset_assignment', $purchaseRequest->workflow_destination);
+        $this->assertSame('pending', $purchaseRequest->status);
+
+        $purchaseRequest->update(['status' => 'approved', 'current_stage' => 'ppmo_staff']);
+
+        $response = $this->getJson('/api/purchase-requests/asset-assignment-queue');
+
+        $response->assertOk()
+            ->assertJsonPath('data.0.request_number', $purchaseRequest->request_number)
+            ->assertJsonPath('data.0.status', 'Awaiting Assignment');
+    }
+
+    public function test_walk_in_asset_request_routes_to_assignment_queue(): void
+    {
+        $staff = $this->makeUser('PPMO Staff', 'PPMO');
+        $this->actingAs($staff);
+
+        $asset = Asset::create([
+            'asset_id' => 'AST-' . Str::upper(Str::random(8)),
+            'property_number' => 'INV-ASSIGN-1002',
+            'name' => 'Dual Monitor',
+            'quantity' => 4,
+            'available_quantity' => 4,
+            'condition' => 'good',
+            'status' => 'available',
+            'purchase_cost' => 3200,
+            'purchase_date' => now()->toDateString(),
+        ]);
+
+        $request = new \Illuminate\Http\Request([
+            'has_account' => false,
+            'walk_in_requester_name' => 'Walk-in Requester',
+            'department_id' => null,
+            'request_type' => 'request',
+            'date_needed' => now()->addDay()->toDateString(),
+            'purpose' => 'Workstation setup',
+            'line_items' => [[
+                'type' => 'asset',
+                'source_type' => 'asset',
+                'source_id' => $asset->id,
+                'item' => 'Dual Monitor',
+                'qty' => 1,
+                'quantity' => 1,
+                'unit_price' => 3200,
+            ]],
+        ]);
+        $request->setUserResolver(fn () => $staff);
+
+        app(\App\Http\Controllers\PurchaseRequestController::class)->storeWalkIn($request);
+        $purchaseRequest = \App\Models\PurchaseRequest::query()->latest('id')->firstOrFail();
+
+        $this->assertSame('asset_assignment', $purchaseRequest->workflow_destination);
+        $this->assertSame('approved', $purchaseRequest->status);
+
+        $response = $this->getJson('/api/purchase-requests/asset-assignment-queue');
+
+        $response->assertOk()
+            ->assertJsonPath('data.0.request_number', $purchaseRequest->request_number)
+            ->assertJsonPath('data.0.status', 'Awaiting Assignment');
+    }
+
+    public function test_asset_request_cannot_be_processed_by_generic_release(): void
+    {
+        $staff = $this->makeUser('PPMO Staff', 'PPMO Staff');
+        $requester = $this->makeUser('Requester', 'Requester');
+        $asset = Asset::create([
+            'asset_id' => 'AST-' . Str::upper(Str::random(8)),
+            'property_number' => 'INV-ROUTE-1001',
+            'name' => 'Route Test Asset',
+            'quantity' => 1,
+            'available_quantity' => 1,
+            'condition' => 'good',
+            'status' => 'available',
+            'purchase_cost' => 1000,
+            'purchase_date' => now()->toDateString(),
+        ]);
+        $purchaseRequest = \App\Models\PurchaseRequest::create([
+            'request_number' => 'REQ-ROUTE-1001',
+            'requested_by' => $requester->id,
+            'current_stage' => 'ppmo_staff',
+            'status' => 'approved',
+            'request_type' => 'request',
+            'workflow_destination' => 'asset_assignment',
+            'line_items' => [[
+                'source_type' => 'asset',
+                'source_id' => $asset->id,
+                'workflow_destination' => 'asset_assignment',
+                'item' => 'Route Test Asset',
+                'qty' => 1,
+                'quantity' => 1,
+            ]],
+        ]);
+
+        $this->actingAs($staff)
+            ->patchJson("/api/purchase-requests/{$purchaseRequest->id}/release")
+            ->assertStatus(422)
+            ->assertJsonPath('workflow_destination', 'asset_assignment');
+
+        $this->assertDatabaseMissing('asset_assignments', ['asset_id' => $asset->id]);
+        $this->assertSame(1, (int) $asset->fresh()->available_quantity);
+    }
+
+    public function test_asset_assignment_process_completes_request_once_without_supply_deduction(): void
+    {
+        $staff = $this->makeUser('PPMO Staff', 'PPMO Staff');
+        $requester = $this->makeUser('Requester', 'Requester');
+        $supply = \App\Models\Supply::create([
+            'name' => 'Unrelated Supply',
+            'sku' => 'ROUTE-SUPPLY-01',
+            'stock' => 10,
+            'minimum_stock' => 1,
+            'unit_price' => 50,
+        ]);
+        $asset = Asset::create([
+            'asset_id' => 'AST-' . Str::upper(Str::random(8)),
+            'property_number' => 'INV-ROUTE-1002',
+            'name' => 'Untracked Physical Asset',
+            'quantity' => 1,
+            'available_quantity' => 1,
+            'condition' => 'good',
+            'status' => 'available',
+            'purchase_cost' => 1000,
+            'purchase_date' => now()->toDateString(),
+        ]);
+        $purchaseRequest = \App\Models\PurchaseRequest::create([
+            'request_number' => 'REQ-ROUTE-1002',
+            'requested_by' => $requester->id,
+            'current_stage' => 'ppmo_staff',
+            'status' => 'approved',
+            'request_type' => 'request',
+            'workflow_destination' => 'asset_assignment',
+            'line_items' => [[
+                'source_type' => 'asset',
+                'source_id' => $asset->id,
+                'workflow_destination' => 'asset_assignment',
+                'item' => 'Untracked Physical Asset',
+                'qty' => 1,
+                'quantity' => 1,
+            ]],
+        ]);
+
+        $payload = [
+            'asset_id' => $asset->id,
+            'assigned_to' => $requester->id,
+            'quantity' => 1,
+            'assignment_type' => 'permanent',
+            'accept_now' => true,
+            'purchase_request_id' => $purchaseRequest->id,
+        ];
+
+        $this->actingAs($staff)
+            ->postJson('/api/assignments', $payload)
+            ->assertCreated();
+
+        $this->assertSame('released', $purchaseRequest->fresh()->status);
+        $this->assertSame(0, (int) $asset->fresh()->available_quantity);
+        $this->assertSame(10, (int) $supply->fresh()->stock);
+        $this->assertDatabaseCount('asset_assignments', 1);
+
+        $this->postJson('/api/assignments', $payload)->assertStatus(422);
+        $this->assertDatabaseCount('asset_assignments', 1);
+    }
+
     public function test_ppmo_staff_can_update_purchase_order_for_receiving_workflow(): void
     {
         $staff = $this->makeUser('PPMO Staff', 'Staff');

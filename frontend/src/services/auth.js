@@ -43,7 +43,7 @@ function persistSessionUser(user, remember = false) {
   window.dispatchEvent(new Event('pcms:auth-changed'));
 }
 
-function clearPcmsAuthState() {
+export function clearPcmsAuthState() {
   localStorage.removeItem(CURRENT_USER_KEY);
   sessionStorage.removeItem(CURRENT_USER_KEY);
   window.dispatchEvent(new Event('pcms:auth-changed'));
@@ -235,12 +235,12 @@ export async function getCurrentSession() {
   }
 
   const payload = await response.json().catch(() => null);
-  if (!payload) {
+  if (!payload || payload.authenticated === false || !payload.user) {
     persistCurrentUser(null);
     return null;
   }
 
-  const user = normalizeProfile(payload.user || payload);
+  const user = normalizeProfile(payload.user);
   persistCurrentUser(user);
   return user;
 }

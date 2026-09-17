@@ -17,9 +17,10 @@ class StockMovementController extends Controller
 {
     $validated = $request->validate([
         'supply_id' => ['required', 'exists:supplies,id'],
-        'movement_type' => ['required', 'in:in,out'],
+        'movement_type' => ['required', 'in:in,write_off'],
         'quantity' => ['required', 'integer', 'min:1'],
         'department_id' => ['required', 'exists:departments,id'],
+        'write_off_category' => ['required_if:movement_type,write_off', 'nullable', 'in:damaged,expired,lost,unusable,other'],
         'notes' => ['nullable', 'string'],
     ]);
 
@@ -41,7 +42,7 @@ if (! $supply) {
             ], 422);
         }
         // Guard against stock-out driving stock negative
-        if ($validated['movement_type'] === 'out' && $supply->stock < $validated['quantity']) {
+        if ($validated['movement_type'] === 'write_off' && $supply->stock < $validated['quantity']) {
             DB::rollBack();
 
             return response()->json([
@@ -57,6 +58,7 @@ if (! $supply) {
             'department_id' => $validated['department_id'] ?? null,
             'requested_by' => $request->user()?->id,
             'issued_by' => $request->user()?->id,
+            'write_off_category' => $validated['write_off_category'] ?? null,
             'notes' => $validated['notes'] ?? null,
         ]);
 
@@ -106,6 +108,22 @@ if (! $supply) {
                 $movement->id
             );
         }
+
+        DB::table('activity_logs')->insert([
+            'action' => $validated['movement_type'] === 'write_off' ? 'supply_write_off' : 'stock_movement_recorded',
+            'payload' => json_encode([
+                'supply_id' => $supply->id,
+                'movement_id' => $movement->id,
+                'movement_type' => $validated['movement_type'],
+                'quantity' => $validated['quantity'],
+                'write_off_category' => $validated['write_off_category'] ?? null,
+                'user' => optional($request->user())->email ?? 'system',
+                'ip' => $request->ip(),
+            ]),
+            'status' => 'active',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
 
         DB::commit();
 

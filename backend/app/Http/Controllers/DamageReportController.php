@@ -7,7 +7,6 @@ use App\Models\DamageReport;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Storage;
 
 class DamageReportController extends Controller
 {
@@ -35,6 +34,7 @@ class DamageReportController extends Controller
             'asset_id' => ['nullable', 'exists:assets,id'],
             'ocr_scan_id' => ['nullable', 'exists:ocr_scans,id'],
             'incident_type' => ['required', 'in:damaged,lost,unserviceable'],
+            'incident_date' => ['required', 'date'],
             'severity' => ['required', 'in:minor,moderate,severe,critical'],
             'description' => ['required', 'string'],
             'photo' => ['nullable', 'image', 'max:5120'], // 5MB
@@ -70,6 +70,7 @@ class DamageReportController extends Controller
             'reported_by' => $request->user()?->id,
             'department_id' => $asset->department_id,
             'incident_type' => $validated['incident_type'],
+            'incident_date' => $validated['incident_date'],
             'severity' => $validated['severity'],
             'description' => $validated['description'],
             'photo_path' => $photoPath,
@@ -173,14 +174,14 @@ class DamageReportController extends Controller
 
     public function destroy(Request $request, DamageReport $report): JsonResponse
     {
-        if ($report->photo_path) {
-            Storage::disk('public')->delete($report->photo_path);
+        if (in_array($report->status, ['disposed', 'declared_lost', 'declared_unserviceable'], true)) {
+            return response()->json(['message' => 'Resolved incident history cannot be deleted.'], 422);
         }
 
-        $report->delete();
-        $this->logActivity('damage_report_deleted', $report, $request);
+        $report->update(['status' => 'cancelled', 'resolved_at' => now()]);
+        $this->logActivity('damage_report_cancelled', $report, $request);
 
-        return response()->json(['message' => 'Damage report deleted.']);
+        return response()->json(['message' => 'Damage report cancelled and retained in history.']);
     }
 
     protected function logActivity(string $action, DamageReport $report, Request $request): void

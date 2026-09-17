@@ -18,6 +18,7 @@ class StockMovement extends Model
         'department_id',
         'requested_by',
         'issued_by',
+        'write_off_category',
         'notes',
     ];
 

@@ -34,6 +34,7 @@ function formatCurrency(value) {
 export default function WalkInRequest() {
   const [searchParams] = useSearchParams();
   const procurementForId = searchParams.get('purchase_for');
+  const todayIso = new Date().toISOString().slice(0, 10);
   const [hasAccount, setHasAccount] = useState(true);
   const [requesterSearch, setRequesterSearch] = useState('');
   const [requesterOptions, setRequesterOptions] = useState([]);
@@ -520,7 +521,7 @@ export default function WalkInRequest() {
                   </div>
                   <div className="walkin-field-group">
                     <label htmlFor="walkin-valid-until">Expected Return Date</label>
-                    <input id="walkin-valid-until" type="date" value={form.valid_until} onChange={(e) => updateField('valid_until', e.target.value)} required />
+                    <input id="walkin-valid-until" type="date" min={todayIso} value={form.valid_until} onChange={(e) => updateField('valid_until', e.target.value)} required />
                   </div>
                 </div>
                 <div className="walkin-field-row">
@@ -558,7 +559,7 @@ export default function WalkInRequest() {
                   </div>
                   <div className="walkin-field-group">
                     <label htmlFor="walkin-date-needed">Date Needed</label>
-                    <input id="walkin-date-needed" type="date" value={form.date_needed} onChange={(e) => updateField('date_needed', e.target.value)} />
+                    <input id="walkin-date-needed" type="date" min={todayIso} value={form.date_needed} onChange={(e) => updateField('date_needed', e.target.value)} />
                   </div>
                 </div>
                 <div className="walkin-field-group">

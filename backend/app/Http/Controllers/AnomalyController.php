@@ -61,7 +61,7 @@ class AnomalyController extends Controller
             'total_alerts' => DB::table('anomaly_alerts')->count(),
             'high_risk' => DB::table('anomaly_alerts')->where('priority', 'high')->count(),
             'medium_risk' => DB::table('anomaly_alerts')->where('priority', 'medium')->count(),
-            'low_stock' => DB::table('anomaly_alerts')->where('source_type', 'low_stock')->count(),
+            'low_stock' => DB::table('anomaly_alerts')->where('source_type', 'low_stock')->where('status', '!=', 'resolved')->count(),
             'open_unresolved' => DB::table('anomaly_alerts')->where('status', '!=', 'resolved')->count(),
         ]);
     }

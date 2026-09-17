@@ -79,11 +79,12 @@ Route::middleware(['web', 'auth:sanctum', 'delete.admin'])->group(function () {
     Route::get('/maintenance-predictions', [MaintenanceController::class, 'predictions']);
     Route::apiResource('damage-reports', DamageReportController::class)->parameters(['damage-reports' => 'report']);
     Route::apiResource('supplies', SupplyController::class);
-    Route::post('/stock-movements', [StockMovementController::class, 'store']);
+    Route::post('/stock-movements', [StockMovementController::class, 'store'])->middleware('role:PPMO Staff,System Administrator');
     Route::get('/stock-movements', [StockMovementController::class, 'index']);
     Route::get('/stock-movements/{movement}', [StockMovementController::class, 'show']);
-    Route::apiResource('purchase-requests', PurchaseRequestController::class);
     Route::get('/supply-requests/queue', [PurchaseRequestController::class, 'supplyQueue'])->middleware('role:System Administrator,PPMO Staff,Property Custodian,OIC');
+    Route::get('/purchase-requests/asset-assignment-queue', [PurchaseRequestController::class, 'assetAssignmentQueue'])->middleware('role:System Administrator,PPMO Staff,Property Custodian,OIC');
+    Route::apiResource('purchase-requests', PurchaseRequestController::class);
     Route::get('/purchase-requests/walk-in/requesters', [PurchaseRequestController::class, 'walkInRequesterOptions'])->middleware('role:System Administrator,PPMO Staff');
     Route::get('/purchase-requests/walk-in/item-search', [PurchaseRequestController::class, 'itemSearch'])->middleware('role:System Administrator,PPMO Staff');
     Route::post('/purchase-requests/walk-in', [PurchaseRequestController::class, 'storeWalkIn'])->middleware('role:System Administrator,PPMO Staff');
@@ -150,5 +151,5 @@ Route::post('/auth/login', [AuthController::class, 'login'])->middleware(['web',
 Route::post('/auth/otp/verify', [AuthController::class, 'verifyOtp'])->middleware(['web', 'throttle:otp-verify']);
 Route::post('/auth/otp/resend', [AuthController::class, 'resendOtp'])->middleware(['web', 'throttle:otp-resend']);
 Route::post('/auth/logout', [AuthController::class, 'logout'])->middleware(['web', 'auth:sanctum']);
-Route::get('/auth/me', [AuthController::class, 'me'])->middleware(['web', 'auth:sanctum']);
+Route::get('/auth/me', [AuthController::class, 'me'])->middleware(['web']);
 Route::post('/auth/change-password', [AuthController::class, 'changePassword'])->middleware(['web', 'auth:sanctum']);

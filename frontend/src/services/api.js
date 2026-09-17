@@ -1,3 +1,5 @@
+import { clearPcmsAuthState } from './auth';
+
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "/api";
 const STORAGE_PUBLIC_URL = import.meta.env.VITE_STORAGE_PUBLIC_URL || "";
 
@@ -76,21 +78,30 @@ async function request(path, options = {}) {
     : { message: await response.text().catch(() => "") };
 
   if (!response.ok) {
+    if (response.status === 401) {
+      clearPcmsAuthState();
+    }
     const message = normalizeApiErrorMessage(payload, response.status);
     // Verbose logging for development: include status and full payload for 422 responses
     try {
+      const redactedPayload = JSON.parse(JSON.stringify(payload, (key, value) => {
+        if (typeof key === 'string' && /(password|secret|token|key)/i.test(key)) {
+          return '[REDACTED]';
+        }
+        return value;
+      }));
       // eslint-disable-next-line no-console
       if (response.status === 422)
         console.error("[pcms] API 422 response", {
           path,
           status: response.status,
-          payload,
+          payload: redactedPayload,
         });
       else
         console.error("API request failed", {
           path,
           status: response.status,
-          payload,
+          payload: redactedPayload,
         });
     } catch (e) {
       // ignore logging errors
@@ -98,7 +109,17 @@ async function request(path, options = {}) {
 
     if (response.status === 422) {
       // Throw the full payload so callers can inspect detailed validation errors
-      throw new Error(JSON.stringify({ status: response.status, payload }));
+      const redactedPayload = JSON.parse(JSON.stringify(payload, (key, value) => {
+        if (typeof key === 'string' && /(password|secret|token|key)/i.test(key)) {
+          return '[REDACTED]';
+        }
+        return value;
+      }));
+      throw new Error(JSON.stringify({
+        status: response.status,
+        payload: redactedPayload,
+        userMessage: normalizeApiErrorMessage(redactedPayload, response.status),
+      }));
     }
 
     throw new Error(message);
@@ -333,6 +354,11 @@ export async function fetchAssignments({
   return response?.data || [];
 }
 
+export async function fetchAssetAssignmentQueue() {
+  const response = await request("/purchase-requests/asset-assignment-queue");
+  return response?.data || [];
+}
+
 export async function fetchAssignmentRecommendations(payload = {}) {
   const params = new URLSearchParams();
   Object.entries(payload).forEach(([key, value]) => {
@@ -468,9 +494,10 @@ export async function deleteSupply(id) {
 export async function recordStockMovement(payload) {
   const record = {
     supply_id: payload.supply_id,
-    movement_type: payload.movement_type, // 'in' or 'out'
+    movement_type: payload.movement_type, // 'in' or 'write_off'
     quantity: payload.quantity,
     department_id: payload.department_id || null,
+    write_off_category: payload.write_off_category || null,
     notes: payload.notes || null,
   };
 
@@ -658,6 +685,7 @@ export async function createDamageReport(payload) {
   formData.append("asset_id", payload.asset_id || "");
   formData.append("ocr_scan_id", payload.ocr_scan_id || "");
   formData.append("incident_type", payload.incident_type || "damaged");
+  formData.append("incident_date", payload.incident_date || new Date().toISOString().slice(0, 10));
   formData.append("severity", payload.severity);
   formData.append("description", payload.description);
   if (payload.photo instanceof File) {
@@ -688,7 +716,7 @@ export async function fetchAudit(id) {
 
 export async function createAudit(payload) {
   const record = {
-    area: payload.name || payload.area,
+    area: payload.area,
     department_id: payload.department_id || null,
     scheduled_at: payload.scheduled_date || payload.scheduled_at,
   };
@@ -701,7 +729,7 @@ export async function createAudit(payload) {
 
 export async function updateAudit(id, payload) {
   const record = {
-    area: payload.name || payload.area,
+    area: payload.area,
     department_id: payload.department_id || null,
     scheduled_at: payload.scheduled_date || payload.scheduled_at,
   };
@@ -864,15 +892,15 @@ export async function ppmoReleaseQueue() {
   const [purchaseResponse, requestResponse, gatePassResponse] =
     await Promise.all([
       request(
-        "/purchase-requests?current_stage=property_custodian&status=approved&per_page=200",
+        "/purchase-requests?current_stage=property_custodian&status=approved&workflow_destination=supplies_inventory_release&per_page=200",
       ),
-      request("/purchase-requests?current_stage=ppmo_staff&status=approved&per_page=200"),
+      request("/purchase-requests?current_stage=ppmo_staff&status=approved&workflow_destination=supplies_inventory_release&per_page=200"),
       request("/gate-passes?deliverable=1&per_page=200"),
     ]);
 
   const filteredPurchaseRequests = [
-    ...(purchaseResponse?.data || []).filter((item) => item?.request_type !== "purchase_order"),
-    ...(requestResponse?.data || []).filter((item) => item?.request_type !== "purchase_order"),
+    ...(purchaseResponse?.data || []),
+    ...(requestResponse?.data || []),
   ];
 
   return {
@@ -1295,6 +1323,7 @@ export const pcmsApi = {
   updateAsset: (id, payload) => updateBackendAsset(id, payload),
   deleteAsset: (id) => deleteBackendAsset(id),
   assignments: (opts) => fetchAssignments(opts),
+  assetAssignmentQueue: () => fetchAssetAssignmentQueue(),
   assignment: (id) => fetchAssignment(id),
   fetchAssignment: (id) => fetchAssignment(id),
   assignmentRecommendations: (payload) =>

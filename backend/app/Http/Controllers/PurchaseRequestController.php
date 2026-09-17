@@ -64,6 +64,7 @@ class PurchaseRequestController extends Controller
             ->when($request->current_stage, fn ($query, $value) => $query->where('current_stage', $value))
             ->when($request->department_id, fn ($query, $value) => $query->where('department_id', $value))
             ->when($request->workflow_destination === 'purchase_workflow', fn ($query) => $query->where('request_type', 'purchase_order'))
+            ->when(in_array($request->workflow_destination, ['asset_assignment', 'supplies_inventory_release'], true), fn ($query) => $query->where('workflow_destination', $request->workflow_destination))
             ->when($request->request_type, fn ($query, $value) => $query->where('request_type', $value))
             ->when($request->date_from, fn ($query, $value) => $query->whereDate('created_at', '>=', $value))
             ->when($request->date_to, fn ($query, $value) => $query->whereDate('created_at', '<=', $value))
@@ -187,6 +188,53 @@ class PurchaseRequestController extends Controller
         return response()->json(['data' => $rows]);
     }
 
+    public function assetAssignmentQueue(Request $request): JsonResponse
+    {
+        $requests = PurchaseRequest::query()
+            ->with('department', 'requester')
+            ->where('status', 'approved')
+            ->where('request_type', 'request')
+            ->where('workflow_destination', 'asset_assignment')
+            ->orderByDesc('created_at')
+            ->get()
+            ->filter(fn (PurchaseRequest $purchaseRequest) => collect($purchaseRequest->line_items ?? [])
+                ->contains(fn ($lineItem) => $this->storedLineItemIsType($lineItem, 'asset')))
+            ->values();
+
+        $rows = $requests->map(function (PurchaseRequest $purchaseRequest) {
+            $assetLineItems = collect($purchaseRequest->line_items ?? [])
+                ->filter(fn ($lineItem) => $this->storedLineItemIsType($lineItem, 'asset'))
+                ->values()
+                ->all();
+
+            return [
+                'id' => $purchaseRequest->id,
+                'request_id' => $purchaseRequest->id,
+                'request_number' => $purchaseRequest->request_number,
+                'requested_by' => $purchaseRequest->requested_by,
+                'requested_by_name' => $purchaseRequest->requested_by_name,
+                'requester' => $purchaseRequest->requester,
+                'department_id' => $purchaseRequest->department_id,
+                'department_name' => $purchaseRequest->department_name,
+                'department' => $purchaseRequest->department,
+                'purpose' => $purchaseRequest->purpose,
+                'date_needed' => $purchaseRequest->date_needed,
+                'created_at' => $purchaseRequest->created_at,
+                'status' => 'Awaiting Assignment',
+                'queue_status' => 'Awaiting Assignment',
+                'current_stage' => $purchaseRequest->current_stage,
+                'workflow_destination' => $purchaseRequest->workflow_destination,
+                'line_items' => $assetLineItems,
+                'request_type' => $purchaseRequest->request_type,
+                'is_walk_in' => $purchaseRequest->is_walk_in,
+                'walk_in_requester_name' => $purchaseRequest->walk_in_requester_name,
+                'total_amount' => $purchaseRequest->total_amount,
+            ];
+        })->values();
+
+        return response()->json(['data' => $rows]);
+    }
+
     public function itemSearch(Request $request): JsonResponse
     {
         $search = trim((string) $request->input('search', ''));
@@ -248,7 +296,7 @@ class PurchaseRequestController extends Controller
             'unit' => ['nullable', 'string'],
             'branch' => ['nullable', 'string'],
             'priority' => ['nullable', 'in:low,normal,urgent,critical'],
-            'date_needed' => ['nullable', 'date'],
+            'date_needed' => ['nullable', 'date', 'after_or_equal:today'],
             'purpose' => ['required_if:request_type,request', 'nullable', 'string'],
             'requested_by_name' => ['nullable', 'string'],
             'request_type' => ['nullable', 'in:purchase_order,request'],
@@ -273,7 +321,7 @@ class PurchaseRequestController extends Controller
             'line_items.*.preferred_custodian' => ['nullable', 'string'],
             'line_items.*.expected_usage' => ['nullable', 'string'],
             'line_items.*.location' => ['nullable', 'string'],
-            'line_items.*.expected_return_date' => ['nullable', 'date'],
+            'line_items.*.expected_return_date' => ['nullable', 'date', 'after_or_equal:today'],
             'total_amount' => ['nullable', 'numeric', 'min:0'],
         ]);
 
@@ -422,7 +470,7 @@ class PurchaseRequestController extends Controller
             'unit' => ['nullable', 'string'],
             'branch' => ['nullable', 'string'],
             'priority' => ['nullable', 'in:low,normal,urgent,critical'],
-            'date_needed' => ['nullable', 'date'],
+            'date_needed' => ['nullable', 'date', 'after_or_equal:today'],
             'purpose' => ['required_if:request_type,request', 'nullable', 'string'],
             'request_type' => ['nullable', 'in:purchase_order,request'],
             'attachment' => ['nullable', 'file', 'max:10240'],
@@ -447,7 +495,7 @@ class PurchaseRequestController extends Controller
             'line_items.*.preferred_custodian' => ['nullable', 'string'],
             'line_items.*.expected_usage' => ['nullable', 'string'],
             'line_items.*.location' => ['nullable', 'string'],
-            'line_items.*.expected_return_date' => ['nullable', 'date'],
+            'line_items.*.expected_return_date' => ['nullable', 'date', 'after_or_equal:today'],
             'total_amount' => ['nullable', 'numeric', 'min:0'],
         ]);
 
@@ -605,18 +653,62 @@ class PurchaseRequestController extends Controller
             'date_needed' => ['sometimes', 'nullable', 'date'],
             'purpose' => ['sometimes', 'nullable', 'string'],
             'line_items' => ['sometimes', 'array', 'min:1'],
+            'line_items.*.item' => ['sometimes', 'string', 'max:255'],
+            'line_items.*.particular' => ['sometimes', 'string', 'max:255'],
+            'line_items.*.description' => ['sometimes', 'string', 'max:2000'],
+            'line_items.*.type' => ['sometimes', 'string', 'max:40'],
+            'line_items.*.source_type' => ['sometimes', 'string', 'max:40'],
+            'line_items.*.source_id' => ['sometimes', 'nullable', 'integer'],
+            'line_items.*.source_ref' => ['sometimes', 'nullable', 'string', 'max:160'],
+            'line_items.*.remarks' => ['sometimes', 'nullable', 'string', 'max:2000'],
+            'line_items.*.qty' => ['sometimes', 'integer', 'min:1'],
+            'line_items.*.quantity' => ['sometimes', 'integer', 'min:1'],
+            'line_items.*.unit_price' => ['sometimes', 'numeric', 'min:0'],
+            'line_items.*.unitPrice' => ['sometimes', 'numeric', 'min:0'],
+            'line_items.*.unit' => ['sometimes', 'nullable', 'string', 'max:80'],
             'total_amount' => ['sometimes', 'numeric', 'min:0'],
             'procurement_status' => ['sometimes', 'nullable', 'in:draft,approved,received,ready_to_release,completed,qc_failed,qc_on_hold'],
             'qc_status' => ['sometimes', 'nullable', 'in:pending,passed,failed,hold'],
             'status' => ['sometimes', 'nullable', 'string', 'max:255'],
         ]);
 
-        if ($purchaseRequest->status === 'revision_requested' && array_key_exists('line_items', $validated)) {
+        $hasFinancialEdit = array_key_exists('line_items', $validated) || array_key_exists('total_amount', $validated);
+        $isPpmoPurchaseEdit = $request->user()?->role === 'PPMO Staff'
+            && $purchaseRequest->request_type === 'purchase_order'
+            && $purchaseRequest->workflow_destination === 'purchase_workflow'
+            && $purchaseRequest->status === 'approved'
+            && $purchaseRequest->current_stage === 'property_custodian';
+        $isRequesterRevision = $request->user()?->role === 'Requester'
+            && $purchaseRequest->status === 'revision_requested'
+            && $purchaseRequest->requested_by === $request->user()?->id;
+
+        if ($hasFinancialEdit && ! $isPpmoPurchaseEdit && ! $isRequesterRevision && $request->user()?->role !== 'System Administrator') {
+            return response()->json(['message' => 'Only PPMO Staff processing an approved purchase order may edit its amount.'], 403);
+        }
+
+        if (array_key_exists('line_items', $validated)) {
+            $validated['line_items'] = collect($validated['line_items'])->map(function (array $item): array {
+                $quantity = (int) ($item['quantity'] ?? $item['qty'] ?? 1);
+                $unitPrice = (float) ($item['unit_price'] ?? $item['unitPrice'] ?? 0);
+                $item['quantity'] = $quantity;
+                $item['qty'] = $quantity;
+                $item['unit_price'] = $unitPrice;
+                $item['amount'] = round($quantity * $unitPrice, 2);
+                $item['estimated_cost'] = $item['amount'];
+
+                return $item;
+            })->all();
             $validated['total_amount'] = $this->totalForLineItems($validated['line_items']);
+            if ($purchaseRequest->request_type === 'request') {
+                $validated['workflow_destination'] = $this->aggregateWorkflowDestination($validated['line_items']);
+            }
         }
 
         $purchaseRequest->update($validated);
-        $this->logActivity('purchase_request_updated', $purchaseRequest, $request);
+        $this->logActivity('purchase_request_updated', $purchaseRequest, $request, [
+            'financial_edit' => $hasFinancialEdit,
+            'total_amount' => $purchaseRequest->total_amount,
+        ]);
 
         return response()->json($this->responsePurchaseRequest($purchaseRequest->fresh()->load('department', 'requester'), $request));
     }
@@ -757,6 +849,9 @@ class PurchaseRequestController extends Controller
 
             $update['line_items'] = $normalizedItems;
             $update['total_amount'] = $this->totalForLineItems($normalizedItems);
+            if ($requestType === 'request') {
+                $update['workflow_destination'] = $this->aggregateWorkflowDestination($normalizedItems);
+            }
         }
 
         if (array_key_exists('total_amount', $validated) && $requestType === 'purchase_order') {
@@ -1044,6 +1139,15 @@ class PurchaseRequestController extends Controller
     public function release(Request $request, PurchaseRequest $purchaseRequest): JsonResponse
     {
         $this->authorize('release', $purchaseRequest);
+
+        $containsAssetLine = collect($purchaseRequest->line_items ?? [])
+            ->contains(fn ($lineItem) => ($lineItem['source_type'] ?? $lineItem['type'] ?? null) === 'asset');
+        if ($purchaseRequest->workflow_destination === 'asset_assignment' || $containsAssetLine) {
+            return response()->json([
+                'message' => 'Asset requests must be processed through Asset Assignment, not the supply release queue.',
+                'workflow_destination' => 'asset_assignment',
+            ], 422);
+        }
 
         if ($purchaseRequest->request_type === 'request' && $purchaseRequest->workflow_destination === 'purchase_workflow') {
             $supplyLines = collect($purchaseRequest->line_items ?? [])
@@ -1673,7 +1777,12 @@ HTML;
                     $lineItem['source_type'] ?? $lineItem['type'] ?? null,
                     $lineItem['source_id'] ?? null,
                 );
-                $catalog = $this->resolveCatalogItem($sourceType, $sourceId, $name);
+                $catalog = $this->resolveCatalogItem($sourceType, $sourceId);
+                if (in_array($sourceType, ['asset', 'supply'], true) && ! $catalog) {
+                    throw ValidationException::withMessages([
+                        'line_items' => 'The selected catalog item could not be verified. Please select the item again.',
+                    ]);
+                }
                 $manualUnitCost = (float) ($lineItem['unit_price'] ?? $lineItem['unitPrice'] ?? $lineItem['estimated_cost'] ?? 0);
                 $unitCost = $catalog
                     ? (float) ($catalog['unit_cost'] ?? $catalog['unit_price'] ?? 0)
@@ -1754,7 +1863,7 @@ HTML;
             ->all();
     }
 
-    protected function resolveCatalogItem(?string $sourceType, mixed $sourceId, string $name): ?array
+    protected function resolveCatalogItem(?string $sourceType, mixed $sourceId): ?array
     {
         if ($sourceType === 'supply' && $sourceId) {
             $supply = Supply::find($sourceId);
@@ -1766,22 +1875,7 @@ HTML;
             return $asset ? $this->catalogRowForAsset($asset) : null;
         }
 
-        $supply = Supply::query()
-            ->where('name', 'like', "%{$name}%")
-            ->orWhere('sku', 'like', "%{$name}%")
-            ->first();
-
-        if ($supply) {
-            return $this->catalogRowForSupply($supply);
-        }
-
-        $asset = Asset::with('department', 'category')
-            ->where('name', 'like', "%{$name}%")
-            ->orWhere('property_number', 'like', "%{$name}%")
-            ->orWhere('serial_number', 'like', "%{$name}%")
-            ->first();
-
-        return $asset ? $this->catalogRowForAsset($asset) : null;
+        return null;
     }
 
     protected function catalogRowForSupply(Supply $supply): array
@@ -1978,6 +2072,17 @@ HTML;
             'asset' => $available >= $qty ? 'asset_assignment' : 'purchase_workflow',
             default => 'purchase_workflow',
         };
+    }
+
+    protected function storedLineItemIsType(array $lineItem, string $expectedType): bool
+    {
+        if (($lineItem['source_type'] ?? $lineItem['type'] ?? null) !== $expectedType || empty($lineItem['source_id'])) {
+            return false;
+        }
+
+        return $expectedType === 'asset'
+            ? Asset::query()->whereKey($lineItem['source_id'])->exists()
+            : Supply::query()->whereKey($lineItem['source_id'])->exists();
     }
 
     protected function aggregateWorkflowDestination(array $items): string

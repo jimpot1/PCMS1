@@ -10,6 +10,7 @@ use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Illuminate\Validation\Rule;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class AssetController extends Controller
@@ -38,7 +39,7 @@ class AssetController extends Controller
     public function store(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'property_number' => ['nullable', 'string', 'max:80', 'unique:assets,property_number'],
+            'property_number' => ['nullable', 'string', 'max:80', Rule::unique('assets', 'property_number')],
             'serial_number' => ['nullable', 'string', 'max:120'],
             'name' => ['required', 'string', 'max:180'],
             'brand' => ['nullable', 'string', 'max:120'],
@@ -56,6 +57,8 @@ class AssetController extends Controller
             'status' => ['nullable', 'in:available,assigned,transferred,maintenance,damaged,lost,unserviceable,disposed'],
             'remarks' => ['nullable', 'string'],
             'ocr_scan_id' => ['nullable', 'exists:ocr_scans,id'],
+        ], [
+            'property_number.unique' => 'This property number already exists. Please review the existing asset record or choose a different number.',
         ]);
 
         $ocrScanId = $validated['ocr_scan_id'] ?? null;
@@ -133,7 +136,7 @@ class AssetController extends Controller
     public function update(Request $request, Asset $asset): JsonResponse
     {
         $validated = $request->validate([
-            'property_number' => ['sometimes', 'string', 'max:80', 'unique:assets,property_number,' . $asset->id],
+            'property_number' => ['sometimes', 'string', 'max:80', Rule::unique('assets', 'property_number')->ignore($asset->id)],
             'serial_number' => ['sometimes', 'nullable', 'string', 'max:120'],
             'name' => ['sometimes', 'string', 'max:180'],
             'brand' => ['sometimes', 'nullable', 'string', 'max:120'],
@@ -150,6 +153,8 @@ class AssetController extends Controller
             'condition' => ['sometimes', 'in:good,needs_repair,damaged,under_inspection,lost,unserviceable'],
             'status' => ['sometimes', 'in:available,assigned,transferred,maintenance,damaged,lost,unserviceable,disposed'],
             'remarks' => ['sometimes', 'nullable', 'string'],
+        ], [
+            'property_number.unique' => 'This property number already exists. Please review the existing asset record or choose a different number.',
         ]);
 
         $asset->update($validated);

@@ -14,6 +14,7 @@ class DamageReport extends Model
         'reported_by',
         'department_id',
         'incident_type',
+        'incident_date',
         'severity',
         'description',
         'assessment_notes',
@@ -26,6 +27,7 @@ class DamageReport extends Model
     ];
 
     protected $casts = [
+        'incident_date' => 'date',
         'assessed_at' => 'datetime',
         'resolved_at' => 'datetime',
     ];
