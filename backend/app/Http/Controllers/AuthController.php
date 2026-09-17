@@ -2,22 +2,28 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\OtpVerification;
 use App\Models\User;
+use App\Services\OtpVerificationService;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
-use Carbon\Carbon;
 
 class AuthController extends Controller
 {
     private const MAX_LOGIN_ATTEMPTS = 5;
     private const LOCKOUT_DURATION_MINUTES = 1;
 
+    public function __construct(private OtpVerificationService $otpVerificationService)
+    {
+    }
+
     public function login(Request $request)
     {
         $validator = Validator::make($request->all(), [
-            'email' => 'required|email',
+            'email' => 'required|string',
             'password' => 'required|string',
         ]);
 
@@ -25,23 +31,24 @@ class AuthController extends Controller
             return response()->json(['message' => 'Invalid email or password.'], 422);
         }
 
-        $user = User::where('email', $request->input('email'))->first();
+        $identifier = trim((string) $request->input('email'));
+        $user = User::where('email', $identifier)
+            ->orWhere('employee_id', $identifier)
+            ->first();
 
-        if (!$user) {
+        if (! $user) {
             return response()->json(['message' => 'Invalid email or password.'], 401);
         }
 
-        // Check if account is locked
         if ($user->locked_until && Carbon::now()->lessThan($user->locked_until)) {
             $remainingSeconds = Carbon::now()->diffInSeconds($user->locked_until);
             return response()->json([
                 'message' => "Account is temporarily locked. Please try again in {$remainingSeconds} seconds.",
                 'locked' => true,
-                'remaining_seconds' => $remainingSeconds
+                'remaining_seconds' => $remainingSeconds,
             ], 423);
         }
 
-        // Unlock if lockout period has expired
         if ($user->locked_until && Carbon::now()->greaterThanOrEqualTo($user->locked_until)) {
             $user->failed_login_attempts = 0;
             $user->locked_until = null;
@@ -52,15 +59,10 @@ class AuthController extends Controller
             return response()->json(['message' => 'Account is not active.'], 403);
         }
 
-        if (! Auth::guard('web')->attempt([
-            'email' => $request->input('email'),
-            'password' => $request->input('password'),
-        ], $request->boolean('remember'))) {
-            // Increment failed login attempts
+        if (! Hash::check($request->input('password'), $user->password_hash)) {
             $user->failed_login_attempts++;
             $user->last_failed_login_at = Carbon::now();
 
-            // Lock account if max attempts exceeded
             if ($user->failed_login_attempts >= self::MAX_LOGIN_ATTEMPTS) {
                 $user->locked_until = Carbon::now()->addMinutes(self::LOCKOUT_DURATION_MINUTES);
                 $user->save();
@@ -68,29 +70,104 @@ class AuthController extends Controller
                 return response()->json([
                     'message' => "Too many failed login attempts. Account locked for " . self::LOCKOUT_DURATION_MINUTES . " minute(s).",
                     'locked' => true,
-                    'remaining_seconds' => 60 * self::LOCKOUT_DURATION_MINUTES
+                    'remaining_seconds' => 60 * self::LOCKOUT_DURATION_MINUTES,
                 ], 423);
             }
 
             $user->save();
-
             $remainingAttempts = self::MAX_LOGIN_ATTEMPTS - $user->failed_login_attempts;
+
             return response()->json([
                 'message' => 'Invalid email or password.',
-                'attempts_remaining' => $remainingAttempts
+                'attempts_remaining' => $remainingAttempts,
             ], 401);
         }
 
-        // Reset failed login attempts on successful login
-        if ($user->failed_login_attempts > 0 || $user->locked_until) {
-            $user->failed_login_attempts = 0;
-            $user->locked_until = null;
-            $user->save();
+        $user->failed_login_attempts = 0;
+        $user->locked_until = null;
+        $user->save();
+
+        try {
+            $otpData = $this->otpVerificationService->createForUser($user);
+        } catch (\Throwable $throwable) {
+            return response()->json(['message' => $throwable->getMessage()], 429);
         }
 
+        return response()->json([
+            'message' => 'A verification code has been sent to your email.',
+            'requires_otp' => true,
+            'user' => [
+                'id' => $user->id,
+                'email' => $this->otpVerificationService->maskEmail($user->email),
+                'full_name' => $user->full_name,
+                'role' => $user->role,
+            ],
+            'masked_email' => $this->otpVerificationService->maskEmail($user->email),
+            'resend_cooldown_seconds' => $otpData['resend_cooldown_seconds'],
+            'expires_in_seconds' => $otpData['expires_in_seconds'],
+        ]);
+    }
+
+    public function verifyOtp(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'user_id' => 'required|string',
+            'otp' => ['required', 'string', 'size:6', 'regex:/^[0-9]{6}$/'],
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['message' => 'Invalid or expired verification code.'], 422);
+        }
+
+        $user = User::find($request->input('user_id'));
+
+        if (! $user) {
+            return response()->json(['message' => 'Invalid or expired verification code.'], 422);
+        }
+
+        try {
+            $this->otpVerificationService->verifyOtp($user, $request->input('otp'));
+        } catch (\Throwable $throwable) {
+            return response()->json(['message' => $throwable->getMessage()], 422);
+        }
+
+        Auth::guard('web')->login($user, $request->boolean('remember'));
         $request->session()->regenerate();
 
-        return response()->json(['user' => Auth::guard('web')->user()]);
+        return response()->json([
+            'message' => 'Verification successful.',
+            'user' => Auth::guard('web')->user(),
+        ]);
+    }
+
+    public function resendOtp(Request $request)
+    {
+        $validator = Validator::make($request->all(), [
+            'user_id' => 'required|string',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['message' => 'Invalid user session.'], 422);
+        }
+
+        $user = User::find($request->input('user_id'));
+
+        if (! $user) {
+            return response()->json(['message' => 'Invalid user session.'], 404);
+        }
+
+        try {
+            $otpData = $this->otpVerificationService->createForUser($user);
+        } catch (\Throwable $throwable) {
+            return response()->json(['message' => $throwable->getMessage()], 429);
+        }
+
+        return response()->json([
+            'message' => 'A new verification code has been sent to your email.',
+            'masked_email' => $this->otpVerificationService->maskEmail($user->email),
+            'resend_cooldown_seconds' => $otpData['resend_cooldown_seconds'],
+            'expires_in_seconds' => $otpData['expires_in_seconds'],
+        ]);
     }
 
     public function logout(Request $request)
@@ -127,5 +204,5 @@ class AuthController extends Controller
 
         return response()->json(['message' => 'Password changed successfully.']);
     }
-
 }
+

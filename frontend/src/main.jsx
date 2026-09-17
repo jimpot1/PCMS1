@@ -144,6 +144,8 @@ import {
   onAuthStateChange,
   getCurrentUserProfile,
   getStoredUser,
+  verifyOtp,
+  resendOtp,
 } from "./services/auth.js";
 import { ROLES, hasPermission } from "./services/roles.js";
 import { pcmsApi, assetQrCodeUrl } from "./services/api.js";
@@ -401,6 +403,8 @@ function App() {
 
   const effectiveSidebarCollapsed = sidebarCollapsed && isDesktop;
   const [authError, setAuthError] = useState(null);
+  const [otpPending, setOtpPending] = useState(null);
+  const [rememberLogin, setRememberLogin] = useState(false);
   const [isLoadingAuth, setIsLoadingAuth] = useState(true);
   const [isSigningIn, setIsSigningIn] = useState(false);
   const [currentUser, setCurrentUser] = useState(null);
@@ -622,9 +626,55 @@ function App() {
       return;
     }
 
+    if (data?.requires_otp) {
+      setRememberLogin(remember);
+      setOtpPending({
+        id: data.user?.id,
+        email: data.user?.email || data.masked_email,
+        masked_email: data.masked_email || data.user?.email,
+        full_name: data.user?.full_name || '',
+        role: data.user?.role || 'User',
+        expires_in_seconds: data.expires_in_seconds || 300,
+        resend_cooldown_seconds: data.resend_cooldown_seconds || 60,
+      });
+      return;
+    }
+
     const profile = data?.user || null;
+    setOtpPending(null);
     setCurrentUser(profile);
     setIsAuthenticated(!!profile);
+  };
+
+  const handleOtpVerify = async ({ userId, otp, remember }) => {
+    setAuthError(null);
+    const { data, error } = await verifyOtp(userId, otp, remember ?? rememberLogin);
+
+    if (error) {
+      setAuthError(error.message);
+      return;
+    }
+
+    setOtpPending(null);
+    setCurrentUser(data?.user || null);
+    setIsAuthenticated(!!(data?.user));
+  };
+
+  const handleOtpResend = async ({ userId }) => {
+    setAuthError(null);
+    const { data, error } = await resendOtp(userId);
+
+    if (error) {
+      setAuthError(error.message);
+      return;
+    }
+
+    setOtpPending((current) => ({
+      ...(current || {}),
+      masked_email: data?.masked_email || current?.masked_email,
+      expires_in_seconds: data?.expires_in_seconds || current?.expires_in_seconds || 300,
+      resend_cooldown_seconds: data?.resend_cooldown_seconds || current?.resend_cooldown_seconds || 60,
+    }));
   };
 
   const handleLogout = async () => {
@@ -678,6 +728,22 @@ function App() {
       <div className="login-wrapper">
         <div className="loading-card">Loading authentication…</div>
       </div>
+    );
+  }
+
+  if (!isAuthenticated && otpPending) {
+    return (
+      <OtpVerificationPage
+        user={otpPending}
+        authError={authError}
+        remember={rememberLogin}
+        onVerify={handleOtpVerify}
+        onResend={handleOtpResend}
+        onBack={() => {
+          setOtpPending(null);
+          setAuthError(null);
+        }}
+      />
     );
   }
 
@@ -1471,6 +1537,171 @@ function LoginPage({ onLogin, authError, isSigningIn }) {
             </form>
           </div>
         </section>
+      </div>
+    </main>
+  );
+}
+
+function OtpVerificationPage({ user, authError, remember, onVerify, onResend, onBack }) {
+  const [otp, setOtp] = useState(Array(6).fill(""));
+  const [isVerifying, setIsVerifying] = useState(false);
+  const [isResending, setIsResending] = useState(false);
+  const [countdown, setCountdown] = useState(user?.expires_in_seconds || 300);
+  const [resendCooldown, setResendCooldown] = useState(user?.resend_cooldown_seconds || 60);
+  const inputRefs = useRef([]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setCountdown((current) => Math.max(0, current - 1));
+    }, 1000);
+
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setResendCooldown((current) => Math.max(0, current - 1));
+    }, 1000);
+
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const minutes = Math.floor(countdown / 60);
+  const seconds = countdown % 60;
+  const canResend = resendCooldown === 0;
+
+  const updateOtpDigit = (index, value) => {
+    const sanitized = value.replace(/\D/g, '').slice(-1);
+    const nextDigits = [...otp];
+    nextDigits[index] = sanitized;
+    setOtp(nextDigits);
+
+    if (sanitized && index < 5) {
+      inputRefs.current[index + 1]?.focus();
+    }
+  };
+
+  const handleKeyDown = (index, event) => {
+    if (event.key === 'Backspace' && !otp[index] && index > 0) {
+      inputRefs.current[index - 1]?.focus();
+    }
+    if (event.key === 'Backspace' && otp[index]) {
+      const nextDigits = [...otp];
+      nextDigits[index] = '';
+      setOtp(nextDigits);
+    }
+  };
+
+  const handlePaste = (event) => {
+    event.preventDefault();
+    const pasted = event.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6);
+    if (!pasted) return;
+
+    const nextDigits = Array(6).fill('');
+    pasted.split('').forEach((digit, index) => {
+      if (index < 6) nextDigits[index] = digit;
+    });
+    setOtp(nextDigits);
+    const lastFilledIndex = Math.min(pasted.length, 5);
+    inputRefs.current[lastFilledIndex]?.focus();
+  };
+
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+    const code = otp.join('');
+    if (code.length !== 6) {
+      return;
+    }
+
+    setIsVerifying(true);
+    await onVerify({ userId: user.id, otp: code, remember });
+    setIsVerifying(false);
+  };
+
+  const handleResend = async () => {
+    if (!canResend) return;
+    setIsResending(true);
+    await onResend({ userId: user.id });
+    setIsResending(false);
+    setOtp(Array(6).fill(''));
+    setResendCooldown(user?.resend_cooldown_seconds || 60);
+  };
+
+  return (
+    <main className="login-wrapper">
+      <div className="otp-card">
+        <div className="otp-header">
+          <div className="logo">
+            <div className="brand-icon">
+              <Building2 size={28} />
+            </div>
+            <div>
+              <h2>PCMS</h2>
+            </div>
+          </div>
+        </div>
+
+        <div className="otp-panel">
+          <div className="otp-badge">
+            <Shield size={16} />
+            Security Check
+          </div>
+          <h1>Verify Your Account</h1>
+          <p>
+            A verification code was sent to <strong>{user?.masked_email || user?.email || 'your email'}</strong>.
+          </p>
+
+          <form onSubmit={handleSubmit} className="otp-form">
+            {authError && <div className="login-error">{authError}</div>}
+
+            <div className="otp-inputs" onPaste={handlePaste}>
+              {otp.map((digit, index) => (
+                <input
+                  key={index}
+                  ref={(element) => {
+                    inputRefs.current[index] = element;
+                  }}
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  maxLength={1}
+                  value={digit}
+                  onChange={(event) => updateOtpDigit(index, event.target.value)}
+                  onKeyDown={(event) => handleKeyDown(index, event)}
+                  className="otp-digit"
+                  aria-label={`OTP digit ${index + 1}`}
+                />
+              ))}
+            </div>
+
+            <div className="otp-meta">
+              <div className="otp-timer">
+                <Timer size={16} />
+                <span>
+                  {minutes}:{String(seconds).padStart(2, '0')}
+                </span>
+              </div>
+              <button type="button" className="link-button" onClick={onBack}>
+                Change account
+              </button>
+            </div>
+
+            <button type="submit" className="login-btn" disabled={isVerifying || otp.join('').length !== 6}>
+              {isVerifying ? 'Verifying...' : 'Verify OTP'}
+            </button>
+
+            <div className="otp-actions">
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={handleResend}
+                disabled={isResending || !canResend}
+              >
+                {isResending ? 'Sending...' : canResend ? 'Resend OTP' : `Resend in ${resendCooldown}s`}
+              </button>
+            </div>
+          </form>
+        </div>
       </div>
     </main>
   );

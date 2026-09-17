@@ -2,12 +2,14 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Illuminate\Support\Str;
 
 class User extends Authenticatable
 {
+    use HasFactory;
     use Notifiable;
 
     public $incrementing = false;
@@ -41,6 +43,11 @@ class User extends Authenticatable
     public function getAuthPassword()
     {
         return $this->password_hash;
+    }
+
+    public function otpVerifications()
+    {
+        return $this->hasMany(OtpVerification::class);
     }
 
     protected static function booted(): void

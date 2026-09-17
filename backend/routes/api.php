@@ -147,6 +147,8 @@ Route::middleware(['auth:sanctum', 'delete.admin'])->group(function () {
 use App\Http\Controllers\AuthController;
 
 Route::post('/auth/login', [AuthController::class, 'login'])->middleware('throttle:login');
+Route::post('/auth/otp/verify', [AuthController::class, 'verifyOtp'])->middleware('throttle:otp-verify');
+Route::post('/auth/otp/resend', [AuthController::class, 'resendOtp'])->middleware('throttle:otp-resend');
 Route::post('/auth/logout', [AuthController::class, 'logout'])->middleware('auth:sanctum');
 Route::get('/auth/me', [AuthController::class, 'me'])->middleware('auth:sanctum');
 Route::post('/auth/change-password', [AuthController::class, 'changePassword'])->middleware('auth:sanctum');
