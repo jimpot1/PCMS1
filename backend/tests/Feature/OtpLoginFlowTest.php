@@ -70,4 +70,51 @@ class OtpLoginFlowTest extends TestCase
 
         $this->assertGuest();
     }
+
+    public function test_valid_otp_verification_sets_session_for_protected_routes(): void
+    {
+        $user = User::create([
+            'id' => Str::uuid()->toString(),
+            'employee_id' => 'EMP-1003',
+            'first_name' => 'Admin',
+            'last_name' => 'User',
+            'full_name' => 'Admin User',
+            'email' => 'admin.user@gmail.com',
+            'password_hash' => Hash::make('SecretPass123!'),
+            'role' => 'System Administrator',
+            'department' => 'IT',
+            'status' => 'active',
+        ]);
+
+        $this->postJson('/api/auth/login', [
+            'email' => 'admin.user@gmail.com',
+            'password' => 'SecretPass123!',
+        ]);
+
+        $otpRecord = $user->otpVerifications()->latest()->first();
+        $this->assertNotNull($otpRecord);
+
+        $validOtp = null;
+        for ($candidate = 0; $candidate < 1000000; $candidate++) {
+            $value = str_pad((string) $candidate, 6, '0', STR_PAD_LEFT);
+            if (Hash::check($value, $otpRecord->otp_hash)) {
+                $validOtp = $value;
+                break;
+            }
+        }
+
+        $this->assertNotNull($validOtp);
+
+        $verifyResponse = $this->postJson('/api/auth/otp/verify', [
+            'user_id' => $user->id,
+            'otp' => $validOtp,
+        ]);
+
+        $verifyResponse->assertOk();
+        $this->assertAuthenticated();
+
+        $meResponse = $this->getJson('/api/auth/me');
+        $meResponse->assertOk()
+            ->assertJsonPath('email', 'admin.user@gmail.com');
+    }
 }

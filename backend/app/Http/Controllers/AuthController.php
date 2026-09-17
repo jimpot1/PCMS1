@@ -132,7 +132,12 @@ class AuthController extends Controller
         }
 
         Auth::guard('web')->login($user, $request->boolean('remember'));
-        $request->session()->regenerate();
+
+        if ($request->hasSession()) {
+            $request->session()->regenerate();
+        } else {
+            session()->regenerate();
+        }
 
         return response()->json([
             'message' => 'Verification successful.',

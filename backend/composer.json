@@ -14,7 +14,8 @@
     "endroid/qr-code": "^6.0",
     "google/cloud-vision": "^2.2",
     "league/flysystem-aws-s3-v3": "^3.35",
-    "laravel/sanctum": "^4.3"
+    "laravel/sanctum": "^4.3",
+    "phpmailer/phpmailer": "^7.1"
   },
 
  "autoload": {

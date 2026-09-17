@@ -12,11 +12,39 @@ export function releaseReceiptUrl(path) {
   return assetQrCodeUrl(path);
 }
 
-async function request(path, options = {}) {
-  const headers = new Headers(options.headers || {});
+function getXsrfCookieValue() {
   const xsrfCookie = document.cookie
-    .split("; ")
+    .split(";")
+    .map((entry) => entry.trim())
     .find((entry) => entry.startsWith("XSRF-TOKEN="));
+
+  if (!xsrfCookie) {
+    return "";
+  }
+
+  return decodeURIComponent(xsrfCookie.substring("XSRF-TOKEN=".length));
+}
+
+async function ensureXsrfCookie() {
+  if (getXsrfCookieValue()) {
+    return;
+  }
+
+  await fetch(`${API_BASE_URL.replace(/\/api\/?$/, "")}/sanctum/csrf-cookie`, {
+    credentials: "include",
+    headers: { Accept: "application/json" },
+  });
+}
+
+async function request(path, options = {}) {
+  const method = (options.method || "GET").toUpperCase();
+
+  if (["POST", "PUT", "PATCH", "DELETE"].includes(method)) {
+    await ensureXsrfCookie();
+  }
+
+  const headers = new Headers(options.headers || {});
+  const xsrfTokenValue = getXsrfCookieValue();
 
   if (!(options.body instanceof FormData)) {
     headers.set("Content-Type", "application/json");
@@ -26,11 +54,8 @@ async function request(path, options = {}) {
     headers.set("Accept", "application/json");
   }
 
-  if (xsrfCookie && !headers.has("X-XSRF-TOKEN")) {
-    headers.set(
-      "X-XSRF-TOKEN",
-      decodeURIComponent(xsrfCookie.substring("XSRF-TOKEN=".length)),
-    );
+  if (xsrfTokenValue && !headers.has("X-XSRF-TOKEN")) {
+    headers.set("X-XSRF-TOKEN", xsrfTokenValue);
   }
 
   const response = await fetchWithTimeout(
@@ -83,7 +108,6 @@ async function request(path, options = {}) {
     return null;
   }
 
-  const method = (options.method || "GET").toUpperCase();
   if (
     ["POST", "PUT", "PATCH", "DELETE"].includes(method) &&
     typeof window !== "undefined"

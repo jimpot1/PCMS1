@@ -68,7 +68,8 @@ function apiRoot() {
 
 function xsrfToken() {
   const cookie = document.cookie
-    .split('; ')
+    .split(';')
+    .map((entry) => entry.trim())
     .find((entry) => entry.startsWith('XSRF-TOKEN='));
 
   return cookie ? decodeURIComponent(cookie.substring('XSRF-TOKEN='.length)) : '';
@@ -255,17 +256,21 @@ export async function getCurrentUserProfile() {
 }
 
 export async function createUserProfile(profile) {
-  const response = await fetch('/api/users', {
+  await getCsrfCookie();
+
+  const token = xsrfToken();
+  const response = await fetch(`${API_BASE_URL}/users`, {
     method: 'POST',
     credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
-      Accept: 'application/json'
+      Accept: 'application/json',
+      ...(token ? { 'X-XSRF-TOKEN': token } : {})
     },
     body: JSON.stringify(profile)
   });
 
-  const payload = await response.json();
+  const payload = await response.json().catch(() => ({}));
 
   if (!response.ok) {
     throw new Error(payload.message || 'Unable to create user profile.');
