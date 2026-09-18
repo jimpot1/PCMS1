@@ -64,7 +64,6 @@ class PurchaseRequestController extends Controller
             ->when($request->current_stage, fn ($query, $value) => $query->where('current_stage', $value))
             ->when($request->department_id, fn ($query, $value) => $query->where('department_id', $value))
             ->when($request->workflow_destination === 'purchase_workflow', fn ($query) => $query->where('request_type', 'purchase_order'))
-            ->when(in_array($request->workflow_destination, ['asset_assignment', 'supplies_inventory_release'], true), fn ($query) => $query->where('workflow_destination', $request->workflow_destination))
             ->when($request->request_type, fn ($query, $value) => $query->where('request_type', $value))
             ->when($request->date_from, fn ($query, $value) => $query->whereDate('created_at', '>=', $value))
             ->when($request->date_to, fn ($query, $value) => $query->whereDate('created_at', '<=', $value))
@@ -193,17 +192,22 @@ class PurchaseRequestController extends Controller
         $requests = PurchaseRequest::query()
             ->with('department', 'requester')
             ->where('status', 'approved')
-            ->where('request_type', 'request')
-            ->where('workflow_destination', 'asset_assignment')
+            ->where(function ($query) {
+                $query->where('workflow_destination', 'asset_assignment')
+                    ->orWhere(function ($inner) {
+                        $inner->where('request_type', 'request')
+                            ->whereJsonContains('line_items', ['workflow_destination' => 'asset_assignment'])
+                            ->orWhereJsonContains('line_items', ['source_type' => 'asset'])
+                            ->orWhereJsonContains('line_items', ['type' => 'asset']);
+                    });
+            })
             ->orderByDesc('created_at')
-            ->get()
-            ->filter(fn (PurchaseRequest $purchaseRequest) => collect($purchaseRequest->line_items ?? [])
-                ->contains(fn ($lineItem) => $this->storedLineItemIsType($lineItem, 'asset')))
-            ->values();
+            ->get();
 
         $rows = $requests->map(function (PurchaseRequest $purchaseRequest) {
             $assetLineItems = collect($purchaseRequest->line_items ?? [])
-                ->filter(fn ($lineItem) => $this->storedLineItemIsType($lineItem, 'asset'))
+                ->filter(fn ($lineItem) => ($lineItem['workflow_destination'] ?? $lineItem['destination'] ?? null) === 'asset_assignment'
+                    || (($lineItem['source_type'] ?? $lineItem['type'] ?? null) === 'asset'))
                 ->values()
                 ->all();
 
@@ -699,9 +703,6 @@ class PurchaseRequestController extends Controller
                 return $item;
             })->all();
             $validated['total_amount'] = $this->totalForLineItems($validated['line_items']);
-            if ($purchaseRequest->request_type === 'request') {
-                $validated['workflow_destination'] = $this->aggregateWorkflowDestination($validated['line_items']);
-            }
         }
 
         $purchaseRequest->update($validated);
@@ -849,9 +850,6 @@ class PurchaseRequestController extends Controller
 
             $update['line_items'] = $normalizedItems;
             $update['total_amount'] = $this->totalForLineItems($normalizedItems);
-            if ($requestType === 'request') {
-                $update['workflow_destination'] = $this->aggregateWorkflowDestination($normalizedItems);
-            }
         }
 
         if (array_key_exists('total_amount', $validated) && $requestType === 'purchase_order') {
@@ -1139,15 +1137,6 @@ class PurchaseRequestController extends Controller
     public function release(Request $request, PurchaseRequest $purchaseRequest): JsonResponse
     {
         $this->authorize('release', $purchaseRequest);
-
-        $containsAssetLine = collect($purchaseRequest->line_items ?? [])
-            ->contains(fn ($lineItem) => ($lineItem['source_type'] ?? $lineItem['type'] ?? null) === 'asset');
-        if ($purchaseRequest->workflow_destination === 'asset_assignment' || $containsAssetLine) {
-            return response()->json([
-                'message' => 'Asset requests must be processed through Asset Assignment, not the supply release queue.',
-                'workflow_destination' => 'asset_assignment',
-            ], 422);
-        }
 
         if ($purchaseRequest->request_type === 'request' && $purchaseRequest->workflow_destination === 'purchase_workflow') {
             $supplyLines = collect($purchaseRequest->line_items ?? [])
@@ -1777,12 +1766,7 @@ HTML;
                     $lineItem['source_type'] ?? $lineItem['type'] ?? null,
                     $lineItem['source_id'] ?? null,
                 );
-                $catalog = $this->resolveCatalogItem($sourceType, $sourceId);
-                if (in_array($sourceType, ['asset', 'supply'], true) && ! $catalog) {
-                    throw ValidationException::withMessages([
-                        'line_items' => 'The selected catalog item could not be verified. Please select the item again.',
-                    ]);
-                }
+                $catalog = $this->resolveCatalogItem($sourceType, $sourceId, $name);
                 $manualUnitCost = (float) ($lineItem['unit_price'] ?? $lineItem['unitPrice'] ?? $lineItem['estimated_cost'] ?? 0);
                 $unitCost = $catalog
                     ? (float) ($catalog['unit_cost'] ?? $catalog['unit_price'] ?? 0)
@@ -1863,7 +1847,7 @@ HTML;
             ->all();
     }
 
-    protected function resolveCatalogItem(?string $sourceType, mixed $sourceId): ?array
+    protected function resolveCatalogItem(?string $sourceType, mixed $sourceId, string $name): ?array
     {
         if ($sourceType === 'supply' && $sourceId) {
             $supply = Supply::find($sourceId);
@@ -1875,7 +1859,22 @@ HTML;
             return $asset ? $this->catalogRowForAsset($asset) : null;
         }
 
-        return null;
+        $supply = Supply::query()
+            ->where('name', 'like', "%{$name}%")
+            ->orWhere('sku', 'like', "%{$name}%")
+            ->first();
+
+        if ($supply) {
+            return $this->catalogRowForSupply($supply);
+        }
+
+        $asset = Asset::with('department', 'category')
+            ->where('name', 'like', "%{$name}%")
+            ->orWhere('property_number', 'like', "%{$name}%")
+            ->orWhere('serial_number', 'like', "%{$name}%")
+            ->first();
+
+        return $asset ? $this->catalogRowForAsset($asset) : null;
     }
 
     protected function catalogRowForSupply(Supply $supply): array
@@ -2072,17 +2071,6 @@ HTML;
             'asset' => $available >= $qty ? 'asset_assignment' : 'purchase_workflow',
             default => 'purchase_workflow',
         };
-    }
-
-    protected function storedLineItemIsType(array $lineItem, string $expectedType): bool
-    {
-        if (($lineItem['source_type'] ?? $lineItem['type'] ?? null) !== $expectedType || empty($lineItem['source_id'])) {
-            return false;
-        }
-
-        return $expectedType === 'asset'
-            ? Asset::query()->whereKey($lineItem['source_id'])->exists()
-            : Supply::query()->whereKey($lineItem['source_id'])->exists();
     }
 
     protected function aggregateWorkflowDestination(array $items): string

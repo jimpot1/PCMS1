@@ -892,15 +892,31 @@ export async function ppmoReleaseQueue() {
   const [purchaseResponse, requestResponse, gatePassResponse] =
     await Promise.all([
       request(
-        "/purchase-requests?current_stage=property_custodian&status=approved&workflow_destination=supplies_inventory_release&per_page=200",
+        "/purchase-requests?current_stage=property_custodian&status=approved&per_page=200",
       ),
-      request("/purchase-requests?current_stage=ppmo_staff&status=approved&workflow_destination=supplies_inventory_release&per_page=200"),
+      request("/purchase-requests?current_stage=ppmo_staff&status=approved&per_page=200"),
       request("/gate-passes?deliverable=1&per_page=200"),
     ]);
 
   const filteredPurchaseRequests = [
-    ...(purchaseResponse?.data || []),
-    ...(requestResponse?.data || []),
+    ...(purchaseResponse?.data || []).filter((item) => {
+      if (item?.request_type === "purchase_order") return false;
+      const lineItems = Array.isArray(item?.line_items) ? item.line_items : [];
+      return !lineItems.some((lineItem) => {
+        const type = lineItem?.source_type ?? lineItem?.type ?? null;
+        const destination = lineItem?.workflow_destination ?? lineItem?.destination ?? item?.workflow_destination ?? null;
+        return type === "asset" || destination === "asset_assignment";
+      });
+    }),
+    ...(requestResponse?.data || []).filter((item) => {
+      if (item?.request_type === "purchase_order") return false;
+      const lineItems = Array.isArray(item?.line_items) ? item.line_items : [];
+      return !lineItems.some((lineItem) => {
+        const type = lineItem?.source_type ?? lineItem?.type ?? null;
+        const destination = lineItem?.workflow_destination ?? lineItem?.destination ?? item?.workflow_destination ?? null;
+        return type === "asset" || destination === "asset_assignment";
+      });
+    }),
   ];
 
   return {

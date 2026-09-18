@@ -139,7 +139,7 @@ class AssetAssignmentController extends Controller
             'assigned_by' => ['bail', 'nullable', 'uuid', 'exists:users,id'],
             'assignment_type' => ['nullable', 'in:permanent,temporary,borrowed'],
             'assigned_at' => ['nullable', 'date'],
-            'due_date' => ['nullable', 'date'],
+            'due_date' => ['nullable', 'required_if:assignment_type,temporary', 'date', 'after_or_equal:today'],
             'quantity' => ['nullable', 'integer', 'min:1'],
             'purpose' => ['nullable', 'string', 'max:1000'],
             'condition_before' => ['nullable', 'in:excellent,good,fair,needs_repair,damaged'],
@@ -466,7 +466,7 @@ class AssetAssignmentController extends Controller
 
         $validated = $request->validate([
             'assignment_type' => ['sometimes', 'in:permanent,temporary,borrowed'],
-            'due_date' => ['sometimes', 'nullable', 'date'],
+            'due_date' => ['sometimes', 'nullable', 'required_if:assignment_type,temporary', 'date', 'after_or_equal:today'],
             'purpose' => ['sometimes', 'nullable', 'string', 'max:1000'],
             'notes' => ['sometimes', 'nullable', 'string'],
             'quantity' => ['sometimes', 'integer', 'min:1'],

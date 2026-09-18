@@ -10,6 +10,7 @@ import {
   Boxes,
   Layers,
   Building2,
+  CalendarClock,
   Camera,
   CheckCircle2,
   ChevronDown,
@@ -4055,7 +4056,20 @@ function AssetReturnPage() {
   const [message, setMessage] = useState(null);
   const [returnAssignment, setReturnAssignment] = useState(null);
   const [returnSource, setReturnSource] = useState("inspect");
-  const [returnValues, setReturnValues] = useState({ condition_after: "good", notes: "" });
+  const [returnValues, setReturnValues] = useState({
+    condition_after: "good",
+    notes: "",
+    status: "ready_for_inventory",
+    exception_type: "none",
+  });
+  const [returnChecklist, setReturnChecklist] = useState({
+    barcode_verified: true,
+    accessories_checked: false,
+    condition_confirmed: true,
+    receiver_confirmed: false,
+  });
+  const [searchTerm, setSearchTerm] = useState("");
+  const [filterStatus, setFilterStatus] = useState("all");
   const [saving, setSaving] = useState(false);
 
   const formatAssignmentDate = (value) => {
@@ -4079,15 +4093,75 @@ function AssetReturnPage() {
     }
   };
 
-  useEffect(() => { loadReturns(); }, []);
+  useEffect(() => {
+    loadReturns();
+  }, []);
 
   const openReturn = (assignment, source = "inspect") => {
     setMessage(null);
     setError(null);
-    setReturnValues({ condition_after: "good", notes: "" });
+    setReturnValues({
+      condition_after: "good",
+      notes: "",
+      status: "ready_for_inventory",
+      exception_type: "none",
+    });
+    setReturnChecklist({
+      barcode_verified: true,
+      accessories_checked: false,
+      condition_confirmed: true,
+      receiver_confirmed: false,
+    });
     setReturnAssignment(assignment);
     setReturnSource(source);
   };
+
+  const active = assignments.filter((item) => ["active", "pending_acceptance"].includes(item.status));
+  const returned = assignments.filter((item) => item.status === "returned");
+  const dueSoon = assignments.filter((item) => {
+    if (item.status !== "active" || !item.due_date) return false;
+    const due = new Date(item.due_date);
+    const now = new Date();
+    const daysLeft = (due - now) / (1000 * 60 * 60 * 24);
+    return daysLeft <= 7 && daysLeft >= 0;
+  }).length;
+
+  const toggleChecklist = (field) => {
+    setReturnChecklist((current) => ({
+      ...current,
+      [field]: !current[field],
+    }));
+  };
+
+  const filterAssignments = (items) => {
+    const query = searchTerm.trim().toLowerCase();
+
+    return items.filter((assignment) => {
+      const matchesQuery =
+        !query ||
+        (assignment.asset?.name || `Asset #${assignment.asset_id}`)
+          .toLowerCase()
+          .includes(query) ||
+        (assignment.asset?.property_number || "").toLowerCase().includes(query) ||
+        employeeName(assignment).toLowerCase().includes(query);
+
+      const matchesFilter =
+        filterStatus === "all" ||
+        (filterStatus === "due_soon" && dueSoon > 0 && assignment.due_date) ||
+        (filterStatus === "pending" && assignment.status === "pending_acceptance") ||
+        (filterStatus === "active" && assignment.status === "active");
+
+      return matchesQuery && matchesFilter;
+    });
+  };
+
+  const unitNumber = (assignment) => {
+    const unit = assignment?.assetUnit || assignment?.asset_unit;
+    return unit?.unit_code?.match(/-(\d{3})$/)?.[1] || "N/A";
+  };
+
+  const employeeName = (assignment) =>
+    formatAssignmentUser(assignment?.assigned_to || assignment?.assignedTo || {});
 
   const handleStartReturn = () => {
     if (!active[0]) return;
@@ -4102,9 +4176,29 @@ function AssetReturnPage() {
   const submitReturn = async (event) => {
     event.preventDefault();
     if (!returnAssignment) return;
+
+    const checklistSummary = Object.entries(returnChecklist)
+      .filter(([_, value]) => value)
+      .map(([key]) => key.replace(/_/g, " "))
+      .join(", ");
+
+    const detailedNotes = [
+      returnValues.notes,
+      returnValues.exception_type !== "none" ? `Exception type: ${returnValues.exception_type}` : "",
+      returnValues.status !== "ready_for_inventory" ? `Return status: ${returnValues.status}` : "",
+      checklistSummary ? `Inspection checks: ${checklistSummary}` : "",
+    ]
+      .filter(Boolean)
+      .join(" | ");
+
     setSaving(true);
+    setError(null);
     try {
-      await pcmsApi.returnAssignment(returnAssignment.id, returnValues.notes, returnValues.condition_after);
+      await pcmsApi.returnAssignment(
+        returnAssignment.id,
+        detailedNotes,
+        returnValues.condition_after,
+      );
       setReturnAssignment(null);
       setMessage("Asset returned successfully and inventory was updated.");
       await loadReturns();
@@ -4115,39 +4209,273 @@ function AssetReturnPage() {
     }
   };
 
-  const active = assignments.filter((item) => ["active", "pending_acceptance"].includes(item.status));
-  const returned = assignments.filter((item) => item.status === "returned");
-  const unitNumber = (assignment) => {
-    const unit = assignment.assetUnit || assignment.asset_unit;
-    return unit?.unit_code?.match(/-(\d{3})$/)?.[1] || "N/A";
-  };
-  const employeeName = (assignment) => formatAssignmentUser(assignment.assigned_to || assignment.assignedTo || {});
+  const visibleActive = filterAssignments(active);
+  const visibleReturned = filterAssignments(returned).slice(0, 6);
 
   return (
-    <ModulePage title="Asset Return" subtitle="Inspect assigned property, record its condition, and return it to available inventory." primary="Start Return" icon={PackageCheck} onPrimary={handleStartReturn}>
+    <ModulePage
+      title="Asset Return"
+      subtitle="Inspect assigned property, record its condition, and return it to available inventory."
+      primary="Start Return"
+      icon={PackageCheck}
+      onPrimary={handleStartReturn}
+    >
       {error && <div className="form-message error">{error}</div>}
       {message && <div className="form-message success">{message}</div>}
+
       <section className="metric-grid compact">
         <StatCard label="Awaiting Return" value={active.length} change="Active assignments" icon={Timer} tone="orange" />
+        <StatCard label="Due This Week" value={dueSoon} change="Items approaching due date" icon={CalendarClock} tone="amber" />
         <StatCard label="Returned" value={returned.length} change="Completed check-ins" icon={PackageCheck} tone="green" />
         <StatCard label="Total Records" value={assignments.length} change="Assignment history" icon={History} tone="blue" />
       </section>
+
+      <section className="return-workflow">
+        <div className="workflow-step">
+          <span className="step-number">1</span>
+          <div>
+            <strong>Verify</strong>
+            <small>Match the asset tag or QR code to the assigned property.</small>
+          </div>
+        </div>
+        <div className="workflow-step">
+          <span className="step-number">2</span>
+          <div>
+            <strong>Inspect</strong>
+            <small>Check physical condition, accessories, and missing items.</small>
+          </div>
+        </div>
+        <div className="workflow-step">
+          <span className="step-number">3</span>
+          <div>
+            <strong>Accept</strong>
+            <small>Finalize the return and restock the item to inventory.</small>
+          </div>
+        </div>
+      </section>
+
       <section className="panel role-panel">
-        <PanelHeader title="Assets Awaiting Return" subtitle="Select an assignment to complete the inspection and check-in." />
-        {loading ? <div className="loading-card">Loading return records...</div> : active.length === 0 ? <p className="empty-state">No active assets are waiting for return.</p> : (
-          <div className="approval-list">{active.map((assignment) => (
-            <article className="approval-card" key={assignment.id}>
-              <div><strong>{assignment.asset?.name || `Asset #${assignment.asset_id}`}</strong><p>{assignment.asset?.property_number || "No property number"} · Physical Unit {unitNumber(assignment)}</p><small>{employeeName(assignment)} · Assigned {formatAssignmentDate(assignment.assigned_at)}</small></div>
-              <button className="primary-button" type="button" onClick={() => handleInspectReturn(assignment)}><PackageCheck size={16} /> Inspect & Return</button>
-            </article>
-          ))}</div>
+        <div className="panel-header-inline">
+          <PanelHeader title="Assets Awaiting Return" subtitle="Select an assignment to complete the inspection and check-in." />
+          <div className="return-controls">
+            <input
+              type="search"
+              className="search-box"
+              value={searchTerm}
+              onChange={(event) => setSearchTerm(event.target.value)}
+              placeholder="Search asset or employee"
+              aria-label="Search asset returns"
+            />
+            <select className="filter-select" value={filterStatus} onChange={(event) => setFilterStatus(event.target.value)}>
+              <option value="all">All</option>
+              <option value="active">Active</option>
+              <option value="pending">Pending acceptance</option>
+              <option value="due_soon">Due soon</option>
+            </select>
+          </div>
+        </div>
+
+        {loading ? (
+          <div className="loading-card">Loading return records...</div>
+        ) : visibleActive.length === 0 ? (
+          <p className="empty-state">No active assets match the current return filter.</p>
+        ) : (
+          <div className="approval-list">
+            {visibleActive.map((assignment) => (
+              <article className="approval-card" key={assignment.id}>
+                <div>
+                  <strong>{assignment.asset?.name || `Asset #${assignment.asset_id}`}</strong>
+                  <p>
+                    {assignment.asset?.property_number || "No property number"} · Physical Unit {unitNumber(assignment)}
+                  </p>
+                  <small>
+                    {employeeName(assignment)} · Assigned {formatAssignmentDate(assignment.assigned_at)}
+                  </small>
+                </div>
+                <button className="primary-button" type="button" onClick={() => handleInspectReturn(assignment)}>
+                  <PackageCheck size={16} /> Inspect & Return
+                </button>
+              </article>
+            ))}
+          </div>
         )}
       </section>
+
       <section className="panel role-panel">
         <PanelHeader title="Return History" subtitle="Previously checked-in assets and their recorded condition." />
-        {returned.length === 0 ? <p className="empty-state">No completed returns yet.</p> : <div className="table-card"><table><thead><tr><th>Asset</th><th>Employee</th><th>Physical Unit</th><th>Returned</th><th>Condition</th></tr></thead><tbody>{returned.map((assignment) => <tr key={assignment.id}><td><strong>{assignment.asset?.name || `Asset #${assignment.asset_id}`}</strong><span>{assignment.asset?.property_number || "N/A"}</span></td><td>{employeeName(assignment)}</td><td>{unitNumber(assignment)}</td><td>{formatAssignmentDate(assignment.returned_at)}</td><td><span className="status success">{assignment.condition_after || "good"}</span></td></tr>)}</tbody></table></div>}
+        {visibleReturned.length === 0 ? (
+          <p className="empty-state">No completed returns yet.</p>
+        ) : (
+          <div className="table-card">
+            <table>
+              <thead>
+                <tr>
+                  <th>Asset</th>
+                  <th>Employee</th>
+                  <th>Physical Unit</th>
+                  <th>Returned</th>
+                  <th>Condition</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visibleReturned.map((assignment) => (
+                  <tr key={assignment.id}>
+                    <td>
+                      <strong>{assignment.asset?.name || `Asset #${assignment.asset_id}`}</strong>
+                      <span>{assignment.asset?.property_number || "N/A"}</span>
+                    </td>
+                    <td>{employeeName(assignment)}</td>
+                    <td>{unitNumber(assignment)}</td>
+                    <td>{formatAssignmentDate(assignment.returned_at)}</td>
+                    <td>
+                      <span className="status success">{assignment.condition_after || "good"}</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </section>
-      {returnAssignment && <div className="modal-overlay" role="dialog" aria-modal="true"><div className="modal-card return-asset-modal"><div className="modal-header"><h3>Inspect &amp; Return Asset</h3><button className="icon-button" type="button" onClick={() => setReturnAssignment(null)} aria-label="Close"><X size={18} /></button></div><div className="asset-description-card return-asset-summary"><div className="return-asset-row"><span>Asset</span><strong>{returnAssignment.asset?.name || `Asset #${returnAssignment.asset_id}`}</strong></div><div className="return-asset-row"><span>Property No.</span><strong>{returnAssignment.asset?.property_number || "N/A"}</strong></div><div className="return-asset-row"><span>Physical Unit</span><strong>{unitNumber(returnAssignment)}</strong></div><div className="return-asset-row"><span>Assigned To</span><strong>{employeeName(returnAssignment)}</strong></div></div><form className="return-form" onSubmit={submitReturn}><div className="return-field"><label htmlFor="return-condition">Condition After Return</label><select id="return-condition" value={returnValues.condition_after} onChange={(event) => setReturnValues((current) => ({ ...current, condition_after: event.target.value }))}><option value="excellent">Excellent</option><option value="good">Good</option><option value="fair">Fair</option><option value="needs_repair">Needs Repair</option><option value="damaged">Damaged</option></select></div><div className="return-field"><label htmlFor="return-notes">Inspection Notes</label><textarea id="return-notes" rows={3} value={returnValues.notes} onChange={(event) => setReturnValues((current) => ({ ...current, notes: event.target.value }))} placeholder="Record inspection findings or return notes" /></div><div className="modal-actions"><button className="secondary-button" type="button" onClick={() => setReturnAssignment(null)}>Cancel</button><button className="primary-button" type="submit" disabled={saving}>{saving ? "Recording..." : "Confirm Return"}</button></div></form></div></div>}
+
+      {returnAssignment && (
+        <div className="modal-overlay" role="dialog" aria-modal="true">
+          <div className="modal-card return-asset-modal">
+            <div className="modal-header">
+              <h3>{returnSource === "start" ? "Start Return Process" : "Inspect & Return Asset"}</h3>
+              <button className="icon-button" type="button" onClick={() => setReturnAssignment(null)} aria-label="Close">
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="asset-description-card return-asset-summary">
+              <div className="return-asset-row">
+                <span>Asset</span>
+                <strong>{returnAssignment.asset?.name || `Asset #${returnAssignment.asset_id}`}</strong>
+              </div>
+              <div className="return-asset-row">
+                <span>Property No.</span>
+                <strong>{returnAssignment.asset?.property_number || "N/A"}</strong>
+              </div>
+              <div className="return-asset-row">
+                <span>Physical Unit</span>
+                <strong>{unitNumber(returnAssignment)}</strong>
+              </div>
+              <div className="return-asset-row">
+                <span>Assigned To</span>
+                <strong>{employeeName(returnAssignment)}</strong>
+              </div>
+            </div>
+
+            <form className="return-form" onSubmit={submitReturn}>
+              <div className="return-field">
+                <label htmlFor="return-condition">Condition After Return</label>
+                <select
+                  id="return-condition"
+                  value={returnValues.condition_after}
+                  onChange={(event) =>
+                    setReturnValues((current) => ({
+                      ...current,
+                      condition_after: event.target.value,
+                    }))
+                  }
+                >
+                  <option value="excellent">Excellent</option>
+                  <option value="good">Good</option>
+                  <option value="fair">Fair</option>
+                  <option value="needs_repair">Needs Repair</option>
+                  <option value="damaged">Damaged</option>
+                </select>
+              </div>
+
+              <div className="return-field">
+                <label htmlFor="return-status">Return Status</label>
+                <select
+                  id="return-status"
+                  value={returnValues.status}
+                  onChange={(event) =>
+                    setReturnValues((current) => ({
+                      ...current,
+                      status: event.target.value,
+                    }))
+                  }
+                >
+                  <option value="ready_for_inventory">Ready for Inventory</option>
+                  <option value="exception_review">Exception Review</option>
+                  <option value="hold_for_repair">Hold for Repair</option>
+                  <option value="pending">Pending Final Acceptance</option>
+                </select>
+              </div>
+
+              <div className="return-field">
+                <label htmlFor="return-exception">Exception Type</label>
+                <select
+                  id="return-exception"
+                  value={returnValues.exception_type}
+                  onChange={(event) =>
+                    setReturnValues((current) => ({
+                      ...current,
+                      exception_type: event.target.value,
+                    }))
+                  }
+                >
+                  <option value="none">No exception</option>
+                  <option value="damaged_asset">Damaged asset</option>
+                  <option value="missing_accessories">Missing accessories</option>
+                  <option value="lost_item">Lost item</option>
+                  <option value="repair_required">Repair required</option>
+                </select>
+              </div>
+
+              <div className="inspection-checklist">
+                <label>Inspection Checklist</label>
+                <div className="checklist-grid">
+                  {[
+                    { key: "barcode_verified", label: "Asset tag scanned and matched" },
+                    { key: "accessories_checked", label: "Accessories and serials checked" },
+                    { key: "condition_confirmed", label: "Physical condition confirmed" },
+                    { key: "receiver_confirmed", label: "Receiver confirmed handover" },
+                  ].map((item) => (
+                    <label key={item.key} className="check-item">
+                      <input
+                        type="checkbox"
+                        checked={returnChecklist[item.key]}
+                        onChange={() => toggleChecklist(item.key)}
+                      />
+                      <span>{item.label}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <div className="return-field">
+                <label htmlFor="return-notes">Inspection Notes</label>
+                <textarea
+                  id="return-notes"
+                  rows={4}
+                  value={returnValues.notes}
+                  onChange={(event) =>
+                    setReturnValues((current) => ({
+                      ...current,
+                      notes: event.target.value,
+                    }))
+                  }
+                  placeholder="Record inspection findings, item condition, missing items, or other remarks."
+                />
+              </div>
+
+              <div className="modal-actions">
+                <button className="secondary-button" type="button" onClick={() => setReturnAssignment(null)}>
+                  Cancel
+                </button>
+                <button className="primary-button" type="submit" disabled={saving}>
+                  {saving ? "Recording..." : "Confirm Return"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </ModulePage>
   );
 }
@@ -4157,7 +4485,6 @@ function EnhancedAssignmentsPage() {
     asset_id: "",
     asset_unit_id: "",
     asset_unit_ids: [],
-    asset_unit_search: "",
     assigned_to: "",
     assignment_type: "permanent",
     assigned_at: new Date().toISOString().slice(0, 10),
@@ -4328,21 +4655,16 @@ function EnhancedAssignmentsPage() {
             Number(activeQuantityByAsset[asset?.id] || 0),
         );
   const availableAssetUnits = useMemo(
-    () => (assetUnits || []).filter((unit) => unit.status === "available" && !["lost", "disposed", "damaged", "maintenance", "unserviceable", "reserved"].includes(unit.status)),
+    () => (assetUnits || []).filter((unit) => unit.status === "available"),
     [assetUnits],
   );
-  const selectedUnitIds = useMemo(
-    () => (formValues.asset_unit_ids || []).map((id) => Number(id)).filter(Number.isInteger),
-    [formValues.asset_unit_ids],
-  );
-  const requestedQuantity = Math.max(1, Number(formValues.quantity || 1));
-  const hasTrackedUnits = Boolean(formValues.asset_id) && assetUnits.length > 0;
-  const unitSelectionInvalid = hasTrackedUnits && selectedUnitIds.length !== requestedQuantity;
+  const autoSelectedUnitIds = useMemo(() => {
+    if (!formValues.asset_id || availableAssetUnits.length === 0) return [];
+    const requested = Number(formValues.quantity || 1);
+    return availableAssetUnits.slice(0, Math.max(0, requested)).map((unit) => unit.id);
+  }, [availableAssetUnits, formValues.asset_id, formValues.quantity]);
   const selectedAsset = assetsList.find(
     (asset) => String(asset.id) === String(formValues.asset_id),
-  );
-  const assignmentSelectionBlocked = Boolean(selectedAsset) && (
-    unitSelectionInvalid || (!hasTrackedUnits && requestedQuantity > 1)
   );
   const selectedUser = usersList.find(
     (user) => String(user.id) === String(formValues.assigned_to),
@@ -4431,23 +4753,6 @@ function EnhancedAssignmentsPage() {
     return () => { ignore = true; };
   }, [formValues.asset_id]);
 
-  useEffect(() => {
-    if (!formValues.asset_id) return;
-    const availableIds = availableAssetUnits.map((unit) => Number(unit.id));
-    setFormValues((current) => {
-      const validSelected = (current.asset_unit_ids || [])
-        .map((id) => Number(id))
-        .filter((id) => availableIds.includes(id));
-      const nextSelected = validSelected.slice(0, Math.max(1, Number(current.quantity || 1)));
-      for (const id of availableIds) {
-        if (nextSelected.length >= Math.max(1, Number(current.quantity || 1))) break;
-        if (!nextSelected.includes(id)) nextSelected.push(id);
-      }
-      if (JSON.stringify(nextSelected) === JSON.stringify(current.asset_unit_ids || [])) return current;
-      return { ...current, asset_unit_ids: nextSelected, asset_unit_id: nextSelected[0] || "" };
-    });
-  }, [availableAssetUnits, formValues.asset_id, formValues.quantity]);
-
   const openCreateDialog = () => {
     setCreateError(null);
     setCreateSuccess(null);
@@ -4470,7 +4775,6 @@ function EnhancedAssignmentsPage() {
     setFormValues({
       ...makeEmptyForm(),
       asset_id: asset?.id ? String(asset.id) : String(lineItem.source_id || ""),
-      asset_unit_ids: [],
       assigned_to: purchaseRequest.requested_by || "",
       quantity: String(lineItem.approved_qty || lineItem.approved_quantity || lineItem.qty || lineItem.quantity || 1),
       purpose: purchaseRequest.purpose || "",
@@ -4513,10 +4817,10 @@ function EnhancedAssignmentsPage() {
     try {
       const assetId = resolveSelectedAssetId();
       const selectedQuantity = Number(formValues.quantity || 1);
-      const selectedPhysicalUnitIds = selectedUnitIds;
+      const autoSelectedIds = availableAssetUnits.slice(0, Math.max(0, selectedQuantity)).map((unit) => unit.id);
 
-      if (hasTrackedUnits && selectedPhysicalUnitIds.length !== selectedQuantity) {
-        setCreateError(`Select exactly ${selectedQuantity} available physical units before creating the assignment.`);
+      if (selectedQuantity > autoSelectedIds.length) {
+        setCreateError(`Only ${autoSelectedIds.length} of ${selectedQuantity} requested assets are currently available.`);
         return;
       }
 
@@ -4524,9 +4828,8 @@ function EnhancedAssignmentsPage() {
         ...formValues,
         purchase_request_id: selectedAssetRequestId,
         asset_id: Number(assetId) || assetId,
-        asset_unit_id: selectedPhysicalUnitIds[0] || null,
-        asset_unit_ids: selectedPhysicalUnitIds,
-        physical_unit_ids: selectedPhysicalUnitIds,
+        asset_unit_id: formValues.asset_unit_id || autoSelectedIds[0] || null,
+        asset_unit_ids: autoSelectedIds,
         quantity: selectedQuantity,
         due_date: formValues.due_date || null,
         assigned_at: formValues.assigned_at || null,
@@ -5447,73 +5750,33 @@ function EnhancedAssignmentsPage() {
                     required
                   />
                 </label>
-                {selectedAsset && (
-                  <div className="physical-unit-selector full-width">
-                    <div className="physical-unit-selector-header">
-                      <div>
-                        <strong>Physical Units</strong>
-                        <span>Only available units for the selected asset can be assigned.</span>
-                      </div>
-                      <strong>{selectedUnitIds.length} of {requestedQuantity} selected</strong>
-                    </div>
-                    {assetUnits.length === 0 ? (
-                      <div className="physical-unit-empty">
-                        No individually tracked physical units are available for this asset.
-                        {requestedQuantity > 1 && <strong> Multi-unit assignment is unavailable until physical units are registered.</strong>}
-                      </div>
-                    ) : (
-                      <>
-                        <div className="physical-unit-toolbar">
-                          <input
-                            type="search"
-                            placeholder="Search physical unit..."
-                            value={formValues.asset_unit_search || ""}
-                            onChange={(event) => updateField("asset_unit_search", event.target.value)}
-                          />
-                          <button
-                            type="button"
-                            className="secondary-button"
-                            onClick={() => updateField("asset_unit_ids", availableAssetUnits.slice(0, requestedQuantity).map((unit) => unit.id))}
-                          >
-                            Auto-select available units
-                          </button>
-                        </div>
-                        <div className="physical-unit-list">
-                          {assetUnits
-                            .filter((unit) => unit.status === "available" && !["lost", "disposed", "damaged", "maintenance", "unserviceable", "reserved"].includes(unit.status))
-                            .filter((unit) => {
-                              const search = String(formValues.asset_unit_search || "").trim().toLowerCase();
-                              if (!search) return true;
-                              return [unit.unit_code, unit.serial_number, unit.id].some((value) => String(value || "").toLowerCase().includes(search));
-                            })
-                            .map((unit) => {
-                              const checked = selectedUnitIds.includes(Number(unit.id));
-                              return (
-                                <label className={`physical-unit-option ${checked ? "selected" : ""}`} key={unit.id}>
-                                  <input
-                                    type="checkbox"
-                                    checked={checked}
-                                    onChange={() => {
-                                      const next = checked
-                                        ? selectedUnitIds.filter((id) => id !== Number(unit.id))
-                                        : [...selectedUnitIds, Number(unit.id)];
-                                      if (next.length <= requestedQuantity) updateField("asset_unit_ids", next);
-                                    }}
-                                  />
-                                  <span className="physical-unit-copy">
-                                    <strong>{unit.unit_code || `Unit ${unit.id}`}</strong>
-                                    <small>Asset ID: {unit.id} | Condition: {unit.condition || selectedAsset.condition || "Good"} | Available</small>
-                                  </span>
-                                </label>
-                              );
-                            })}
-                        </div>
-                        {unitSelectionInvalid && (
-                          <p className="physical-unit-warning">Only {availableAssetUnits.length} of {requestedQuantity} requested physical units are currently available, or the selection is incomplete.</p>
-                        )}
-                      </>
-                    )}
-                  </div>
+                {Number(formValues.quantity || 1) === 1 && (
+                  <label>
+                    Physical Unit
+                    <select
+                      value={formValues.asset_unit_id || ""}
+                      onChange={(event) =>
+                        updateField("asset_unit_id", event.target.value)
+                      }
+                      disabled={!selectedAsset || assetUnits.length === 0}
+                    >
+                      <option value="">
+                        {assetUnits.length
+                          ? "Auto-select available unit"
+                          : "No unit records available"}
+                      </option>
+                      {assetUnits
+                        .filter((unit) => unit.status === "available")
+                        .map((unit) => (
+                          <option key={unit.id} value={unit.id}>
+                            ID {unit.id} - {unit.unit_code || "No unit code"}
+                            {unit.serial_number
+                              ? ` - SN ${unit.serial_number}`
+                              : ""}
+                          </option>
+                        ))}
+                    </select>
+                  </label>
                 )}
                 <label>
                   Condition Before Assignment
@@ -5603,6 +5866,11 @@ function EnhancedAssignmentsPage() {
                     - Warranty{" "}
                     {formatAssignmentDate(selectedAsset.warranty_until)}
                   </p>
+                  {Number(formValues.quantity || 1) === 1 && (
+                    <p style={{ margin: "6px 0 0" }}>
+                      Unit ID: {formValues.asset_unit_id || "Auto-selected on save"} - Unit Code: {assetUnits.find((unit) => String(unit.id) === String(formValues.asset_unit_id))?.unit_code || "N/A"}
+                    </p>
+                  )}
                   {selectedAsset.qr_code_path && (
                     <img
                       src={assetQrCodeUrl(selectedAsset.qr_code_path)}
@@ -5615,6 +5883,36 @@ function EnhancedAssignmentsPage() {
                       }}
                     />
                   )}
+                </div>
+              )}
+              {selectedAsset && Number(formValues.quantity || 1) > 1 && (
+                <div className="panel" style={{ margin: "12px 0" }}>
+                  <PanelHeader
+                    title="Selected Physical Assets"
+                    subtitle={
+                      autoSelectedUnitIds.length >= Number(formValues.quantity || 1)
+                        ? `Ready to reserve ${formValues.quantity} physical units.`
+                        : `Only ${autoSelectedUnitIds.length} of ${formValues.quantity} requested assets are currently available.`
+                    }
+                  />
+                  <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
+                    {autoSelectedUnitIds.length > 0 ? (
+                      availableAssetUnits
+                        .filter((unit) => autoSelectedUnitIds.includes(unit.id))
+                        .map((unit) => (
+                          <div key={unit.id} style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12, background: "#f8fafc" }}>
+                            <div style={{ fontWeight: 700, marginBottom: 4 }}>Asset ID: {unit.id}</div>
+                            <div>Property No.: {unit.property_number || selectedAsset.property_number || selectedAsset.asset_id}</div>
+                            <div>Asset Name: {selectedAsset.name}</div>
+                            <div>Serial No.: {unit.serial_number || "N/A"}</div>
+                            <div>Condition: {unit.condition || selectedAsset.condition || "good"}</div>
+                            <div>Availability: {unit.status}</div>
+                          </div>
+                        ))
+                    ) : (
+                      <p className="small-text">No available physical units match the requested quantity.</p>
+                    )}
+                  </div>
                 </div>
               )}
               {selectedUser && (
@@ -5677,7 +5975,7 @@ function EnhancedAssignmentsPage() {
                 <button
                   type="submit"
                   className="primary-button"
-                  disabled={createLoading || assignmentSelectionBlocked}
+                  disabled={createLoading}
                 >
                   {createLoading ? "Creating..." : "Create Assignment"}
                 </button>
@@ -7941,9 +8239,29 @@ function TransferPage() {
       {success && <div className="form-message success">{success}</div>}
 
       {showForm && (
-        <div className="panel form-panel">
-          <h3>Create Transfer Request</h3>
-          <form onSubmit={handleCreateTransfer}>
+        <div
+          className="modal-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="create-transfer-title"
+          onClick={() => setShowForm(false)}
+        >
+          <div className="modal-card transfer-form-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <h3 id="create-transfer-title">Create Transfer Request</h3>
+                <p className="text-muted">Move an asset to another department.</p>
+              </div>
+              <button
+                className="icon-button"
+                type="button"
+                onClick={() => setShowForm(false)}
+                aria-label="Close transfer request"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <form onSubmit={handleCreateTransfer}>
             <div className="field-row">
               <label>Asset</label>
               <div style={{ position: "relative" }}>
@@ -8201,7 +8519,8 @@ function TransferPage() {
                 Cancel
               </button>
             </div>
-          </form>
+            </form>
+          </div>
         </div>
       )}
 
@@ -11800,6 +12119,7 @@ function GatePassPage() {
 }
 
 function AuditPage({ currentUser }) {
+  const todayIso = new Date().toISOString().slice(0, 10);
   const [audits, setAudits] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -11854,6 +12174,10 @@ function AuditPage({ currentUser }) {
 
   const handleCreateAudit = async (e) => {
     e.preventDefault();
+    if (formData.scheduled_date < todayIso) {
+      setError("Scheduled date cannot be in the past.");
+      return;
+    }
     try {
       await pcmsApi.createAudit(formData);
       setSuccess("Audit scheduled successfully");
@@ -12014,6 +12338,7 @@ function AuditPage({ currentUser }) {
               <label>Scheduled Date</label>
               <input
                 type="date"
+                min={todayIso}
                 value={formData.scheduled_date}
                 onChange={(e) =>
                   setFormData({ ...formData, scheduled_date: e.target.value })
@@ -12561,15 +12886,23 @@ function MobileAuditScanner({ audit, departments, onClose }) {
 
   return (
     <div className="modal-overlay" role="dialog" aria-modal="true">
-      <div className="modal-card">
+      <div className="modal-card mobile-audit-scanner-card">
         <div className="modal-header">
-          <h3>Scan with Camera - {audit.area}</h3>
+          <div className="mobile-audit-scanner-heading">
+            <span className="audit-modal-icon"><Camera size={18} /></span>
+            <div>
+              <p className="modal-eyebrow">Physical Audit</p>
+              <h3>Scan asset tag</h3>
+              <p className="modal-subtitle">{audit.area} · Point the camera at a registered QR code.</p>
+            </div>
+          </div>
           <button className="icon-button" onClick={onClose} aria-label="Close">
             <X size={18} />
           </button>
         </div>
 
-        <div className="field-row">
+        <div className="mobile-audit-scanner-body">
+        <div className="field-row mobile-audit-department-field">
           <label>Found In Department</label>
           <select
             value={foundDepartmentId}
@@ -12594,21 +12927,15 @@ function MobileAuditScanner({ audit, departments, onClose }) {
         {cameraError ? (
           <div className="form-message error">{cameraError}</div>
         ) : (
-          <div
-            style={{
-              position: "relative",
-              width: "100%",
-              maxWidth: 360,
-              margin: "0 auto",
-            }}
-          >
+          <div className="mobile-audit-camera-frame">
             <video
               ref={videoRef}
               muted
               playsInline
-              style={{ width: "100%", borderRadius: 8 }}
             />
+            <div className="mobile-audit-camera-guide" aria-hidden="true" />
             <canvas ref={canvasRef} style={{ display: "none" }} />
+            <p>Align the QR code inside the frame</p>
           </div>
         )}
 
@@ -12622,8 +12949,7 @@ function MobileAuditScanner({ audit, departments, onClose }) {
 
         <form
           onSubmit={handleManualSubmit}
-          className="inline-actions"
-          style={{ marginTop: 12 }}
+          className="mobile-audit-manual-form"
         >
           <input
             value={manualCode}
@@ -12640,10 +12966,7 @@ function MobileAuditScanner({ audit, departments, onClose }) {
           </button>
         </form>
 
-        <div
-          className="table-card"
-          style={{ marginTop: 16, maxHeight: 240, overflow: "auto" }}
-        >
+        <div className="table-card mobile-audit-scan-feed">
           <table>
             <thead>
               <tr>
@@ -12676,10 +12999,11 @@ function MobileAuditScanner({ audit, departments, onClose }) {
           </table>
         </div>
 
-        <div className="modal-actions">
+        <div className="modal-actions mobile-audit-scanner-actions">
           <button className="primary-button" type="button" onClick={onClose}>
             Done Scanning ({feed.length} scanned)
           </button>
+        </div>
         </div>
       </div>
     </div>

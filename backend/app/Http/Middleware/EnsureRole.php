@@ -10,8 +10,12 @@ class EnsureRole
 {
     public function handle(Request $request, Closure $next, string ...$roles): Response
     {
-        $user = auth()->user();
+        $user = $request->user();
         $role = $user->role ?? 'Employee';
+
+        if ($role === 'System Administrator') {
+            return $next($request);
+        }
 
         if (!in_array($role, $roles, true)) {
             return response()->json(['message' => 'This PCMS role cannot access the requested resource.'], 403);

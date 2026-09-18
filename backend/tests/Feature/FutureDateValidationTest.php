@@ -194,4 +194,30 @@ class FutureDateValidationTest extends TestCase
             $this->assertArrayHasKey('scheduled_at', $exception->errors());
         }
     }
+
+    public function test_temporary_assignment_rejects_past_due_date(): void
+    {
+        $user = $this->makeUser('Property Custodian');
+        $department = $this->makeDepartment('ASSIGN');
+        $asset = $this->makeAsset($department, 'ASSIGN1');
+
+        $request = $this->request($user, [
+            'asset_id' => $asset->id,
+            'assigned_to' => $user->id,
+            'assigned_by' => $user->id,
+            'assignment_type' => 'temporary',
+            'assigned_at' => now()->subDay()->toDateString(),
+            'due_date' => now()->subDay()->toDateString(),
+            'quantity' => 1,
+            'purpose' => 'Temporary assignment test',
+            'condition_before' => 'good',
+        ]);
+
+        try {
+            (new \App\Http\Controllers\AssetAssignmentController())->store($request);
+            $this->fail('Expected validation exception for a past assignment due date.');
+        } catch (ValidationException $exception) {
+            $this->assertArrayHasKey('due_date', $exception->errors());
+        }
+    }
 }

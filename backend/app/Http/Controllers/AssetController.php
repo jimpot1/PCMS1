@@ -248,11 +248,11 @@ class AssetController extends Controller
             ->when($request->boolean('with_trashed'), fn ($query) => $query->withTrashed())
             ->when($request->search, function ($query, $search) {
                 $query->where(function ($subquery) use ($search) {
-                    $subquery->where('name', 'ilike', "%{$search}%")
-                        ->orWhere('property_number', 'ilike', "%{$search}%")
-                        ->orWhere('serial_number', 'ilike', "%{$search}%")
-                        ->orWhere('brand', 'ilike', "%{$search}%")
-                        ->orWhere('model', 'ilike', "%{$search}%");
+                    $subquery->where('name', 'like', "%{$search}%")
+                        ->orWhere('property_number', 'like', "%{$search}%")
+                        ->orWhere('serial_number', 'like', "%{$search}%")
+                        ->orWhere('brand', 'like', "%{$search}%")
+                        ->orWhere('model', 'like', "%{$search}%");
                 });
             })
             ->when($request->category_id, fn ($query, $value) => $query->where('category_id', $value))
