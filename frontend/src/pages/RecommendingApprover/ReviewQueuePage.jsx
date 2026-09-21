@@ -3,6 +3,7 @@ import { Check, Eraser, X } from 'lucide-react';
 import ReviewQueue from '../../components/ReviewQueue.jsx';
 import ReviewRequest from './ReviewRequest.jsx';
 import { pcmsApi } from '../../services/api.js';
+import SuccessModal from '../../components/SuccessModal.jsx';
 
 export default function RecommendingApproverReviewQueue() {
   const [requests, setRequests] = useState([]);
@@ -189,7 +190,7 @@ export default function RecommendingApproverReviewQueue() {
         
         </div>
 
-        {bulkSuccess && <div className="form-message success">{bulkSuccess}</div>}
+        <SuccessModal message={bulkSuccess} />
         {bulkError && <div className="form-message error">{bulkError}</div>}
 
         {error ? (

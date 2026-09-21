@@ -5,6 +5,7 @@ import PurchaseRequestDetails from './PurchaseRequestDetails.jsx';
 import { WORKFLOW_STAGES } from './PurchaseWorkflowTimeline.jsx';
 import RequestEditModal from './RequestEditModal.jsx';
 import ReceivingWorkflow from '../pages/PPMO/ReceivingWorkflow.jsx';
+import SuccessModal from './SuccessModal.jsx';
 
 const statuses = [
   ['all', 'All'], ['pending', 'Pending'], ['approved', 'Approved'], ['rejected', 'Rejected'],
@@ -134,7 +135,7 @@ export default function PurchaseWorkflowMonitor({ currentUser }) {
       {activeTab === 'monitor' && (
         <>
           {error && <div className="form-message error">{error}</div>}
-          {notice && <div className="form-message success">{notice}</div>}
+          <SuccessModal message={notice} />
       <div className="panel workflow-filters">
         <div className="filter-tabs" role="tablist" aria-label="Filter by request status">{statuses.map(([value, label]) => <button type="button" role="tab" aria-selected={filters.status === value} key={value} className={filters.status === value ? 'active' : ''} onClick={() => updateFilter('status', value)}>{label}</button>)}</div>
         <form className="workflow-filter-grid" onSubmit={submitSearch}>

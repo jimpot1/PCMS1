@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { getStoredUser } from '../services/auth.js';
 import { ROLES, getRoleDisplayName } from '../services/roles.js';
 import { getPasswordRequirements, validateStrongPassword } from '../utils/passwordRules.js';
+import SuccessModal from '../components/SuccessModal.jsx';
 
 function resolveDashboardPath(role) {
   switch (role) {
@@ -225,11 +226,12 @@ export default function AccountSettings() {
               </div>
             </div>
 
-            {message && (
+            {message?.type === 'error' && (
               <div className="field-row" style={{ gridColumn: '1 / -1' }}>
-                <div className={message.type === 'error' ? 'form-message error' : 'form-message success'}>{message.text}</div>
+                <div className="form-message error">{message.text}</div>
               </div>
             )}
+            <SuccessModal message={message?.type === 'success' ? message.text : null} />
 
             <div className="field-row" style={{ gridColumn: '1 / -1' }}>
               <button type="submit" className="primary-button" disabled={isSaving}>

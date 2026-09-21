@@ -3,6 +3,7 @@ import { AlertTriangle, CheckCircle2, Eye, FileText, Loader2, Package, PackageCh
 import { assetQrCodeUrl, pcmsApi } from '../../services/api.js';
 import RequestEditModal from '../../components/RequestEditModal.jsx';
 import { TableSkeleton } from '../../components/TableSkeleton.jsx';
+import SuccessModal from '../../components/SuccessModal.jsx';
 
 function getReleaseErrorMessage(error) {
   const rawMessage = error?.message || 'Unable to release this item.';
@@ -114,11 +115,7 @@ export default function ApprovedReleaseQueue() {
           <p>{error}</p>
         </div>
       )}
-      {message && (
-        <div className="form-message success">
-          {message}
-        </div>
-      )}
+      <SuccessModal message={message} />
 
       <div className="panel">
         <div className="table-responsive">

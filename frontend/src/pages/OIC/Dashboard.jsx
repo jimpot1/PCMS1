@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { CheckCircle2, Eye, Package, PackageCheck, FileText, Shield, ShieldCheck, ArrowRight, RefreshCw } from 'lucide-react';
 import { pcmsApi } from '../../services/api.js';
+import SuccessModal from '../../components/SuccessModal.jsx';
 
 export default function OicDashboard() {
   const location = useLocation();
@@ -127,7 +128,7 @@ export default function OicDashboard() {
         </article>
       </section>}
 
-      {message && <div className="form-message success">{message}</div>}
+      <SuccessModal message={message} />
       {error && <div className="form-message error">{error}</div>}
 
       <section className="oic-panel">

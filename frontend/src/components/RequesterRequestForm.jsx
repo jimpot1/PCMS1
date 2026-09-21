@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Upload, Plus, Trash2 } from 'lucide-react';
 import { pcmsApi } from '../services/api.js';
+import SuccessModal from './SuccessModal.jsx';
 
 function formatCurrency(value) {
   return new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP' }).format(Number(value || 0));
@@ -281,7 +282,7 @@ export default function RequesterRequestForm({ currentUser, onSubmitted, summary
           <p>Create a new request using the requester-safe catalog.</p>
         </div>
       </div>
-      {message && <div className="requester-alert success">{message}</div>}
+      <SuccessModal message={message} />
       {error && <div className="requester-alert error">{error}</div>}
       <form className="requester-form" onSubmit={handleSubmit}>
         <div className="requester-form-grid">

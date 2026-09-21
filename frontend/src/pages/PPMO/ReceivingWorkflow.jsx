@@ -3,6 +3,7 @@ import { AlertTriangle, CheckCircle2, Upload, Loader2, ClipboardList, Eye, Camer
 import { pcmsApi } from '../../services/api.js';
 import { TableSkeleton } from '../../components/TableSkeleton.jsx';
 import { LIFECYCLE_STATE_LABELS, resolveLifecycleState } from '../../components/PurchaseWorkflowTimeline.jsx';
+import SuccessModal from '../../components/SuccessModal.jsx';
 
 const styles = `
   .receiving-workflow-page {
@@ -761,11 +762,7 @@ export default function ReceivingWorkflow() {
           <p>{error}</p>
         </div>
       )}
-      {message && (
-        <div className="form-message success">
-          {message}
-        </div>
-      )}
+      <SuccessModal message={message} />
 
       {step === 'list' && (
         <div className="panel">

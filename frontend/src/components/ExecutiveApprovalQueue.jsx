@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { pcmsApi } from '../services/api.js';
 import ExecutiveApprovalCard from './ExecutiveApprovalCard.jsx';
+import SuccessModal from './SuccessModal.jsx';
 import { AlertTriangle, CheckCircle2, Loader2 } from 'lucide-react';
 
 export default function ExecutiveApprovalQueue() {
@@ -187,12 +188,7 @@ export default function ExecutiveApprovalQueue() {
           </div>
         )}
         
-        {successMessage && (
-          <div className="form-message success">
-            <CheckCircle2 size={18} />
-            {successMessage}
-          </div>
-        )}
+        <SuccessModal message={successMessage} />
         
         {error && (
           <div className="form-message error">

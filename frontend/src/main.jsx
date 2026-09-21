@@ -154,6 +154,7 @@ import { getPasswordRequirements, validateStrongPassword } from "./utils/passwor
 import jsQR from "jsqr";
 import { TableSkeleton, ListSkeleton } from "./components/TableSkeleton.jsx";
 import ThemeToggle from "./components/ThemeToggle.jsx";
+import SuccessModal from "./components/SuccessModal.jsx";
 import { applyAuthenticatedTheme, getSavedTheme } from "./services/theme.js";
 
 const sidebarSections = [
@@ -364,6 +365,17 @@ const getPagePathForRole = (pageId, role) => {
   return "/";
 };
 
+const getDashboardPathForRole = (role) => {
+  if (role === "President" || role === "CEO") return "/president/dashboard";
+  if (role === "Department Head") return "/department-head/dashboard";
+  if (role === "OIC" || role === "Property Custodian") return "/oic/dashboard";
+  if (role === "PPMO Staff") return "/ppmo/dashboard";
+  if (role === ROLES.RECOMMENDING_APPROVER) return "/recommending-approver/dashboard";
+  if (role === "Requester") return "/requester";
+  if (role === ROLES.SYSTEM_ADMIN) return "/";
+  return "/";
+};
+
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [theme, setTheme] = useState(() => getSavedTheme());
@@ -410,6 +422,7 @@ function App() {
   const [isLoadingAuth, setIsLoadingAuth] = useState(true);
   const [isSigningIn, setIsSigningIn] = useState(false);
   const [currentUser, setCurrentUser] = useState(null);
+  const [unresolvedAnomalyCount, setUnresolvedAnomalyCount] = useState(0);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState({
     assets: [],
@@ -445,6 +458,35 @@ function App() {
     const interval = setInterval(loadNotifications, 60000);
     return () => clearInterval(interval);
   }, [isAuthenticated]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !currentUser || !hasPermission(currentUser.role, "canViewReports")) {
+      setUnresolvedAnomalyCount(0);
+      return undefined;
+    }
+
+    let active = true;
+    const refreshAnomalyCount = async () => {
+      try {
+        const summary = await pcmsApi.fetchAnomalySummary();
+        if (active) {
+          setUnresolvedAnomalyCount(Math.max(0, Number(summary?.open_unresolved || 0)));
+        }
+      } catch {
+        // Keep the last known count when the monitoring summary is temporarily unavailable.
+      }
+    };
+
+    refreshAnomalyCount();
+    const interval = setInterval(refreshAnomalyCount, 30000);
+    window.addEventListener("pcms:anomaly-data-changed", refreshAnomalyCount);
+
+    return () => {
+      active = false;
+      clearInterval(interval);
+      window.removeEventListener("pcms:anomaly-data-changed", refreshAnomalyCount);
+    };
+  }, [isAuthenticated, currentUser]);
 
   useEffect(() => {
     localStorage.setItem("pcms_active_page", activePage);
@@ -653,6 +695,8 @@ function App() {
     setOtpPending(null);
     setCurrentUser(profile);
     setIsAuthenticated(!!profile);
+    setActivePage("dashboard");
+    window.history.replaceState({}, "", getDashboardPathForRole(profile?.role));
   };
 
   const handleOtpVerify = async ({ userId, otp, remember }) => {
@@ -667,6 +711,8 @@ function App() {
     setOtpPending(null);
     setCurrentUser(data?.user || null);
     setIsAuthenticated(!!(data?.user));
+    setActivePage("dashboard");
+    window.history.replaceState({}, "", getDashboardPathForRole(data?.user?.role));
   };
 
   const handleOtpResend = async ({ userId }) => {
@@ -815,14 +861,19 @@ function App() {
                   <button
                     type="button"
                     key={item.id}
-                    className={`nav-link ${activePage === item.id ? "active" : ""}`}
+                    className={`nav-link ${activePage === item.id ? "active" : ""} ${item.id === "monitoring" && unresolvedAnomalyCount > 0 ? "has-anomaly" : ""}`}
                     data-label={item.label}
                     onClick={() => handleSelectPage(item.id)}
                   >
                     <span className="nav-link-icon">
                       <item.icon size={18} />
                     </span>
-                    <span>{item.label}</span>
+                    <span className="nav-link-label">{item.label}</span>
+                    {item.id === "monitoring" && unresolvedAnomalyCount > 0 && (
+                      <span className="nav-anomaly-badge" aria-label={`${unresolvedAnomalyCount} unresolved anomalies`}>
+                        {unresolvedAnomalyCount > 99 ? "99+" : unresolvedAnomalyCount}
+                      </span>
+                    )}
                   </button>
                 ))}
               </div>
@@ -2187,7 +2238,7 @@ function RequesterReceiveItems({ onChanged, initialItems = [] }) {
         title="Receive Items"
         subtitle="Approved gate passes ready for receipt confirmation."
       />
-      {success && <div className="form-message success">{success}</div>}
+      <SuccessModal message={success} />
       {error && <div className="form-message error">{error}</div>}
       {loading ? (
         <div className="loading-card">Loading receivable items...</div>
@@ -2580,7 +2631,7 @@ function DepartmentHeadDashboard({ currentUser, onLogout }) {
           : "Manage your approval queue safely."
       }
     >
-      {message && <div className="department-alert success">{message}</div>}
+      <SuccessModal message={message} />
       {error && <div className="department-alert error">{error}</div>}
 
       {activeView === "dashboard" ? (
@@ -3513,7 +3564,7 @@ function AssetRegistry({ currentUser }) {
     >
       <DataToolbar searchText={searchText} onSearchChange={setSearchText} />
       {actionError && <div className="alert danger">{actionError}</div>}
-      {actionSuccess && <div className="alert success">{actionSuccess}</div>}
+      <SuccessModal message={actionSuccess} />
       <AssetTable
         assets={filteredAssets}
         loading={isLoadingAssets}
@@ -3705,9 +3756,7 @@ function AssetRegistry({ currentUser }) {
               {registerError && (
                 <div className="alert danger">{registerError}</div>
               )}
-              {registerSuccess && (
-                <div className="alert success">{registerSuccess}</div>
-              )}
+              <SuccessModal message={registerSuccess} />
               <div className="modal-actions">
                 <button
                   type="button"
@@ -3955,9 +4004,7 @@ function DepartmentsPage() {
           {departmentError && (
             <div className="alert danger">{departmentError}</div>
           )}
-          {departmentSuccess && (
-            <div className="alert success">{departmentSuccess}</div>
-          )}
+          <SuccessModal message={departmentSuccess} />
           <div className="modal-actions">
             <button
               type="submit"
@@ -4221,7 +4268,7 @@ function AssetReturnPage() {
       onPrimary={handleStartReturn}
     >
       {error && <div className="form-message error">{error}</div>}
-      {message && <div className="form-message success">{message}</div>}
+      <SuccessModal message={message} />
 
       <section className="metric-grid compact">
         <StatCard label="Awaiting Return" value={active.length} change="Active assignments" icon={Timer} tone="orange" />
@@ -4564,6 +4611,8 @@ function EnhancedAssignmentsPage() {
     assignment_type: "",
   });
   const [formValues, setFormValues] = useState(makeEmptyForm);
+  const [selectedPhysicalUnitIds, setSelectedPhysicalUnitIds] = useState([]);
+  const [physicalUnitSearch, setPhysicalUnitSearch] = useState("");
   const [assetQuery, setAssetQuery] = useState("");
   const [showAssetSuggestions, setShowAssetSuggestions] = useState(false);
   const [recommendations, setRecommendations] = useState([]);
@@ -4658,14 +4707,32 @@ function EnhancedAssignmentsPage() {
     () => (assetUnits || []).filter((unit) => unit.status === "available"),
     [assetUnits],
   );
+  const requestedQuantity = useMemo(
+    () => Math.max(1, Number(formValues.quantity || 1)),
+    [formValues.quantity],
+  );
   const autoSelectedUnitIds = useMemo(() => {
     if (!formValues.asset_id || availableAssetUnits.length === 0) return [];
-    const requested = Number(formValues.quantity || 1);
-    return availableAssetUnits.slice(0, Math.max(0, requested)).map((unit) => unit.id);
-  }, [availableAssetUnits, formValues.asset_id, formValues.quantity]);
+    return availableAssetUnits.slice(0, Math.max(0, requestedQuantity)).map((unit) => unit.id);
+  }, [availableAssetUnits, formValues.asset_id, requestedQuantity]);
+  const filteredPhysicalUnits = useMemo(() => {
+    const query = physicalUnitSearch.trim().toLowerCase();
+    if (!query) return availableAssetUnits;
+    return availableAssetUnits.filter((unit) => {
+      const searchSource = [
+        unit.unit_code || "",
+        unit.serial_number || "",
+        String(unit.id || ""),
+      ].join(" ").toLowerCase();
+      return searchSource.includes(query);
+    });
+  }, [availableAssetUnits, physicalUnitSearch]);
   const selectedAsset = assetsList.find(
     (asset) => String(asset.id) === String(formValues.asset_id),
   );
+  const hasInsufficientAvailableUnits = requestedQuantity > availableAssetUnits.length;
+  const hasSelectionMismatch = selectedPhysicalUnitIds.length !== requestedQuantity;
+  const shouldBlockAssignment = Boolean(formValues.asset_id) && (hasInsufficientAvailableUnits || hasSelectionMismatch);
   const selectedUser = usersList.find(
     (user) => String(user.id) === String(formValues.assigned_to),
   );
@@ -4742,6 +4809,7 @@ function EnhancedAssignmentsPage() {
     let ignore = false;
     if (!formValues.asset_id) {
       setAssetUnits([]);
+      setSelectedPhysicalUnitIds([]);
       return;
     }
     setAssetUnits([]);
@@ -4753,10 +4821,42 @@ function EnhancedAssignmentsPage() {
     return () => { ignore = true; };
   }, [formValues.asset_id]);
 
+  useEffect(() => {
+    if (!formValues.asset_id) {
+      setSelectedPhysicalUnitIds([]);
+      return;
+    }
+
+    const eligibleIds = availableAssetUnits.map((unit) => unit.id);
+    const validExisting = [...new Set(selectedPhysicalUnitIds.filter((id) => eligibleIds.includes(id)))];
+    const requested = Math.max(1, Number(formValues.quantity || 1));
+    const nextSelection = [];
+
+    for (const id of validExisting) {
+      if (nextSelection.length < requested) nextSelection.push(id);
+    }
+
+    for (const id of eligibleIds) {
+      if (!nextSelection.includes(id) && nextSelection.length < requested) nextSelection.push(id);
+    }
+
+    const normalizedSelection = nextSelection.slice(0, requested);
+    setSelectedPhysicalUnitIds((currentSelection) => {
+      const currentIds = [...new Set(currentSelection.filter((id) => eligibleIds.includes(id)))];
+      const sameSelection =
+        currentIds.length === normalizedSelection.length &&
+        currentIds.every((id) => normalizedSelection.includes(id)) &&
+        normalizedSelection.every((id) => currentIds.includes(id));
+      return sameSelection ? currentSelection : normalizedSelection;
+    });
+  }, [availableAssetUnits, formValues.asset_id, formValues.quantity, selectedPhysicalUnitIds]);
+
   const openCreateDialog = () => {
     setCreateError(null);
     setCreateSuccess(null);
     setFormValues(makeEmptyForm());
+    setSelectedPhysicalUnitIds([]);
+    setPhysicalUnitSearch("");
     setSelectedAssetRequestId(null);
     setAssetQuery("");
     setShowAssetSuggestions(false);
@@ -4769,6 +4869,9 @@ function EnhancedAssignmentsPage() {
   const processAssetRequest = (purchaseRequest) => {
     const lineItem = (purchaseRequest.line_items || [])[0] || {};
     const asset = assetsList.find((item) => String(item.id) === String(lineItem.source_id));
+    const requestedQuantity = Number(
+      lineItem.approved_qty || lineItem.approved_quantity || lineItem.qty || lineItem.quantity || 1,
+    );
     setCreateError(null);
     setCreateSuccess(null);
     setSelectedAssetRequestId(purchaseRequest.id);
@@ -4776,10 +4879,12 @@ function EnhancedAssignmentsPage() {
       ...makeEmptyForm(),
       asset_id: asset?.id ? String(asset.id) : String(lineItem.source_id || ""),
       assigned_to: purchaseRequest.requested_by || "",
-      quantity: String(lineItem.approved_qty || lineItem.approved_quantity || lineItem.qty || lineItem.quantity || 1),
+      quantity: String(requestedQuantity),
       purpose: purchaseRequest.purpose || "",
     });
     setAssetQuery(asset ? `${asset.name} - ${asset.property_number || asset.asset_id || asset.id}` : lineItem.item || "");
+    setSelectedPhysicalUnitIds([]);
+    setPhysicalUnitSearch("");
     setShowAssetSuggestions(false);
     setRecommendations([]);
     setEmployeeProfile(null);
@@ -4787,9 +4892,31 @@ function EnhancedAssignmentsPage() {
     setShowCreateDialog(true);
   };
 
+  const togglePhysicalUnitSelection = (unitId) => {
+    if (!formValues.asset_id) return;
+    const eligibleIds = availableAssetUnits.map((unit) => unit.id);
+    const requested = Math.max(1, Number(formValues.quantity || 1));
+
+    setSelectedPhysicalUnitIds((current) => {
+      const validCurrent = [...new Set(current.filter((id) => eligibleIds.includes(id)))];
+      const nextSelection = validCurrent.includes(unitId)
+        ? validCurrent.filter((id) => id !== unitId)
+        : [...new Set([...validCurrent, unitId])];
+
+      const orderedSelection = eligibleIds.filter((id) => nextSelection.includes(id));
+      if (orderedSelection.length === requested) return orderedSelection;
+      if (orderedSelection.length > requested) return orderedSelection.slice(0, requested);
+
+      const missing = eligibleIds.filter((id) => !orderedSelection.includes(id)).slice(0, requested - orderedSelection.length);
+      return [...orderedSelection, ...missing];
+    });
+  };
+
   const closeCreateDialog = () => {
     setShowCreateDialog(false);
     setCreateLoading(false);
+    setSelectedPhysicalUnitIds([]);
+    setPhysicalUnitSearch("");
     setShowAssetSuggestions(false);
   };
 
@@ -4816,11 +4943,18 @@ function EnhancedAssignmentsPage() {
     setCreateLoading(true);
     try {
       const assetId = resolveSelectedAssetId();
-      const selectedQuantity = Number(formValues.quantity || 1);
-      const autoSelectedIds = availableAssetUnits.slice(0, Math.max(0, selectedQuantity)).map((unit) => unit.id);
+      const selectedQuantity = Math.max(1, Number(formValues.quantity || 1));
+      const normalizedSelectedUnitIds = [...new Set(
+        selectedPhysicalUnitIds.filter((unitId) => availableAssetUnits.some((unit) => unit.id === unitId)),
+      )];
 
-      if (selectedQuantity > autoSelectedIds.length) {
-        setCreateError(`Only ${autoSelectedIds.length} of ${selectedQuantity} requested assets are currently available.`);
+      if (selectedQuantity > availableAssetUnits.length) {
+        setCreateError(`Only ${availableAssetUnits.length} of ${selectedQuantity} requested physical units are currently available.`);
+        return;
+      }
+
+      if (normalizedSelectedUnitIds.length !== selectedQuantity) {
+        setCreateError(`Please select exactly ${selectedQuantity} physical unit(s) for this assignment.`);
         return;
       }
 
@@ -4828,8 +4962,9 @@ function EnhancedAssignmentsPage() {
         ...formValues,
         purchase_request_id: selectedAssetRequestId,
         asset_id: Number(assetId) || assetId,
-        asset_unit_id: formValues.asset_unit_id || autoSelectedIds[0] || null,
-        asset_unit_ids: autoSelectedIds,
+        asset_unit_id: normalizedSelectedUnitIds[0] || formValues.asset_unit_id || null,
+        asset_unit_ids: normalizedSelectedUnitIds,
+        physical_unit_ids: normalizedSelectedUnitIds,
         quantity: selectedQuantity,
         due_date: formValues.due_date || null,
         assigned_at: formValues.assigned_at || null,
@@ -5222,14 +5357,34 @@ function EnhancedAssignmentsPage() {
           </div>
         </div>
         {actionError && <div className="alert danger">{actionError}</div>}
-        {actionSuccess && <div className="alert success">{actionSuccess}</div>}
+        <SuccessModal message={actionSuccess} />
         {clearanceOpen && (
-          <div className="panel form-panel" style={{ marginBottom: 20 }}>
-            <PanelHeader
-              title="Clearance Verification"
-              subtitle="Check assigned assets before recording a local final-clearance decision."
-            />
-            <div className="form-grid">
+          <div
+            className="modal-overlay clearance-modal-overlay"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="clearance-verification-title"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget) setClearanceOpen(false);
+            }}
+          >
+            <div className="modal-card clearance-modal-card">
+              <div className="modal-header">
+                <div>
+                  <h3 id="clearance-verification-title">Clearance Verification</h3>
+                  <p>Check assigned assets before recording a local final-clearance decision.</p>
+                </div>
+                <button
+                  type="button"
+                  className="icon-button"
+                  onClick={() => setClearanceOpen(false)}
+                  aria-label="Close clearance verification"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+              <div className="clearance-modal-body">
+              <div className="form-grid">
               <label>
                 Employee / Custodian
                 <select
@@ -5273,11 +5428,7 @@ function EnhancedAssignmentsPage() {
                 {clearanceError}
               </div>
             )}
-            {clearanceSuccess && (
-              <div className="alert success" style={{ marginTop: 12 }}>
-                {clearanceSuccess}
-              </div>
-            )}
+            <SuccessModal message={clearanceSuccess} />
             {clearanceData && (
               <div className="asset-description-card" style={{ marginTop: 16 }}>
                 <div
@@ -5339,6 +5490,8 @@ function EnhancedAssignmentsPage() {
                 </div>
               </div>
             )}
+              </div>
+            </div>
           </div>
         )}
         <div className="data-toolbar">
@@ -5738,45 +5891,143 @@ function EnhancedAssignmentsPage() {
                   <input
                     type="number"
                     min="1"
-                    max={
-                      selectedAsset
-                        ? getAvailableQuantity(selectedAsset)
-                        : undefined
-                    }
+                    max={selectedAsset ? getAvailableQuantity(selectedAsset) : undefined}
                     value={formValues.quantity}
-                    onChange={(event) =>
-                      updateField("quantity", event.target.value)
-                    }
+                    onChange={(event) => {
+                      const numericValue = Math.max(1, Number(event.target.value || 1));
+                      updateField("quantity", String(numericValue));
+                    }}
                     required
                   />
                 </label>
-                {Number(formValues.quantity || 1) === 1 && (
-                  <label>
-                    Physical Unit
-                    <select
-                      value={formValues.asset_unit_id || ""}
-                      onChange={(event) =>
-                        updateField("asset_unit_id", event.target.value)
-                      }
-                      disabled={!selectedAsset || assetUnits.length === 0}
-                    >
-                      <option value="">
-                        {assetUnits.length
-                          ? "Auto-select available unit"
-                          : "No unit records available"}
-                      </option>
-                      {assetUnits
-                        .filter((unit) => unit.status === "available")
-                        .map((unit) => (
-                          <option key={unit.id} value={unit.id}>
-                            ID {unit.id} - {unit.unit_code || "No unit code"}
-                            {unit.serial_number
-                              ? ` - SN ${unit.serial_number}`
-                              : ""}
-                          </option>
-                        ))}
-                    </select>
-                  </label>
+                {selectedAsset && (
+                  <div className="full-width panel" style={{ margin: 0, padding: 14, background: "#f8fafc", border: "1px solid rgba(148, 163, 184, 0.4)", borderRadius: 12 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 10, flexWrap: "wrap" }}>
+                      <strong style={{ fontSize: 15, color: "#0f172a" }}>Physical Units</strong>
+                      <span
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          minWidth: 94,
+                          padding: "5px 10px",
+                          borderRadius: 999,
+                          background: "#e0f2fe",
+                          color: "#075985",
+                          fontSize: 12,
+                          fontWeight: 700,
+                        }}
+                      >
+                        {selectedPhysicalUnitIds.length} of {requestedQuantity} selected
+                      </span>
+                    </div>
+                    {availableAssetUnits.length === 0 ? (
+                      <p className="small-text" style={{ margin: 0, padding: 8, color: "#b91c1c" }}>
+                        No available physical units are currently available for this asset.
+                      </p>
+                    ) : (
+                      <>
+                        <input
+                          type="text"
+                          value={physicalUnitSearch}
+                          onChange={(event) => setPhysicalUnitSearch(event.target.value)}
+                          placeholder="Search physical unit..."
+                          style={{
+                            marginBottom: 10,
+                            width: "100%",
+                            border: "1px solid rgba(148, 163, 184, 0.7)",
+                            borderRadius: 8,
+                            background: "#ffffff",
+                            padding: "10px 12px",
+                            fontSize: 14,
+                            boxSizing: "border-box",
+                          }}
+                        />
+                        <div
+                          style={{
+                            maxHeight: 260,
+                            overflowY: "auto",
+                            border: "1px solid rgba(148, 163, 184, 0.45)",
+                            borderRadius: 10,
+                            background: "#fff",
+                            boxShadow: "inset 0 1px 2px rgba(15, 23, 42, 0.04)",
+                          }}
+                        >
+                          {filteredPhysicalUnits.length === 0 ? (
+                            <div style={{ padding: 14, color: "#64748b", fontSize: 13 }}>
+                              No matching physical units.
+                            </div>
+                          ) : (
+                            filteredPhysicalUnits.map((unit) => {
+                              const isSelected = selectedPhysicalUnitIds.includes(unit.id);
+                              return (
+                                <label
+                                  key={unit.id}
+                                  style={{
+                                    display: "flex",
+                                    alignItems: "center",
+                                    gap: 12,
+                                    padding: "12px 14px",
+                                    borderBottom: "1px solid rgba(15,23,42,0.08)",
+                                    cursor: "pointer",
+                                    background: isSelected ? "#eff6ff" : "#ffffff",
+                                    transition: "background 0.15s ease",
+                                  }}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={isSelected}
+                                    onChange={() => togglePhysicalUnitSelection(unit.id)}
+                                    style={{
+                                      width: 18,
+                                      height: 18,
+                                      accentColor: "#2563eb",
+                                      margin: 0,
+                                      flexShrink: 0,
+                                    }}
+                                  />
+                                  <div style={{ flex: 1, minWidth: 0 }}>
+                                    <div style={{ fontWeight: 700, color: "#0f172a", fontSize: 13, lineHeight: 1.4 }}>
+                                      {unit.unit_code || `Asset Unit ${unit.id}`}
+                                    </div>
+                                    <div style={{ fontSize: 12, color: "#475569", marginTop: 2 }}>
+                                      Asset ID: {unit.id} | Condition: {unit.condition || selectedAsset.condition || "Good"} | Available
+                                    </div>
+                                  </div>
+                                </label>
+                              );
+                            })
+                          )}
+                        </div>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginTop: 12, flexWrap: "wrap" }}>
+                          <button
+                            type="button"
+                            className="secondary-button"
+                            onClick={() => setSelectedPhysicalUnitIds(availableAssetUnits.slice(0, requestedQuantity).map((unit) => unit.id))}
+                            style={{
+                              minWidth: 172,
+                              fontWeight: 600,
+                            }}
+                          >
+                            Auto-select available units
+                          </button>
+                          {hasInsufficientAvailableUnits ? (
+                            <span className="small-text" style={{ color: "#b91c1c", fontWeight: 600 }}>
+                              Only {availableAssetUnits.length} of {requestedQuantity} requested physical units are currently available.
+                            </span>
+                          ) : hasSelectionMismatch ? (
+                            <span className="small-text" style={{ color: "#b45309", fontWeight: 600 }}>
+                              Select exactly {requestedQuantity} physical unit(s).
+                            </span>
+                          ) : (
+                            <span className="small-text" style={{ color: "#15803d", fontWeight: 600 }}>
+                              Ready for assignment.
+                            </span>
+                          )}
+                        </div>
+                      </>
+                    )}
+                  </div>
                 )}
                 <label>
                   Condition Before Assignment
@@ -5961,9 +6212,7 @@ function EnhancedAssignmentsPage() {
                 Employee already accepted this assignment
               </label>
               {createError && <div className="alert danger">{createError}</div>}
-              {createSuccess && (
-                <div className="alert success">{createSuccess}</div>
-              )}
+              <SuccessModal message={createSuccess} />
               <div className="modal-actions">
                 <button
                   type="button"
@@ -7137,7 +7386,7 @@ function RequesterAssignedAssets({ assignments = [], onChanged }) {
         title="My Assigned Assets"
         subtitle="Assigned assets with QR, condition, warranty, and integrated actions."
       />
-      {message && <div className="form-message success">{message}</div>}
+      <SuccessModal message={message} />
       {error && <div className="form-message error">{error}</div>}
       <div className="table-card">
         <table>
@@ -7855,9 +8104,7 @@ function AssignmentsPage() {
                 </label>
               </div>
               {createError && <div className="alert danger">{createError}</div>}
-              {createSuccess && (
-                <div className="alert success">{createSuccess}</div>
-              )}
+              <SuccessModal message={createSuccess} />
               <div className="modal-actions">
                 <button
                   type="button"
@@ -8236,7 +8483,7 @@ function TransferPage() {
       ]}
     >
       {error && <div className="form-message error">{error}</div>}
-      {success && <div className="form-message success">{success}</div>}
+      <SuccessModal message={success} />
 
       {showForm && (
         <div
@@ -9108,7 +9355,7 @@ function MaintenancePage() {
       onPrimary={() => setShowForm(!showForm)}
     >
       {error && <div className="form-message error">{error}</div>}
-      {success && <div className="form-message success">{success}</div>}
+      <SuccessModal message={success} />
 
       {showForm && (
         <div className="modal-overlay maintenance-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="schedule-maintenance-title">
@@ -9475,7 +9722,7 @@ function DamagePage() {
       onPrimary={() => setShowForm(!showForm)}
     >
       {error && <div className="form-message error">{error}</div>}
-      {success && <div className="form-message success">{success}</div>}
+      <SuccessModal message={success} />
 
       {showForm && (
         <div className="modal-overlay damage-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="report-damage-title">
@@ -10175,7 +10422,7 @@ function SuppliesPage({ currentUser }) {
       }
     >
       {error && <div className="form-message error">{error}</div>}
-      {success && <div className="form-message success">{success}</div>}
+      <SuccessModal message={success} />
 
       {showMovement && (
         <div className="modal-overlay" role="dialog" aria-modal="true">
@@ -11610,7 +11857,7 @@ function PurchasePage({ currentUser }) {
       onPrimary={() => setShowForm(!showForm)}
     >
       {error && <div className="form-message error">{error}</div>}
-      {success && <div className="form-message success">{success}</div>}
+      <SuccessModal message={success} />
 
       {showForm && (
         <div className="panel form-panel">
@@ -11863,7 +12110,7 @@ function GatePassPage() {
       onPrimary={() => setShowForm(!showForm)}
     >
       {error && <div className="form-message error">{error}</div>}
-      {success && <div className="form-message success">{success}</div>}
+      <SuccessModal message={success} />
 
       {showForm && (
         <div className="modal-overlay gate-pass-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="generate-gate-pass-title">
@@ -12289,7 +12536,7 @@ function AuditPage({ currentUser }) {
       onPrimary={() => setShowForm(!showForm)}
     >
       {error && <div className="form-message error">{error}</div>}
-      {success && <div className="form-message success">{success}</div>}
+      <SuccessModal message={success} />
 
       {showForm && (
         <div className="modal-overlay audit-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="schedule-audit-title">
@@ -12939,13 +13186,10 @@ function MobileAuditScanner({ audit, departments, onClose }) {
           </div>
         )}
 
-        {toast && (
-          <div
-            className={`form-message ${toast.type === "error" ? "error" : "success"}`}
-          >
-            {toast.text}
-          </div>
+        {toast?.type === "error" && (
+          <div className="form-message error">{toast.text}</div>
         )}
+        <SuccessModal message={toast?.type === "error" ? null : toast?.text} />
 
         <form
           onSubmit={handleManualSubmit}
@@ -13164,9 +13408,7 @@ function OcrPage() {
     ocrProcessingRef.current = true;
     setIsScanning(true);
     setError("");
-    setSuccessMessage(
-      "Processing asset label... Extracting information using OCR...",
-    );
+    setSuccessMessage("");
 
     try {
       const session = await getCurrentSession();
@@ -13445,9 +13687,7 @@ function OcrPage() {
             action="Register Asset"
           />
           {error && <div className="form-message error">{error}</div>}
-          {successMessage && (
-            <div className="form-message success">{successMessage}</div>
-          )}
+          <SuccessModal message={successMessage} />
           <form onSubmit={handleSubmit} className="ocr-form">
             <div className={`field-row ${fieldErrors.property_number ? "has-error" : ""}`}>
               <label>Property Number</label>
@@ -13695,6 +13935,7 @@ function MonitoringPage({ currentUser }) {
       });
       setSuccess(response?.message || "Anomaly marked as resolved.");
       await loadAnomalies();
+      window.dispatchEvent(new Event("pcms:anomaly-data-changed"));
       setSelectedAnomaly((current) =>
         current?.id === id ? { ...current, status: "resolved" } : current,
       );
@@ -13711,6 +13952,7 @@ function MonitoringPage({ currentUser }) {
       const result = await pcmsApi.analyzeAnomalies();
       setSuccess(result?.message || "Analysis complete.");
       await loadAnomalies();
+      window.dispatchEvent(new Event("pcms:anomaly-data-changed"));
     } catch (err) {
       setError(err?.message || "Analysis service is unavailable.");
     } finally {
@@ -13957,7 +14199,7 @@ function MonitoringPage({ currentUser }) {
       }
     >
       {error && <div className="form-message error">{error}</div>}
-      {success && <div className="form-message success">{success}</div>}
+      <SuccessModal message={success} />
       {resolutionResult && (
         <div className="asset-description-card" style={{ marginBottom: 16 }}>
           <div className="inline-actions" style={{ justifyContent: "space-between" }}>
@@ -14539,7 +14781,7 @@ function ReportsPage() {
       icon={FileBarChart2}
     >
       {error && <div className="form-message error">{error}</div>}
-      {success && <div className="form-message success">{success}</div>}
+      <SuccessModal message={success} />
 
       {!reportData ? (
         <div className="card-grid">
@@ -14947,13 +15189,10 @@ function UsersPage() {
       onPrimary={() => setShowInviteForm((v) => !v)}
     >
       {error && <div className="form-message error">{error}</div>}
-      {success && <div className="form-message success">{success}</div>}
-      {temporaryPassword && (
-        <div className="form-message success">
-          Temporary password: <strong>{temporaryPassword}</strong> — share this
-          with the user, they should change it after first login.
-        </div>
-      )}
+      <SuccessModal message={success} />
+      <SuccessModal
+        message={temporaryPassword ? `Temporary password: ${temporaryPassword}. Share this with the user; they should change it after first login.` : null}
+      />
 
       {showInviteForm && (
         <div
@@ -15542,7 +15781,7 @@ function SettingsPage() {
       onPrimary={save}
     >
       {error && <div className="form-message error">{error}</div>}
-      {message && <div className="form-message success">{message}</div>}
+      <SuccessModal message={message} />
       <div className="settings-grid">
         {[
           ["Maintenance reminders", "maintenance_reminders_enabled", "Sends due and overdue maintenance alerts to inventory operations staff."],

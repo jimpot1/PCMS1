@@ -4,6 +4,7 @@ import { CheckCircle2, XCircle, MessageSquare, ShieldCheck, AlertTriangle, FileT
 import ApprovalHistory from '../../components/ApprovalHistory.jsx';
 import RecommendingApproverDecisionPanel from '../../components/RecommendingApproverDecisionPanel.jsx';
 import { pcmsApi } from '../../services/api.js';
+import SuccessModal from '../../components/SuccessModal.jsx';
 
 export default function ReviewRequest({ requestId: propRequestId, onSuccess, onClose }) {
   const { requestId: routeRequestId } = useParams();
@@ -203,7 +204,7 @@ export default function ReviewRequest({ requestId: propRequestId, onSuccess, onC
         </div>
       </section>
 
-      {success && <div className="form-message success">{success}</div>}
+      <SuccessModal message={success} />
       {error && <div className="form-message error">{error}</div>}
 
       <div className="recommending-review-bottom-grid">

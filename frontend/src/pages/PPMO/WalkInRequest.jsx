@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { AlertTriangle, CheckCircle2, ClipboardList, FileText, Loader2, PackageCheck, Plus, Search, ShieldCheck, Trash2, UploadCloud, UserPlus, X } from 'lucide-react';
 import { pcmsApi } from '../../services/api.js';
+import SuccessModal from '../../components/SuccessModal.jsx';
 
 const documentTypes = [
   { value: 'request', label: 'Request Form', icon: ClipboardList },
@@ -386,7 +387,7 @@ export default function WalkInRequest() {
       </section>
 
       {error && <div className="walkin-alert error"><AlertTriangle size={18} /><p>{error}</p></div>}
-      {success && <div className="walkin-alert success"><CheckCircle2 size={18} /><p>{success}</p></div>}
+      <SuccessModal message={success} />
 
       <form className="walkin-form" onSubmit={handleSubmit}>
         <div className="walkin-document-tabs">

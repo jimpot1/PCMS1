@@ -1,12 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { Package, Loader2, AlertTriangle, AlertCircle } from 'lucide-react';
 import { pcmsApi } from '../../services/api.js';
+import SuccessModal from '../../components/SuccessModal.jsx';
 
 export default function StockVerification() {
   const [supplies, setSupplies] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [verificationData, setVerificationData] = useState({});
+  const [success, setSuccess] = useState(null);
 
   useEffect(() => {
     const loadSupplies = async () => {
@@ -47,7 +49,7 @@ export default function StockVerification() {
       }
 
       // TODO: Call API to update verified quantities
-      alert(`Verified stock for ${updates.length} item(s)`);
+      setSuccess(`Verified stock for ${updates.length} item(s).`);
       setVerificationData({});
     } catch (err) {
       setError(`Failed to verify stock: ${err.message}`);
@@ -80,6 +82,7 @@ export default function StockVerification() {
           <p>{error}</p>
         </div>
       )}
+      <SuccessModal message={success} />
 
       <div className="panel">
         <div className="info-box">
