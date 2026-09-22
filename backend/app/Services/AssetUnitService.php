@@ -15,7 +15,7 @@ class AssetUnitService
         $target = max(1, (int) ($asset->quantity ?? 1));
 
         for ($sequence = $count + 1; $sequence <= $target; $sequence++) {
-            AssetUnit::create([
+            $unit = AssetUnit::create([
                 'asset_id' => $asset->id,
                 'unit_code' => sprintf('%s-%03d', $asset->asset_id, $sequence),
                 'serial_number' => $target === 1 ? $asset->serial_number : null,
@@ -24,6 +24,9 @@ class AssetUnitService
                 'condition' => $asset->condition ?: 'good',
                 'location' => $asset->location,
             ]);
+            if (! $unit->qr_code_path) {
+                $unit->update(['qr_code_path' => AssetUnitQrCodeService::generate($unit)]);
+            }
         }
     }
 

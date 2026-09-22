@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Asset;
 use App\Models\AssetUnit;
+use App\Services\AssetUnitQrCodeService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -16,6 +17,12 @@ class AssetUnitController extends Controller
             ->with(['department', 'custodian'])
             ->orderBy('id')
             ->get();
+
+        $units->each(function (AssetUnit $unit) {
+            if (! $unit->qr_code_path) {
+                $unit->update(['qr_code_path' => AssetUnitQrCodeService::generate($unit)]);
+            }
+        });
 
         return response()->json([
             'data' => $units,
