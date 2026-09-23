@@ -28,6 +28,9 @@ class OcrController
                 'confidence' => max(0, min(100, (float) $scan->confidence_score)),
                 'status' => $scan->asset_id ? 'registered' : 'pending_review',
                 'fields' => $payload['fields'] ?? $payload['details'] ?? [],
+                'field_confidence' => $payload['field_confidence'] ?? [],
+                'field_details' => $payload['field_details'] ?? [],
+                'items' => $payload['items'] ?? [],
                 'created_at' => $scan->created_at,
             ];
         });
@@ -80,6 +83,9 @@ class OcrController
                 'success' => $result['success'],
                 'fields' => $fields,
                 'details' => $result['details'] ?? $fields,
+                'field_confidence' => $result['field_confidence'] ?? [],
+                'field_details' => $result['field_details'] ?? [],
+                'items' => $result['items'] ?? [],
             ]),
             'confidence_score' => $result['confidence'],
             'confirmed_by' => null,
@@ -118,11 +124,14 @@ class OcrController
                 'location' => $details['location'] ?? null,
                 'purchase_date' => $details['purchase_date'] ?? null,
                 'purchase_cost' => $details['purchase_cost'] ?? null,
-                'quantity' => $details['quantity'] ?? 1,
+                'quantity' => $details['quantity'] ?? null,
                 'warranty_until' => $details['warranty_until'] ?? null,
-                'condition' => $details['condition'] ?? 'Good',
+                'condition' => $details['condition'] ?? null,
             ],
             'details' => $details,
+            'field_confidence' => $result['field_confidence'] ?? [],
+            'field_details' => $result['field_details'] ?? [],
+            'items' => $result['items'] ?? [],
             'error' => $result['error'],
         ], 200);
     }

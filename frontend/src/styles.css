@@ -5017,6 +5017,81 @@ td span:not(.status):not(.risk) {
 .modal-card.wide-modal {
   max-height: calc(100vh - 32px);
 }
+.physical-unit-qr-modal {
+  width: min(720px, calc(100% - 32px));
+}
+.physical-unit-qr-body {
+  display: grid;
+  gap: 16px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 22px 28px 26px;
+}
+.physical-unit-qr-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #475569;
+  font-size: 13px;
+  font-weight: 600;
+}
+.physical-unit-qr-list {
+  display: grid;
+  gap: 8px;
+  max-height: 440px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.physical-unit-qr-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) 48px;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  color: #172033;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.physical-unit-qr-row:has(input:checked) {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+}
+.physical-unit-qr-row input {
+  width: 16px;
+  height: 16px;
+  accent-color: #2563eb;
+}
+.physical-unit-qr-row span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.physical-unit-qr-row strong,
+.physical-unit-qr-row small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.physical-unit-qr-row small {
+  color: #64748b;
+  font-size: 12px;
+}
+.physical-unit-qr-row img {
+  width: 42px;
+  height: 42px;
+  object-fit: contain;
+  background: #fff;
+  border-radius: 4px;
+}
+.physical-unit-qr-row em {
+  color: #b45309;
+  font-size: 11px;
+  font-style: normal;
+  text-align: right;
+}
 
 .transfer-form-modal {
   width: min(760px, calc(100% - 32px));

@@ -253,6 +253,9 @@ function normalizeOcrPayload(payload = {}) {
       Number(payload.confidence_score ?? payload.confidence ?? 0) || 0,
     data: normalizedFields,
     details: payload.details ?? normalizedFields,
+    field_confidence: payload.field_confidence ?? {},
+    field_details: payload.field_details ?? {},
+    items: Array.isArray(payload.items) ? payload.items : [],
   };
 }
 

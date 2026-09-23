@@ -880,10 +880,7 @@ function App() {
             </div>
           ))}
         </div>
-        <button className="help-button" type="button">
-          <HelpCircle size={18} />
-          <span>Need help? Contact support</span>
-        </button>
+        
       </aside>
       {sidebarOpen && !isDesktop && (
         <button
@@ -3251,6 +3248,7 @@ function AssetRegistry({ currentUser }) {
   const [actionError, setActionError] = useState(null);
   const [actionSuccess, setActionSuccess] = useState(null);
   const [editValues, setEditValues] = useState(null);
+  const [unitQrModal, setUnitQrModal] = useState({ asset: null, units: [], loading: false, error: null });
   const canManageAssets = hasPermission(currentUser?.role, "canManageAssets");
   const canDeleteRecords = currentUser?.role === ROLES.SYSTEM_ADMIN;
   const [registerValues, setRegisterValues] = useState({
@@ -3369,6 +3367,21 @@ function AssetRegistry({ currentUser }) {
     setEditValues(null);
     setActionError(null);
     setActionLoading(false);
+  };
+
+  const openUnitQrModal = async (asset) => {
+    setUnitQrModal({ asset, units: [], loading: true, error: null });
+    try {
+      const units = await pcmsApi.assetUnits(asset.id);
+      setUnitQrModal({ asset, units, loading: false, error: null });
+    } catch (error) {
+      setUnitQrModal({
+        asset,
+        units: [],
+        loading: false,
+        error: error?.message || "Unable to load physical units.",
+      });
+    }
   };
 
   const updateRegisterField = (field, value) =>
@@ -3574,8 +3587,19 @@ function AssetRegistry({ currentUser }) {
         onView={openViewAsset}
         onEdit={openEditAsset}
         onDelete={openDeleteAsset}
+        onPrintUnits={openUnitQrModal}
         disabled={actionSubmitting || actionLoading}
       />
+
+      {unitQrModal.asset && (
+        <PhysicalUnitQrModal
+          asset={unitQrModal.asset}
+          units={unitQrModal.units}
+          loading={unitQrModal.loading}
+          error={unitQrModal.error}
+          onClose={() => setUnitQrModal({ asset: null, units: [], loading: false, error: null })}
+        />
+      )}
 
       {showRegisterDialog && (
         <div className="modal-overlay" role="dialog" aria-modal="true">
@@ -4617,6 +4641,14 @@ function EnhancedAssignmentsPage() {
   const [showAssetSuggestions, setShowAssetSuggestions] = useState(false);
   const [recommendations, setRecommendations] = useState([]);
   const [employeeProfile, setEmployeeProfile] = useState(null);
+
+  const assignableUsers = usersList.filter((user) => {
+    const role = String(user.role || user.role_name || "")
+      .trim()
+      .toLowerCase()
+      .replace(/[_-]+/g, " ");
+    return ["requester", "department requester", "department head"].includes(role);
+  });
 
   const formatAssignmentDate = (value) => {
     if (!value) return "N/A";
@@ -5836,7 +5868,12 @@ function EnhancedAssignmentsPage() {
                       required
                     >
                       <option value="">Select a user...</option>
-                      {usersList.map((user) => (
+                      {assignableUsers.length === 0 && (
+                        <option value="" disabled>
+                          No requester or department head available
+                        </option>
+                      )}
+                      {assignableUsers.map((user) => (
                         <option key={user.id} value={user.id}>
                           {formatAssignmentUser(user)}
                         </option>
@@ -10286,6 +10323,72 @@ function SuppliesPage({ currentUser }) {
     setPrintingSupplyRequests(true);
   };
 
+  const handlePrintSupplyRequest = (request) => {
+    const quantities = requestQuantities(request);
+    const supply = requestSupply(request);
+    const status = requestStatus(request);
+    const requester =
+      request.requester?.full_name ||
+      request.requested_by_name ||
+      request.requester?.email ||
+      "Requester";
+    const requestNumber = request.request_number || `Request #${request.id}`;
+    const requestDate = request.created_at
+      ? new Date(request.created_at).toLocaleDateString()
+      : "N/A";
+    const printWindow = window.open("", "_blank", "width=760,height=760");
+    if (!printWindow) return;
+
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>Supply Request - ${requestNumber}</title>
+          <style>
+            * { box-sizing: border-box; }
+            body { margin: 0; padding: 36px; color: #172033; font-family: Arial, sans-serif; }
+            header { border-bottom: 3px solid #2563eb; padding-bottom: 16px; margin-bottom: 24px; }
+            h1 { margin: 0 0 6px; font-size: 24px; }
+            h2 { margin: 0; font-size: 16px; font-weight: 500; color: #64748b; }
+            .meta { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-bottom: 24px; }
+            .meta span { display: block; margin-bottom: 4px; color: #64748b; font-size: 11px; text-transform: uppercase; }
+            .meta strong { font-size: 15px; }
+            table { width: 100%; border-collapse: collapse; }
+            th, td { padding: 12px; border: 1px solid #cbd5e1; text-align: left; }
+            th { width: 38%; background: #f1f5f9; font-size: 12px; text-transform: uppercase; color: #475569; }
+            .status { font-weight: 700; color: #166534; }
+            footer { margin-top: 32px; color: #64748b; font-size: 11px; }
+            @media print { body { padding: 0; } }
+          </style>
+        </head>
+        <body>
+          <header>
+            <h1>Supply Request</h1>
+            <h2>Property Custodian Management System</h2>
+          </header>
+          <div class="meta">
+            <div><span>Request Number</span><strong>${requestNumber}</strong></div>
+            <div><span>Request Date</span><strong>${requestDate}</strong></div>
+            <div><span>Requester / Employee</span><strong>${requester}</strong></div>
+            <div><span>Department</span><strong>${request.department?.name || request.department_name || "N/A"}</strong></div>
+          </div>
+          <table>
+            <tbody>
+              <tr><th>Supply</th><td>${supply.name}</td></tr>
+              <tr><th>Requested Quantity</th><td>${quantities.requested}</td></tr>
+              <tr><th>Approved Quantity</th><td>${quantities.approved}</td></tr>
+              <tr><th>Released Quantity</th><td>${quantities.released}</td></tr>
+              <tr><th>Remaining Quantity</th><td>${quantities.remaining}</td></tr>
+              <tr><th>Status</th><td class="status">${status}</td></tr>
+            </tbody>
+          </table>
+          <footer>Printed: ${new Date().toLocaleString()}</footer>
+          <script>window.print(); window.onafterprint = () => window.close();<\/script>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+  };
+
   const handleNotificationClick = async (item) => {
     if (item && !item.read && item.source && item.id) {
       try {
@@ -10972,6 +11075,15 @@ function SuppliesPage({ currentUser }) {
             <h3>Supply Requests</h3>
             <p>Approved requester supplies ready for controlled issuance.</p>
           </div>
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={handlePrintSupplyRequests}
+            disabled={requestsLoading || supplyRequests.length === 0}
+            title="Print all supply requests"
+          >
+            <Printer size={15} /> Print all
+          </button>
           <div className="supply-request-summary">
             {["Pending", "Approved", "Partially Released", "Released"].map(
               (label) => (
@@ -11166,8 +11278,9 @@ function SuppliesPage({ currentUser }) {
                           <button
                             className="icon-button"
                             type="button"
-                            title="Print supply requests report"
-                            onClick={handlePrintSupplyRequests}
+                            title="Print this supply request"
+                            aria-label={`Print ${request.request_number || `request ${request.id}`}`}
+                            onClick={() => handlePrintSupplyRequest(request)}
                           >
                             <Printer size={15} />
                           </button>
@@ -13259,10 +13372,14 @@ function OcrPage() {
   const [previewUrl, setPreviewUrl] = useState("");
   const [ocrResult, setOcrResult] = useState(null);
   const [ocrHistory, setOcrHistory] = useState([]);
+  const [detectedItems, setDetectedItems] = useState([]);
+  const [fieldConfidence, setFieldConfidence] = useState({});
+  const [fieldDetails, setFieldDetails] = useState({});
   const [isScanning, setIsScanning] = useState(false);
   const [error, setError] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
   const [departmentsList, setDepartmentsList] = useState([]);
+  const [ocrCompleted, setOcrCompleted] = useState(false);
   const lastOcrImageKeyRef = useRef("");
   const ocrProcessingRef = useRef(false);
   const [formValues, setFormValues] = useState({
@@ -13276,9 +13393,9 @@ function OcrPage() {
     location: "",
     purchase_date: "",
     purchase_cost: "",
-    quantity: "1",
+    quantity: "",
     warranty_until: "",
-    condition: "good",
+    condition: "",
     status: "available",
   });
 
@@ -13372,6 +13489,10 @@ function OcrPage() {
     setSelectedImage(file);
     setPreviewUrl(URL.createObjectURL(file));
     setOcrResult(null);
+    setDetectedItems([]);
+    setFieldConfidence({});
+    setFieldDetails({});
+    setOcrCompleted(false);
     runOcrForImage(file);
   };
 
@@ -13440,38 +13561,34 @@ function OcrPage() {
         "under_inspection",
       ].includes(condition)
         ? condition
-        : "good";
+        : "";
       setOcrResult(response);
+      setDetectedItems(Array.isArray(response?.items) ? response.items : []);
+      setFieldConfidence(response?.field_confidence || {});
+      setFieldDetails(response?.field_details || {});
+      setOcrCompleted(true);
       setError("");
       setSuccessMessage(
         response?.message ||
           "OCR completed. Please review the extracted information.",
       );
       setFormValues((current) => {
-        const departmentId =
-          current.department_id ||
-          resolveDepartmentId(structuredData.department);
+        const departmentId = resolveDepartmentId(structuredData.department);
 
         return {
           ...current,
-          property_number:
-            structuredData.property_number || current.property_number,
-          serial_number: structuredData.serial_number || current.serial_number,
-          brand: structuredData.brand || current.brand,
-          model: structuredData.model || current.model,
-          name: structuredData.asset_name || current.name,
-          description: structuredData.description || current.description,
-          department_id: departmentId,
-          location: structuredData.location || current.location,
-          purchase_date: structuredData.purchase_date || current.purchase_date,
-          purchase_cost: structuredData.purchase_cost
-            ? String(structuredData.purchase_cost)
-            : current.purchase_cost,
-          quantity: structuredData.quantity
-            ? String(structuredData.quantity)
-            : current.quantity,
-          warranty_until:
-            structuredData.warranty_until || current.warranty_until,
+          property_number: structuredData.property_number || "",
+          serial_number: structuredData.serial_number || "",
+          brand: structuredData.brand || "",
+          model: structuredData.model || "",
+          name: structuredData.asset_name || "",
+          description: structuredData.description || "",
+          department_id: structuredData.department ? departmentId : "",
+          location: structuredData.location || "",
+          purchase_date: structuredData.purchase_date || "",
+          purchase_cost: structuredData.purchase_cost ? String(structuredData.purchase_cost) : "",
+          quantity: structuredData.quantity ? String(structuredData.quantity) : "",
+          warranty_until: structuredData.warranty_until || "",
           condition: normalizedCondition,
         };
       });
@@ -13483,6 +13600,10 @@ function OcrPage() {
       setError(message);
       setSuccessMessage("");
       setOcrResult(null);
+      setDetectedItems([]);
+      setFieldConfidence({});
+      setFieldDetails({});
+      setOcrCompleted(false);
       lastOcrImageKeyRef.current = "";
     } finally {
       ocrProcessingRef.current = false;
@@ -13528,6 +13649,10 @@ function OcrPage() {
       setSelectedImage(null);
       setPreviewUrl("");
       setOcrResult(null);
+      setDetectedItems([]);
+      setFieldConfidence({});
+      setFieldDetails({});
+      setOcrCompleted(false);
       lastOcrImageKeyRef.current = "";
       pcmsApi
         .ocrHistory({ limit: 6 })
@@ -13579,11 +13704,50 @@ function OcrPage() {
     setFieldErrors((current) => ({ ...current, [field]: "" }));
   };
 
+  const shouldShowOcrStatus = Boolean(ocrCompleted && ocrResult);
+
+  const fieldStatus = (field, value) => {
+    if (!shouldShowOcrStatus) {
+      return "";
+    }
+
+    const status = fieldDetails[field]?.status || (value ? "review" : "missing");
+    return status === "detected" ? "Detected" : status === "review" ? "Review" : "Missing";
+  };
+
+  const clearOcrSession = () => {
+    setSelectedImage(null);
+    setPreviewUrl("");
+    setOcrResult(null);
+    setDetectedItems([]);
+    setFieldConfidence({});
+    setFieldDetails({});
+    setOcrCompleted(false);
+    lastOcrImageKeyRef.current = "";
+    setError("");
+    setSuccessMessage("");
+    setFormValues({
+      property_number: "",
+      serial_number: "",
+      brand: "",
+      model: "",
+      name: "",
+      description: "",
+      department_id: "",
+      location: "",
+      purchase_date: "",
+      purchase_cost: "",
+      quantity: "",
+      warranty_until: "",
+      condition: "",
+      status: "available",
+    });
+  };
+
   return (
     <ModulePage
       title="OCR Asset Tagging"
       subtitle="Capture labels, extract fields, show confidence, and auto-fill registration."
-      primary="Scan Asset Label"
       icon={Camera}
     >
       <div className="ocr-layout">
@@ -13684,7 +13848,6 @@ function OcrPage() {
                   ? `OCR confidence: ${ocrResult.confidence}%`
                   : "Upload an image and confirm the extracted values."
             }
-            action="Register Asset"
           />
           {error && <div className="form-message error">{error}</div>}
           <SuccessModal message={successMessage} />
@@ -13702,7 +13865,7 @@ function OcrPage() {
                 <small className="input-error-message">{fieldErrors.property_number}</small>
               )}
               {!fieldErrors.property_number && (
-                <small>{ocrResult?.confidence >= 85 ? "High" : "Review"}</small>
+                <small>{fieldStatus("property_number", formValues.property_number)}</small>
               )}
             </div>
             <div className="field-row">
@@ -13711,7 +13874,7 @@ function OcrPage() {
                 value={formValues.name}
                 onChange={(event) => updateField("name", event.target.value)}
               />
-              <small>Required</small>
+              <small>{fieldStatus("asset_name", formValues.name)}</small>
             </div>
             <div className="field-row">
               <label>Brand</label>
@@ -13719,7 +13882,7 @@ function OcrPage() {
                 value={formValues.brand}
                 onChange={(event) => updateField("brand", event.target.value)}
               />
-              <small>OCR</small>
+              <small>{fieldStatus("brand", formValues.brand)}</small>
             </div>
             <div className="field-row">
               <label>Model</label>
@@ -13727,7 +13890,7 @@ function OcrPage() {
                 value={formValues.model}
                 onChange={(event) => updateField("model", event.target.value)}
               />
-              <small>OCR</small>
+              <small>{fieldStatus("model", formValues.model)}</small>
             </div>
             <div className="field-row">
               <label>Serial Number</label>
@@ -13737,7 +13900,7 @@ function OcrPage() {
                   updateField("serial_number", event.target.value)
                 }
               />
-              <small>OCR</small>
+              <small>{fieldStatus("serial_number", formValues.serial_number)}</small>
             </div>
             <div className="field-row">
               <label>Description</label>
@@ -13748,6 +13911,7 @@ function OcrPage() {
                 }
                 rows={3}
               />
+              <small>{fieldStatus("description", formValues.description)}</small>
             </div>
             <div className="field-row">
               <label>Department</label>
@@ -13764,6 +13928,7 @@ function OcrPage() {
                   </option>
                 ))}
               </select>
+              <small>{fieldStatus("department", formValues.department_id)}</small>
             </div>
             <div className="field-row">
               <label>Location</label>
@@ -13773,6 +13938,7 @@ function OcrPage() {
                   updateField("location", event.target.value)
                 }
               />
+              <small>{fieldStatus("location", formValues.location)}</small>
             </div>
             <div className="field-row">
               <label>Purchase Date</label>
@@ -13783,6 +13949,7 @@ function OcrPage() {
                   updateField("purchase_date", event.target.value)
                 }
               />
+              <small>{fieldStatus("purchase_date", formValues.purchase_date)}</small>
             </div>
             <div className="field-row">
               <label>Purchase Cost</label>
@@ -13793,6 +13960,7 @@ function OcrPage() {
                   updateField("purchase_cost", event.target.value)
                 }
               />
+              <small>{fieldStatus("purchase_cost", formValues.purchase_cost)}</small>
             </div>
             <div className="field-row">
               <label>Quantity</label>
@@ -13807,6 +13975,7 @@ function OcrPage() {
                 step="1"
                 placeholder="Enter quantity"
               />
+              <small>{fieldStatus("quantity", formValues.quantity)}</small>
             </div>
             <div className="field-row">
               <label>Warranty Until</label>
@@ -13817,6 +13986,7 @@ function OcrPage() {
                   updateField("warranty_until", event.target.value)
                 }
               />
+              <small>{fieldStatus("warranty_until", formValues.warranty_until)}</small>
             </div>
             <div className="field-row">
               <label>Condition</label>
@@ -13826,11 +13996,13 @@ function OcrPage() {
                   updateField("condition", event.target.value)
                 }
               >
+                <option value="">Select condition</option>
                 <option value="good">Good</option>
                 <option value="needs_repair">Needs Repair</option>
                 <option value="damaged">Damaged</option>
                 <option value="under_inspection">Under Inspection</option>
               </select>
+              <small>{fieldStatus("condition", formValues.condition)}</small>
             </div>
             <div className="inline-actions">
               <button
@@ -13844,24 +14016,7 @@ function OcrPage() {
                 className="secondary-button"
                 type="button"
                 disabled={isScanning}
-                onClick={() =>
-                  setFormValues((current) => ({
-                    ...current,
-                    property_number: "",
-                    serial_number: "",
-                    brand: "",
-                    model: "",
-                    name: "",
-                    description: "",
-                    department_id: "",
-                    location: "",
-                    purchase_date: "",
-                    purchase_cost: "",
-                    quantity: "1",
-                    warranty_until: "",
-                    condition: "good",
-                  }))
-                }
+                onClick={clearOcrSession}
               >
                 Clear OCR Fields
               </button>
@@ -15818,12 +15973,14 @@ function ModulePage({
   onExport,
   actions,
 }) {
+  const HeaderIcon = Icon || Camera;
+
   return (
     <div className={className || undefined}>
       <div className="page-heading">
         <div>
           <span className="eyebrow">
-            <Icon size={15} /> Property Custodian Management System
+            <HeaderIcon size={15} /> Property Custodian Management System
           </span>
           <h2>{title}</h2>
           <p>{subtitle}</p>
@@ -15837,7 +15994,7 @@ function ModulePage({
                   type="button"
                   onClick={onPrimary}
                 >
-                  <Icon size={16} /> {primary}
+                  <HeaderIcon size={16} /> {primary}
                 </button>
               )}
               {secondaryActions}
@@ -15954,6 +16111,117 @@ async function downloadAssetQrCode(asset) {
   } catch (err) {
     // ignore - user can retry
   }
+}
+
+function printPhysicalUnitQrLabels(asset, units) {
+  const printableUnits = units.filter((unit) => unit.qr_code_path);
+  if (!printableUnits.length) return;
+
+  const printWindow = window.open("", "_blank", "width=900,height=760");
+  if (!printWindow) return;
+
+  const labels = printableUnits.map((unit) => `
+    <article class="unit-label">
+      <div class="unit-label-heading">PCMS</div>
+      <strong>${asset.name || "Asset"}</strong>
+      <span>${asset.property_number || asset.asset_id || ""}</span>
+      <img src="${assetQrCodeUrl(unit.qr_code_path)}" alt="QR code for ${unit.unit_code || "physical unit"}" />
+      <strong>Unit ${unit.unit_code || unit.id}</strong>
+      <span>${unit.serial_number || "Physical unit"}</span>
+    </article>
+  `).join("");
+
+  printWindow.document.write(`
+    <html>
+      <head>
+        <title>Physical Unit QR Labels - ${asset.property_number || asset.name || "Asset"}</title>
+        <style>
+          @page { margin: 12mm; }
+          * { box-sizing: border-box; }
+          body { margin: 0; color: #172033; font-family: Arial, sans-serif; }
+          .label-sheet { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10mm; }
+          .unit-label { min-height: 86mm; padding: 7mm; border: 1px solid #cbd5e1; border-radius: 3mm; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 2mm; break-inside: avoid; }
+          .unit-label-heading { color: #2563eb; font-size: 10pt; font-weight: 700; letter-spacing: .08em; }
+          .unit-label strong { max-width: 100%; font-size: 11pt; }
+          .unit-label span { max-width: 100%; color: #475569; font-size: 8.5pt; overflow-wrap: anywhere; }
+          .unit-label img { width: 42mm; height: 42mm; object-fit: contain; margin: 2mm 0; }
+          @media print { .unit-label { border-color: #94a3b8; } }
+        </style>
+      </head>
+      <body><main class="label-sheet">${labels}</main>
+        <script>
+          const images = Array.from(document.images);
+          Promise.all(images.map((image) => image.complete ? Promise.resolve() : new Promise((resolve) => { image.onload = image.onerror = resolve; }))).then(() => { window.print(); window.onafterprint = () => window.close(); });
+        <\/script>
+      </body>
+    </html>
+  `);
+  printWindow.document.close();
+}
+
+function PhysicalUnitQrModal({ asset, units, loading, error, onClose }) {
+  const [selectedIds, setSelectedIds] = useState([]);
+
+  useEffect(() => {
+    setSelectedIds(units.map((unit) => unit.id));
+  }, [units]);
+
+  const toggleUnit = (id) => {
+    setSelectedIds((current) => current.includes(id)
+      ? current.filter((unitId) => unitId !== id)
+      : [...current, id]);
+  };
+
+  const selectedUnits = units.filter((unit) => selectedIds.includes(unit.id));
+
+  return (
+    <div className="modal-overlay physical-unit-qr-overlay" role="dialog" aria-modal="true" aria-labelledby="physical-unit-qr-title">
+      <div className="modal-card physical-unit-qr-modal">
+        <div className="modal-header">
+          <div>
+            <h3 id="physical-unit-qr-title">Print Physical Unit QR Labels</h3>
+            <p>{asset.name} · {asset.property_number || asset.asset_id || "Asset"}</p>
+          </div>
+          <button type="button" className="icon-button" onClick={onClose} aria-label="Close physical unit QR labels">
+            <X size={18} />
+          </button>
+        </div>
+        <div className="physical-unit-qr-body">
+          {loading && <div className="loading-card">Loading physical units...</div>}
+          {error && <div className="alert danger">{error}</div>}
+          {!loading && !error && units.length === 0 && <div className="empty-state">No physical units found for this asset.</div>}
+          {!loading && !error && units.length > 0 && (
+            <>
+              <div className="physical-unit-qr-toolbar">
+                <span>{selectedUnits.length} of {units.length} selected</span>
+                <button type="button" className="secondary-button" onClick={() => setSelectedIds(selectedIds.length === units.length ? [] : units.map((unit) => unit.id))}>
+                  {selectedIds.length === units.length ? "Clear all" : "Select all"}
+                </button>
+              </div>
+              <div className="physical-unit-qr-list">
+                {units.map((unit) => (
+                  <label className="physical-unit-qr-row" key={unit.id}>
+                    <input type="checkbox" checked={selectedIds.includes(unit.id)} onChange={() => toggleUnit(unit.id)} />
+                    <span>
+                      <strong>{unit.unit_code || `Unit ${unit.id}`}</strong>
+                      <small>{unit.status || "available"} · {unit.condition || "good"}</small>
+                    </span>
+                    {unit.qr_code_path ? <img src={assetQrCodeUrl(unit.qr_code_path)} alt="" /> : <em>QR unavailable</em>}
+                  </label>
+                ))}
+              </div>
+              <div className="modal-actions">
+                <button type="button" className="secondary-button" onClick={onClose}>Cancel</button>
+                <button type="button" className="primary-button" disabled={!selectedUnits.some((unit) => unit.qr_code_path)} onClick={() => printPhysicalUnitQrLabels(asset, selectedUnits)}>
+                  <Printer size={16} /> Print selected labels
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function AssetDetailGrid({ asset }) {
@@ -16236,6 +16504,7 @@ function AssetTable({
   onView,
   onEdit,
   onDelete,
+  onPrintUnits,
   disabled = false,
 }) {
   return (
@@ -16347,8 +16616,18 @@ function AssetTable({
                   </span>
                 </td>
                 <td>
+                  <div className="inline-actions">
+                    <button
+                      className="icon-button"
+                      type="button"
+                      title="Print physical unit QR labels"
+                      aria-label={`Print physical unit QR labels for ${asset.name}`}
+                      onClick={() => onPrintUnits?.(asset)}
+                    >
+                      <QrCode size={16} />
+                    </button>
                   {asset.qr_code_path ? (
-                    <div className="inline-actions">
+                      <>
                       <button
                         className="icon-button"
                         type="button"
@@ -16365,12 +16644,13 @@ function AssetTable({
                       >
                         <Download size={16} />
                       </button>
-                    </div>
+                    </>
                   ) : (
                     <span style={{ color: "#999", fontSize: 12 }}>
                       Not generated
                     </span>
                   )}
+                  </div>
                 </td>
                 <td className="actions-column">
                   <div className="inline-actions asset-actions">
