@@ -7948,6 +7948,8 @@ function AssignmentsPage() {
 
       const payload = {
         asset_id: Number(selectedAssetId) || selectedAssetId,
+        asset_unit_ids: [],
+        physical_unit_ids: [],
         assigned_to: formValues.assigned_to,
         due_date: formValues.due_date || null,
         remarks: formValues.remarks || null,
@@ -9664,12 +9666,15 @@ function MaintenancePage() {
 
 function DamagePage() {
   const [reports, setReports] = useState([]);
+  const [assets, setAssets] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
   const [photoFile, setPhotoFile] = useState(null);
   const [photoPreview, setPhotoPreview] = useState(null);
+  const [assetSearch, setAssetSearch] = useState("");
+  const [showAssetSuggestions, setShowAssetSuggestions] = useState(false);
   const [formData, setFormData] = useState({
     asset_id: "",
     incident_type: "damaged",
@@ -9680,6 +9685,7 @@ function DamagePage() {
 
   useEffect(() => {
     loadReports();
+    loadAssets();
   }, []);
 
   const loadReports = async () => {
@@ -9694,6 +9700,15 @@ function DamagePage() {
     }
   };
 
+  const loadAssets = async () => {
+    try {
+      const assetList = await pcmsApi.assets({ limit: 200 });
+      setAssets(assetList || []);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
   const handlePhotoSelect = (file) => {
     if (file) {
       setPhotoFile(file);
@@ -9703,6 +9718,11 @@ function DamagePage() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (!formData.asset_id) {
+      setError("Please select an asset from the search results.");
+      return;
+    }
+
     try {
       const submitData = {
         asset_id: parseInt(formData.asset_id),
@@ -9718,9 +9738,11 @@ function DamagePage() {
           formDataWithPhoto.append(key, submitData[key]);
         });
         formDataWithPhoto.append("photo", photoFile);
-        await pcmsApi.createDamageReport(formDataWithPhoto);
+        const createdReport = await pcmsApi.createDamageReport(formDataWithPhoto);
+        setReports((current) => [createdReport, ...current]);
       } else {
-        await pcmsApi.createDamageReport(submitData);
+        const createdReport = await pcmsApi.createDamageReport(submitData);
+        setReports((current) => [createdReport, ...current]);
       }
 
       setSuccess("Damage report submitted successfully");
@@ -9731,10 +9753,11 @@ function DamagePage() {
         severity: "moderate",
         description: "",
       });
+      setAssetSearch("");
+      setShowAssetSuggestions(false);
       setPhotoFile(null);
       setPhotoPreview(null);
       setShowForm(false);
-      loadReports();
     } catch (err) {
       setError(err.message);
     }
@@ -9779,16 +9802,113 @@ function DamagePage() {
             </div>
             <form className="damage-form" onSubmit={handleSubmit}>
               <div className="damage-form-grid">
-                <div className="field-row damage-field damage-field-wide">
-              <label>Asset ID</label>
-              <input
-                type="number"
-                value={formData.asset_id}
-                onChange={(e) =>
-                  setFormData({ ...formData, asset_id: e.target.value })
-                }
-                required
-              />
+                <div
+                  className="field-row damage-field damage-field-wide"
+                  style={{ position: "relative" }}
+                >
+                  <label>Asset Name</label>
+                  <input
+                    type="search"
+                    value={assetSearch}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      setAssetSearch(value);
+                      setShowAssetSuggestions(true);
+                      setFormData({ ...formData, asset_id: "" });
+                    }}
+                    onFocus={() => setShowAssetSuggestions(true)}
+                    onBlur={() =>
+                      setTimeout(() => setShowAssetSuggestions(false), 150)
+                    }
+                    placeholder="Search and select an asset"
+                    required
+                  />
+                  {showAssetSuggestions && (
+                    <ul
+                      className="suggestions-list"
+                      style={{
+                        position: "absolute",
+                        zIndex: 9999,
+                        left: 0,
+                        top: "calc(100% + 8px)",
+                        width: "100%",
+                        maxHeight: "220px",
+                        overflow: "auto",
+                        background: "#ffffff",
+                        border: "1px solid rgba(0,0,0,0.08)",
+                        borderRadius: 8,
+                        padding: 0,
+                        boxShadow: "0 8px 24px rgba(15,23,42,0.08)",
+                        listStyle: "none",
+                        pointerEvents: "none",
+                      }}
+                    >
+                      {assets
+                        .filter((asset) => {
+                          const query = assetSearch.trim().toLowerCase();
+                          if (!query) return true;
+                          return (
+                            (asset.name || "").toLowerCase().includes(query) ||
+                            String(asset.property_number || "")
+                              .toLowerCase()
+                              .includes(query) ||
+                            String(asset.asset_id || asset.id)
+                              .toLowerCase()
+                              .includes(query)
+                          );
+                        })
+                        .slice(0, 10)
+                        .map((asset) => (
+                          <li
+                            key={asset.id}
+                            style={{
+                              padding: "10px 14px",
+                              cursor: "pointer",
+                              borderBottom: "1px solid rgba(0,0,0,0.04)",
+                              pointerEvents: "auto",
+                            }}
+                            onMouseDown={(event) => {
+                              event.preventDefault();
+                              setFormData({ ...formData, asset_id: asset.id });
+                              setAssetSearch(
+                                `${asset.name} · ${asset.property_number || asset.asset_id}`,
+                              );
+                              setShowAssetSuggestions(false);
+                            }}
+                          >
+                            <strong style={{ display: "block" }}>
+                              {asset.name}
+                            </strong>
+                            <div style={{ fontSize: 12, color: "#666" }}>
+                              {asset.property_number || asset.asset_id} · {formatDepartment(asset.department) || asset.location || "PPMO"}
+                            </div>
+                          </li>
+                        ))}
+                      {assets.filter((asset) => {
+                        const query = assetSearch.trim().toLowerCase();
+                        if (!query) return false;
+                        return (
+                          (asset.name || "").toLowerCase().includes(query) ||
+                          String(asset.property_number || "")
+                            .toLowerCase()
+                            .includes(query) ||
+                          String(asset.asset_id || asset.id)
+                            .toLowerCase()
+                            .includes(query)
+                        );
+                      }).length === 0 && assetSearch.trim() !== "" && (
+                        <li
+                          style={{
+                            padding: "10px 14px",
+                            color: "#666",
+                            pointerEvents: "auto",
+                          }}
+                        >
+                          No assets found.
+                        </li>
+                      )}
+                    </ul>
+                  )}
                 </div>
                 <div className="field-row damage-field damage-field-wide">
                   <label>Evidence photo <span className="field-optional">Optional</span></label>
@@ -9874,48 +9994,67 @@ function DamagePage() {
       {loading ? (
         <div className="loading-card">Loading damage reports...</div>
       ) : (
-        <div className="card-grid">
-          {reports.length === 0 ? (
-            <p>No damage reports yet</p>
-          ) : (
-            reports.map((report) => (
-              <div className="mini-card" key={report.id}>
-                <div
-                  className={`mini-icon tone-${report.severity === "critical" ? "red" : report.severity === "high" ? "orange" : "yellow"}`}
-                >
-                  <AlertTriangle size={20} />
-                </div>
-                <strong>Asset {report.asset_id}</strong>
-                <p>
-                  {report.incident_type} · Severity: {report.severity}
-                </p>
-                <p className="small-text">{report.description}</p>
-                <div className="inline-actions small">
-                  <span
-                    className={`status ${["repaired", "disposed"].includes(report.status) ? "success" : report.status === "under_repair" ? "warning" : "info"}`}
-                  >
-                    {report.status}
-                  </span>
-                  {report.status === "submitted" && (
-                    <button className="small-button" onClick={() => handleUpdateStatus(report.id, "in_review")}>Review</button>
-                  )}
-                  {report.status === "in_review" && (
-                    <>
-                      <button className="small-button" onClick={() => handleUpdateStatus(report.id, "under_repair")}>Start Repair</button>
-                      <button className="small-button" onClick={() => handleUpdateStatus(report.id, "declared_lost")}>Declare Lost</button>
-                      <button className="small-button" onClick={() => handleUpdateStatus(report.id, "declared_unserviceable")}>Unserviceable</button>
-                    </>
-                  )}
-                  {report.status === "under_repair" && (
-                    <button className="small-button success" onClick={() => handleUpdateStatus(report.id, "repaired")}>Mark Repaired</button>
-                  )}
-                  {report.status === "declared_unserviceable" && (
-                    <button className="small-button danger-action" onClick={() => handleUpdateStatus(report.id, "disposed")}>Record Disposal</button>
-                  )}
-                </div>
-              </div>
-            ))
-          )}
+        <div className="table-card" style={{ overflowX: "auto" }}>
+          <table>
+              <thead>
+                <tr>
+                  <th>Asset</th>
+                  <th>Incident</th>
+                  <th>Date</th>
+                  <th>Severity</th>
+                  <th>Description</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {reports.length === 0 ? (
+                  <tr>
+                    <td colSpan="7" style={{ padding: 16, textAlign: "center" }}>
+                      No damage reports yet
+                    </td>
+                  </tr>
+                ) : reports.map((report) => (
+                  <tr key={report.id}>
+                    <td>
+                      <strong>{report.asset?.name || `Asset ${report.asset_id}`}</strong>
+                      <span>{report.asset?.property_number || report.asset_id}</span>
+                    </td>
+                    <td>{report.incident_type}</td>
+                    <td>{report.incident_date || "-"}</td>
+                    <td>{report.severity}</td>
+                    <td>{report.description}</td>
+                    <td>
+                      <span
+                        className={`status ${["repaired", "disposed"].includes(report.status) ? "success" : report.status === "under_repair" ? "warning" : "info"}`}
+                      >
+                        {report.status}
+                      </span>
+                    </td>
+                    <td>
+                      <div className="inline-actions small">
+                        {report.status === "submitted" && (
+                          <button className="small-button" onClick={() => handleUpdateStatus(report.id, "in_review")}>Review</button>
+                        )}
+                        {report.status === "in_review" && (
+                          <>
+                            <button className="small-button" onClick={() => handleUpdateStatus(report.id, "under_repair")}>Start Repair</button>
+                            <button className="small-button" onClick={() => handleUpdateStatus(report.id, "declared_lost")}>Declare Lost</button>
+                            <button className="small-button" onClick={() => handleUpdateStatus(report.id, "declared_unserviceable")}>Unserviceable</button>
+                          </>
+                        )}
+                        {report.status === "under_repair" && (
+                          <button className="small-button success" onClick={() => handleUpdateStatus(report.id, "repaired")}>Mark Repaired</button>
+                        )}
+                        {report.status === "declared_unserviceable" && (
+                          <button className="small-button danger-action" onClick={() => handleUpdateStatus(report.id, "disposed")}>Record Disposal</button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+          </table>
         </div>
       )}
     </ModulePage>

@@ -402,7 +402,11 @@ export async function createAssignment(payload) {
   if (hasPhoto) {
     Object.entries(payload).forEach(([key, value]) => {
       if (value !== undefined && value !== null && value !== "") {
-        body.append(key, typeof value === "boolean" ? (value ? "1" : "0") : value);
+        if (Array.isArray(value)) {
+          value.forEach((item) => body.append(`${key}[]`, item));
+        } else {
+          body.append(key, typeof value === "boolean" ? (value ? "1" : "0") : value);
+        }
       }
     });
   }
