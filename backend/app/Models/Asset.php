@@ -70,4 +70,10 @@ class Asset extends Model
     {
         return $this->hasMany(AssetUnit::class);
     }
+
+    public function damageReports(): HasMany
+    {
+        return $this->hasMany(DamageReport::class);
+    }
+
 }

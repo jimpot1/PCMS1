@@ -75,7 +75,8 @@ Route::middleware(['web', 'auth:sanctum', 'delete.admin'])->group(function () {
     Route::patch('/transfers/{transfer}/hold', [TransferController::class, 'hold'])->middleware('role:Property Custodian,PPMO Staff,OIC');
     Route::patch('/transfers/{transfer}/revision', [TransferController::class, 'requestRevision'])->middleware('role:Department Head,Property Custodian,PPMO Staff,OIC');
     Route::post('/transfers/{transfer}/execute', [TransferController::class, 'execute'])->middleware('role:Property Custodian,PPMO Staff,OIC');
-    Route::apiResource('maintenance', MaintenanceController::class);
+    Route::apiResource('maintenance', MaintenanceController::class)
+        ->parameters(['maintenance' => 'record']);
     Route::get('/maintenance-predictions', [MaintenanceController::class, 'predictions']);
     Route::apiResource('damage-reports', DamageReportController::class)->parameters(['damage-reports' => 'report']);
     Route::apiResource('supplies', SupplyController::class);
@@ -117,6 +118,8 @@ Route::middleware(['web', 'auth:sanctum', 'delete.admin'])->group(function () {
     Route::post('/gate-passes/{gatePass}/scan', [GatePassController::class, 'scan']);
     Route::apiResource('audits', AuditController::class);
     Route::post('/audits/{audit}/scan', [AuditController::class, 'scan'])->middleware('role:PPMO Staff,Property Custodian,OIC');
+    Route::post('/audits/{audit}/asset-count', [AuditController::class, 'countAsset'])->middleware('role:PPMO Staff,Property Custodian,OIC');
+    Route::post('/audits/{audit}/supply-count', [AuditController::class, 'countSupply'])->middleware('role:PPMO Staff,Property Custodian,OIC');
     Route::patch('/audits/{audit}/complete', [AuditController::class, 'complete'])->middleware('role:PPMO Staff,Property Custodian,OIC');
     Route::get('/assignments/dashboard', [\App\Http\Controllers\AssetAssignmentController::class, 'dashboard']);
     Route::get('/assignments/export', [\App\Http\Controllers\AssetAssignmentController::class, 'export']);

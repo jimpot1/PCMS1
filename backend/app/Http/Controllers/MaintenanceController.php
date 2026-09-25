@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\MaintenanceRecord;
+use App\Models\AssetUnit;
 use App\Services\RepairFrequencyService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -19,7 +20,7 @@ class MaintenanceController extends Controller
     public function index(Request $request): JsonResponse
     {
         $records = MaintenanceRecord::query()
-            ->with('asset')
+            ->with('asset', 'assetUnit')
             ->when($request->asset_id, fn ($query, $value) => $query->where('asset_id', $value))
             ->when($request->status, fn ($query, $value) => $query->where('status', $value))
             ->when($request->type, fn ($query, $value) => $query->where('type', $value))
@@ -34,6 +35,7 @@ class MaintenanceController extends Controller
     {
         $validated = $request->validate([
             'asset_id' => ['required', 'exists:assets,id'],
+            'asset_unit_id' => ['nullable', 'integer', 'exists:asset_units,id'],
             'type' => ['required', 'string', 'max:60'],
             'priority' => ['required', 'in:low,medium,high,critical'],
             'technician' => ['nullable', 'string', 'max:160'],
@@ -43,6 +45,16 @@ class MaintenanceController extends Controller
         ]);
 
         $asset = \App\Models\Asset::findOrFail($validated['asset_id']);
+        $assetUnit = null;
+        if (! empty($validated['asset_unit_id'])) {
+            $assetUnit = AssetUnit::whereKey($validated['asset_unit_id'])
+                ->where('asset_id', $asset->id)
+                ->first();
+            if (! $assetUnit) {
+                return response()->json(['message' => 'The selected physical unit does not belong to the selected asset.'], 422);
+            }
+            $validated['asset_unit_id'] = $assetUnit->id;
+        }
         if (in_array($asset->status, ['lost', 'unserviceable', 'disposed'], true)) {
             return response()->json(['message' => 'Maintenance cannot be scheduled for a lost, unserviceable, or disposed asset.'], 422);
         }
@@ -61,19 +73,31 @@ class MaintenanceController extends Controller
 
         $record = DB::transaction(function () use ($validated, $asset, $request) {
             $record = MaintenanceRecord::create($validated);
-            $asset->update(['status' => 'maintenance']);
+            if ($record->asset_unit_id) {
+                AssetUnit::whereKey($record->asset_unit_id)->update([
+                    'status' => 'maintenance',
+                    'condition' => 'needs_repair',
+                ]);
+                $this->syncAssetFromUnits($asset);
+            } else {
+                $asset->update(['status' => 'maintenance', 'available_quantity' => 0]);
+                AssetUnit::where('asset_id', $asset->id)->update([
+                    'status' => 'maintenance',
+                    'condition' => 'needs_repair',
+                ]);
+            }
             $this->notifyOperations($record, 'scheduled');
 
             return $record;
         });
         $this->logActivity('maintenance_scheduled', $record, $request);
 
-        return response()->json($record->fresh()->load('asset'), 201);
+        return response()->json($record->fresh()->load('asset', 'assetUnit'), 201);
     }
 
     public function show(MaintenanceRecord $record): JsonResponse
     {
-        return response()->json($record->load('asset'));
+        return response()->json($record->load('asset', 'assetUnit'));
     }
 
     /**
@@ -123,7 +147,15 @@ class MaintenanceController extends Controller
             if (($validated['status'] ?? null) === 'completed') {
                 $asset = \App\Models\Asset::find($record->asset_id);
                 if ($asset && ! in_array($asset->status, ['lost', 'unserviceable', 'disposed'], true)) {
-                    $asset->update(['status' => 'available']);
+                    if ($record->asset_unit_id) {
+                        AssetUnit::whereKey($record->asset_unit_id)->update([
+                            'status' => 'available',
+                            'condition' => 'good',
+                        ]);
+                        $this->syncAssetFromUnits($asset);
+                    } else {
+                        $asset->update(['status' => 'available']);
+                    }
                 }
                 $this->notifyOperations($record, 'completed');
             }
@@ -136,7 +168,7 @@ class MaintenanceController extends Controller
 
         $this->logActivity('maintenance_updated', $record, $request);
 
-        return response()->json($record->fresh()->load('asset'));
+        return response()->json($record->fresh()->load('asset', 'assetUnit'));
     }
 
     public function destroy(Request $request, MaintenanceRecord $record): JsonResponse
@@ -199,5 +231,17 @@ class MaintenanceController extends Controller
                 'updated_at' => now(),
             ]);
         }
+    }
+
+    protected function syncAssetFromUnits(\App\Models\Asset $asset): void
+    {
+        $available = AssetUnit::where('asset_id', $asset->id)
+            ->where('status', 'available')
+            ->count();
+
+        $asset->update([
+            'available_quantity' => $available,
+            'status' => $available > 0 ? 'available' : 'maintenance',
+        ]);
     }
 }

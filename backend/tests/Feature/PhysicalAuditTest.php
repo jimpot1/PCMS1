@@ -10,6 +10,7 @@ use App\Models\AssetTransfer;
 use App\Models\AuditScan;
 use App\Models\Department;
 use App\Models\PhysicalAudit;
+use App\Models\Supply;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Request;
@@ -190,6 +191,44 @@ class PhysicalAuditTest extends TestCase
             'status' => 'submitted',
         ]);
         $this->assertDatabaseHas('activity_logs', ['action' => 'audit_completed']);
+    }
+
+    public function test_supply_audit_records_quantity_variance(): void
+    {
+        $staff = $this->makeUser('PPMO Staff');
+        $department = $this->makeDepartment('SUPPLY-AUDIT');
+        $supply = Supply::create([
+            'sku' => 'SUP-AUDIT-001',
+            'name' => 'Audit Paper',
+            'unit' => 'ream',
+            'stock' => 10,
+            'minimum_stock' => 2,
+            'department_id' => $department->id,
+        ]);
+        $audit = PhysicalAudit::create([
+            'audit_number' => 'AUD-2026-SUPPLY-001',
+            'area' => 'Supply Room',
+            'audit_type' => 'supplies',
+            'department_id' => $department->id,
+            'auditor_id' => $staff->id,
+            'scheduled_at' => now(),
+            'status' => 'scheduled',
+        ]);
+
+        $response = (new AuditController())->countSupply($this->request($staff, [
+            'supply_id' => $supply->id,
+            'counted_quantity' => 7,
+        ]), $audit);
+
+        $this->assertSame(201, $response->getStatusCode());
+        $this->assertDatabaseHas('audit_supply_counts', [
+            'audit_id' => $audit->id,
+            'supply_id' => $supply->id,
+            'expected_quantity' => 10,
+            'counted_quantity' => 7,
+            'variance' => -3,
+            'status' => 'variance',
+        ]);
     }
 
     public function test_audit_can_be_updated_and_deleted_with_scans(): void

@@ -11,6 +11,7 @@ class MaintenanceRecord extends Model
 
     protected $fillable = [
         'asset_id',
+        'asset_unit_id',
         'type',
         'priority',
         'status',
@@ -30,5 +31,10 @@ class MaintenanceRecord extends Model
     public function asset(): BelongsTo
     {
         return $this->belongsTo(Asset::class);
+    }
+
+    public function assetUnit(): BelongsTo
+    {
+        return $this->belongsTo(AssetUnit::class);
     }
 }

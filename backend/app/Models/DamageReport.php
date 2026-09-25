@@ -11,6 +11,7 @@ class DamageReport extends Model
 
     protected $fillable = [
         'asset_id',
+        'asset_unit_id',
         'reported_by',
         'department_id',
         'incident_type',
@@ -35,6 +36,11 @@ class DamageReport extends Model
     public function asset(): BelongsTo
     {
         return $this->belongsTo(Asset::class);
+    }
+
+    public function assetUnit(): BelongsTo
+    {
+        return $this->belongsTo(AssetUnit::class);
     }
 
     public function department(): BelongsTo

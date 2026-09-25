@@ -27,6 +27,9 @@ class AssetController extends Controller
             ->withCount([
                 'units',
                 'units as available_units_count' => fn ($query) => $query->where('status', 'available'),
+                'assignments as active_assignments_count' => fn ($query) => $query->where('status', 'active'),
+                'damageReports as active_damage_reports_count' => fn ($query) => $query->whereIn('status', ['submitted', 'in_review', 'under_repair']),
+                'maintenanceRecords as active_maintenance_records_count' => fn ($query) => $query->whereIn('status', ['scheduled', 'in_progress']),
             ])
             ->orderBy($request->input('sort_by', 'created_at'), $request->input('sort_order', 'desc'))
             ->paginate($request->integer('per_page', 15));
@@ -97,7 +100,15 @@ class AssetController extends Controller
     public function show(Asset $asset): JsonResponse
     {
         return response()->json($this->withUnitAvailability(
-            $asset->load(['category', 'department', 'maintenanceRecords', 'assignments.assignedTo'])
+            $asset->load([
+                'category',
+                'department',
+                'units.department',
+                'units.custodian',
+                'damageReports.assetUnit',
+                'maintenanceRecords.assetUnit',
+                'assignments.assignedTo',
+            ])
         ));
     }
 

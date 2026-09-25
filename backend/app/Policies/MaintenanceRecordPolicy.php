@@ -29,7 +29,7 @@ class MaintenanceRecordPolicy
 
     public function delete(User $user, MaintenanceRecord $record): bool
     {
-        return $this->isInventoryManager($user);
+        return $this->isSystemAdministrator($user);
     }
 
     protected function isInventoryManager(User $user): bool

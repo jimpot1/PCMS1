@@ -13,6 +13,7 @@ class PhysicalAudit extends Model
     protected $fillable = [
         'audit_number',
         'area',
+        'audit_type',
         'department_id',
         'auditor_id',
         'scheduled_at',
@@ -31,5 +32,15 @@ class PhysicalAudit extends Model
     public function department(): BelongsTo
     {
         return $this->belongsTo(Department::class);
+    }
+
+    public function supplyCounts(): HasMany
+    {
+        return $this->hasMany(AuditSupplyCount::class, 'audit_id');
+    }
+
+    public function assetCounts(): HasMany
+    {
+        return $this->hasMany(AuditAssetCount::class, 'audit_id');
     }
 }

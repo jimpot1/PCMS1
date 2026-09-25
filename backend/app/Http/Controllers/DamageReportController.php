@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Asset;
+use App\Models\AssetUnit;
 use App\Models\DamageReport;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -18,7 +19,7 @@ class DamageReportController extends Controller
     public function index(Request $request): JsonResponse
     {
         $reports = DamageReport::query()
-            ->with('asset', 'department')
+            ->with('asset', 'assetUnit', 'department')
             ->when($request->status, fn ($query, $value) => $query->where('status', $value))
             ->when($request->severity, fn ($query, $value) => $query->where('severity', $value))
             ->when($request->asset_id, fn ($query, $value) => $query->where('asset_id', $value))
@@ -31,7 +32,8 @@ class DamageReportController extends Controller
     public function store(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'asset_id' => ['nullable', 'exists:assets,id'],
+            'asset_id' => ['required', 'exists:assets,id'],
+            'asset_unit_id' => ['nullable', 'integer', 'exists:asset_units,id'],
             'ocr_scan_id' => ['nullable', 'exists:ocr_scans,id'],
             'incident_type' => ['required', 'in:damaged,lost,unserviceable'],
             'incident_date' => ['required', 'date'],
@@ -41,6 +43,17 @@ class DamageReportController extends Controller
         ]);
 
         $assetId = $validated['asset_id'];
+        $assetUnit = null;
+
+        if (! empty($validated['asset_unit_id'])) {
+            $assetUnit = AssetUnit::whereKey($validated['asset_unit_id'])
+                ->where('asset_id', $assetId)
+                ->first();
+
+            if (! $assetUnit) {
+                return response()->json(['message' => 'The selected physical unit does not belong to the selected asset.'], 422);
+            }
+        }
 
         // If OCR scan ID is provided, resolve asset from OCR
         if (!$assetId && $validated['ocr_scan_id'] ?? null) {
@@ -67,6 +80,7 @@ class DamageReportController extends Controller
 
         $report = DamageReport::create([
             'asset_id' => $assetId,
+            'asset_unit_id' => $assetUnit?->id,
             'reported_by' => $request->user()?->id,
             'department_id' => $asset->department_id,
             'incident_type' => $validated['incident_type'],
@@ -77,17 +91,22 @@ class DamageReportController extends Controller
             'status' => 'submitted',
         ]);
 
-        $this->applyAssetHold($asset, $validated['incident_type']);
+        if ($assetUnit) {
+            $this->applyUnitHold($assetUnit, $validated['incident_type']);
+            $this->syncAssetFromUnits($asset, $validated['incident_type']);
+        } else {
+            $this->applyAssetHold($asset, $validated['incident_type']);
+        }
         $this->notifyOperations($report, 'submitted');
 
         $this->logActivity('damage_report_submitted', $report, $request);
 
-        return response()->json($report->fresh()->load('asset', 'department'), 201);
+        return response()->json($report->fresh()->load('asset', 'assetUnit', 'department'), 201);
     }
 
     public function show(DamageReport $report): JsonResponse
     {
-        return response()->json($report->load('asset', 'department'));
+        return response()->json($report->load('asset', 'assetUnit', 'department'));
     }
 
     public function update(Request $request, DamageReport $report): JsonResponse
@@ -107,6 +126,25 @@ class DamageReportController extends Controller
             $validated['resolved_at'] = now();
         }
         $report->update($validated);
+
+        if (in_array($report->status, ['repaired', 'declared_lost', 'declared_unserviceable', 'disposed'], true)) {
+            $units = $report->asset_unit_id
+                ? AssetUnit::whereKey($report->asset_unit_id)->get()
+                : AssetUnit::where('asset_id', $report->asset_id)->get();
+
+            foreach ($units as $unit) {
+                $unit->update([
+                    'status' => $report->status === 'repaired'
+                        ? 'available'
+                        : ($report->status === 'declared_lost' ? 'disposed' : ($report->status === 'disposed' ? 'disposed' : 'maintenance')),
+                    'condition' => $report->status === 'repaired' ? 'good' : 'unserviceable',
+                ]);
+            }
+
+            if ($units->isNotEmpty()) {
+                $this->syncAssetFromUnits($report->asset, $report->status === 'repaired' ? 'available' : $report->status);
+            }
+        }
 
         if ($oldStatus !== $report->status) {
             $asset = Asset::find($report->asset_id);
@@ -142,7 +180,7 @@ class DamageReportController extends Controller
 
         $this->logActivity('damage_report_updated', $report, $request);
 
-        return response()->json($report->fresh()->load('asset', 'department'));
+        return response()->json($report->fresh()->load('asset', 'assetUnit', 'department'));
     }
 
     protected function applyAssetHold(Asset $asset, string $incidentType): void
@@ -153,6 +191,31 @@ class DamageReportController extends Controller
             default => ['status' => 'damaged', 'condition' => 'damaged', 'available_quantity' => 0],
         };
         $asset->update($updates);
+
+        AssetUnit::where('asset_id', $asset->id)->update([
+            'status' => $incidentType === 'lost' ? 'disposed' : ($incidentType === 'unserviceable' ? 'maintenance' : 'damaged'),
+            'condition' => $incidentType === 'lost' ? 'unserviceable' : $incidentType,
+        ]);
+    }
+
+    protected function applyUnitHold(AssetUnit $unit, string $incidentType): void
+    {
+        $unit->update([
+            'status' => $incidentType === 'lost' ? 'disposed' : ($incidentType === 'unserviceable' ? 'maintenance' : 'damaged'),
+            'condition' => $incidentType === 'lost' ? 'unserviceable' : $incidentType,
+        ]);
+    }
+
+    protected function syncAssetFromUnits(Asset $asset, ?string $fallbackStatus = null): void
+    {
+        $available = AssetUnit::where('asset_id', $asset->id)
+            ->where('status', 'available')
+            ->count();
+
+        $asset->update([
+            'available_quantity' => $available,
+            'status' => $available > 0 ? 'available' : ($fallbackStatus ?: 'damaged'),
+        ]);
     }
 
     protected function notifyOperations(DamageReport $report, string $state): void

@@ -68,7 +68,27 @@ class ReportController extends Controller
     private function damageSummary(string $format)
     {
         $reports = DB::table('damage_reports')
-            ->select('id', 'severity', 'status', 'created_at')
+            ->leftJoin('assets', 'damage_reports.asset_id', '=', 'assets.id')
+            ->leftJoin('asset_units', 'damage_reports.asset_unit_id', '=', 'asset_units.id')
+            ->leftJoin('departments', 'damage_reports.department_id', '=', 'departments.id')
+            ->select(
+                'damage_reports.id',
+                'assets.name as asset_name',
+                'assets.property_number',
+                'asset_units.unit_code',
+                'departments.name as department_name',
+                'damage_reports.incident_type',
+                'damage_reports.incident_date',
+                'damage_reports.severity',
+                'damage_reports.description',
+                'damage_reports.status',
+                'damage_reports.assessment_notes',
+                'damage_reports.disposal_reference',
+                'damage_reports.assessed_at',
+                'damage_reports.resolved_at',
+                'damage_reports.created_at',
+            )
+            ->orderByDesc('damage_reports.created_at')
             ->get();
 
         $byStatus = $reports->groupBy('status')->map(fn ($items) => $items->count());

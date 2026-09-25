@@ -3,10 +3,13 @@
 namespace App\Http\Controllers;
 
 use App\Models\Asset;
+use App\Models\AuditAssetCount;
 use App\Models\AssetTransfer;
 use App\Models\AuditScan;
+use App\Models\AuditSupplyCount;
 use App\Models\DamageReport;
 use App\Models\PhysicalAudit;
+use App\Models\Supply;
 use App\Services\AnomalyDetectionService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -36,6 +39,7 @@ class AuditController extends Controller
     {
         $validated = $request->validate([
             'area' => ['required', 'string', 'max:180'],
+            'audit_type' => ['sometimes', 'in:assets,supplies,combined'],
             'department_id' => ['nullable', 'exists:departments,id'],
             'scheduled_at' => ['required', 'date', 'after_or_equal:today'],
         ]);
@@ -43,6 +47,7 @@ class AuditController extends Controller
         $audit = PhysicalAudit::create([
             'audit_number' => $this->generateAuditNumber(),
             'area' => $validated['area'],
+            'audit_type' => $validated['audit_type'] ?? 'assets',
             'department_id' => $validated['department_id'] ?? null,
             'auditor_id' => $request->user()?->id,
             'scheduled_at' => $validated['scheduled_at'],
@@ -56,21 +61,169 @@ class AuditController extends Controller
 
     public function show(PhysicalAudit $audit): JsonResponse
     {
-        $audit->load('auditScans.asset');
-        
-        // Compute summary statistics
+        $audit->load('auditScans.asset', 'supplyCounts.supply', 'assetCounts');
         $scans = $audit->auditScans;
+        $includesAssets = in_array($audit->audit_type ?? 'assets', ['assets', 'combined'], true);
+        $includesSupplies = in_array($audit->audit_type ?? 'assets', ['supplies', 'combined'], true);
+        $scansByAsset = $scans->keyBy('asset_id');
+        $assetCountsByAsset = $audit->assetCounts->keyBy('asset_id');
+        $expectedAssets = $includesAssets
+            ? Asset::query()
+                ->when($audit->department_id, fn ($query, $departmentId) => $query->where('department_id', $departmentId))
+                ->when(! $audit->department_id, fn ($query) => $query->whereNull('department_id'))
+                ->orderBy('name')
+                ->get()
+                ->map(function (Asset $asset) use ($scansByAsset, $assetCountsByAsset) {
+                    $scan = $scansByAsset->get($asset->id);
+                    $count = $assetCountsByAsset->get($asset->id);
+
+                    return [
+                        'id' => $asset->id,
+                        'name' => $asset->name,
+                        'property_number' => $asset->property_number,
+                        'result' => $scan?->result ?? 'unverified',
+                        'scan_id' => $scan?->id,
+                        'found_department_id' => $scan?->found_department_id,
+                        'system_quantity' => (int) ($asset->quantity ?? 0),
+                        'physical_quantity' => $count?->counted_quantity,
+                        'variance' => $count?->variance,
+                        'quantity_status' => $count?->status ?? 'uncounted',
+                    ];
+                })
+                ->values()
+            : collect();
+
+        $countedAssets = $expectedAssets->where('quantity_status', '!=', 'uncounted')->count();
+
         $summary = [
             'verified' => $scans->where('result', 'verified')->count(),
             'missing' => $scans->where('result', 'missing')->count(),
             'wrong_department' => $scans->where('result', 'wrong_department')->count(),
             'total' => $scans->count(),
+            'expected' => $expectedAssets->count(),
+            'unverified' => $expectedAssets->where('result', 'unverified')->count(),
+            'counted_assets' => $countedAssets,
+            'uncounted_assets' => $expectedAssets->where('quantity_status', 'uncounted')->count(),
         ];
+        $summary['progress_percent'] = $summary['expected'] > 0
+            ? (int) round(max($summary['verified'] + $summary['wrong_department'], $countedAssets) / $summary['expected'] * 100)
+            : 0;
+
+        $expectedSupplies = $includesSupplies && $audit->department_id
+            ? Supply::query()
+                ->where('department_id', $audit->department_id)
+                ->orderBy('name')
+                ->get()
+                ->map(function (Supply $supply) use ($audit) {
+                    $count = $audit->supplyCounts->firstWhere('supply_id', $supply->id);
+
+                    return [
+                        'id' => $supply->id,
+                        'sku' => $supply->sku,
+                        'name' => $supply->name,
+                        'unit' => $supply->unit,
+                        'expected_quantity' => $count?->expected_quantity ?? $supply->stock,
+                        'counted_quantity' => $count?->counted_quantity,
+                        'variance' => $count?->variance,
+                        'status' => $count?->status ?? 'uncounted',
+                        'notes' => $count?->notes,
+                    ];
+                })
+                ->values()
+            : collect();
+
+        $countedSupplies = $expectedSupplies->where('status', '!=', 'uncounted')->count();
+        $summary['expected_supplies'] = $expectedSupplies->count();
+        $summary['counted_supplies'] = $countedSupplies;
+        $summary['supply_progress_percent'] = $summary['expected_supplies'] > 0
+            ? (int) round($countedSupplies / $summary['expected_supplies'] * 100)
+            : 0;
 
         return response()->json([
             'audit' => $audit,
             'summary' => $summary,
+            'expected_assets' => $expectedAssets,
+            'expected_supplies' => $expectedSupplies,
         ]);
+    }
+
+    public function countAsset(Request $request, PhysicalAudit $audit): JsonResponse
+    {
+        if ($audit->status === 'completed') {
+            return response()->json(['message' => 'Cannot count assets in a completed audit.'], 400);
+        }
+
+        $validated = $request->validate([
+            'asset_id' => ['required', 'exists:assets,id'],
+            'counted_quantity' => ['required', 'integer', 'min:0'],
+            'notes' => ['nullable', 'string', 'max:1000'],
+        ]);
+
+        $asset = Asset::findOrFail($validated['asset_id']);
+        if ($audit->department_id && (int) $asset->department_id !== (int) $audit->department_id) {
+            return response()->json(['message' => 'The selected asset does not belong to this audit department.'], 422);
+        }
+        if (! $audit->department_id && $asset->department_id !== null) {
+            return response()->json(['message' => 'The selected asset is assigned to a department and is not PPMO unassigned stock.'], 422);
+        }
+
+        $expectedQuantity = (int) ($asset->quantity ?? 0);
+        $countedQuantity = (int) $validated['counted_quantity'];
+        $variance = $countedQuantity - $expectedQuantity;
+        $status = $variance === 0 ? 'matched' : ($countedQuantity === 0 ? 'missing' : 'variance');
+
+        $count = AuditAssetCount::updateOrCreate(
+            ['audit_id' => $audit->id, 'asset_id' => $asset->id],
+            [
+                'expected_quantity' => $expectedQuantity,
+                'counted_quantity' => $countedQuantity,
+                'variance' => $variance,
+                'status' => $status,
+                'notes' => $validated['notes'] ?? null,
+            ],
+        );
+
+        $this->logActivity('audit_asset_counted', $count, $request);
+
+        return response()->json($count->load('asset'), 201);
+    }
+
+    public function countSupply(Request $request, PhysicalAudit $audit): JsonResponse
+    {
+        if ($audit->status === 'completed') {
+            return response()->json(['message' => 'Cannot count supplies in a completed audit.'], 400);
+        }
+
+        $validated = $request->validate([
+            'supply_id' => ['required', 'exists:supplies,id'],
+            'counted_quantity' => ['required', 'integer', 'min:0'],
+            'notes' => ['nullable', 'string', 'max:1000'],
+        ]);
+
+        $supply = Supply::findOrFail($validated['supply_id']);
+        if ($audit->department_id && (int) $supply->department_id !== (int) $audit->department_id) {
+            return response()->json(['message' => 'The selected supply does not belong to this audit department.'], 422);
+        }
+
+        $expectedQuantity = (int) $supply->stock;
+        $countedQuantity = (int) $validated['counted_quantity'];
+        $variance = $countedQuantity - $expectedQuantity;
+        $status = $variance === 0 ? 'matched' : 'variance';
+
+        $count = AuditSupplyCount::updateOrCreate(
+            ['audit_id' => $audit->id, 'supply_id' => $supply->id],
+            [
+                'expected_quantity' => $expectedQuantity,
+                'counted_quantity' => $countedQuantity,
+                'variance' => $variance,
+                'status' => $status,
+                'notes' => $validated['notes'] ?? null,
+            ],
+        );
+
+        $this->logActivity('audit_supply_counted', $count, $request);
+
+        return response()->json($count->load('supply'), 201);
     }
 
     public function update(Request $request, PhysicalAudit $audit): JsonResponse
@@ -82,6 +235,7 @@ class AuditController extends Controller
 
         $validated = $request->validate([
             'area' => ['sometimes', 'string', 'max:180'],
+            'audit_type' => ['sometimes', 'in:assets,supplies,combined'],
             'department_id' => ['sometimes', 'nullable', 'exists:departments,id'],
             'scheduled_at' => ['sometimes', 'date', 'after_or_equal:today'],
         ]);
@@ -191,10 +345,14 @@ class AuditController extends Controller
         try {
             DB::beginTransaction();
 
-            if ($audit->department_id) {
-                $expectedAssetIds = Asset::where('department_id', $audit->department_id)->pluck('id');
+            if (in_array($audit->audit_type ?? 'assets', ['assets', 'combined'], true)) {
+                $expectedAssetIds = Asset::query()
+                    ->when($audit->department_id, fn ($query, $departmentId) => $query->where('department_id', $departmentId))
+                    ->when(! $audit->department_id, fn ($query) => $query->whereNull('department_id'))
+                    ->pluck('id');
                 $scannedAssetIds = $audit->auditScans->pluck('asset_id');
-                $missingIds = $expectedAssetIds->diff($scannedAssetIds);
+                $countedAssetIds = $audit->assetCounts()->whereNotNull('counted_quantity')->pluck('asset_id');
+                $missingIds = $expectedAssetIds->diff($scannedAssetIds)->diff($countedAssetIds);
 
                 foreach ($missingIds as $assetId) {
                     AuditScan::create([
@@ -250,6 +408,7 @@ class AuditController extends Controller
             throw $e;
         }
     }
+
 
     protected function generateAuditNumber(): string
     {
