@@ -7,13 +7,10 @@ import {
   Archive,
   ArrowRight,
   Bell,
-  Boxes,
-  Layers,
   Building2,
-  CalendarClock,
   Camera,
+  CalendarClock,
   CheckCircle2,
-  ChevronDown,
   ClipboardCheck,
   ClipboardList,
   Download,
@@ -1246,7 +1243,7 @@ function App() {
                 path="monitoring"
                 element={<MonitoringPage currentUser={currentUser} />}
               />
-              <Route path="maintenance" element={<MaintenancePage />} />
+              <Route path="maintenance" element={<MaintenancePage currentUser={currentUser} />} />
               <Route path="damage" element={<DamagePage />} />
               <Route path="purchases" element={<PurchasePage currentUser={currentUser} />} />
               <Route path="gatepass" element={<GatePassPage />} />
@@ -1709,22 +1706,20 @@ function OtpVerificationPage({ user, authError, remember, onVerify, onResend, on
   };
 
   return (
-    <main className="login-wrapper">
+    <main className="login-wrapper otp-page">
       <div className="otp-card">
         <div className="otp-header">
-          <div className="logo">
+          <div className="otp-brand">
             <div className="brand-icon">
-              <Building2 size={28} />
+              <Building2 size={22} />
             </div>
-            <div>
-              <h2>PCMS</h2>
-            </div>
+            <span>PCMS</span>
           </div>
         </div>
 
         <div className="otp-panel">
           <div className="otp-badge">
-            <Shield size={16} />
+            <Shield size={14} />
             Security Check
           </div>
           <h1>Verify Your Account</h1>
@@ -1757,24 +1752,24 @@ function OtpVerificationPage({ user, authError, remember, onVerify, onResend, on
 
             <div className="otp-meta">
               <div className="otp-timer">
-                <Timer size={16} />
+                <Timer size={15} />
                 <span>
                   {minutes}:{String(seconds).padStart(2, '0')}
                 </span>
               </div>
-              <button type="button" className="link-button" onClick={onBack}>
+              <button type="button" className="link-button otp-change-account" onClick={onBack}>
                 Change account
               </button>
             </div>
 
-            <button type="submit" className="login-btn" disabled={isVerifying || otp.join('').length !== 6}>
+            <button type="submit" className="login-btn otp-submit-btn" disabled={isVerifying || otp.join('').length !== 6}>
               {isVerifying ? 'Verifying...' : 'Verify OTP'}
             </button>
 
             <div className="otp-actions">
               <button
                 type="button"
-                className="secondary-button"
+                className="secondary-button otp-resend-button"
                 onClick={handleResend}
                 disabled={isResending || !canResend}
               >
@@ -2773,7 +2768,7 @@ function renderPage(page, onNavigate, currentUser) {
     assignments: <EnhancedAssignmentsPage />,
     transfers: <TransferPage />,
     returns: <AssetReturnPage />,
-    maintenance: <MaintenancePage />,
+    maintenance: <MaintenancePage currentUser={currentUser} />,
     damage: <DamagePage />,
     supplies: <SuppliesPage currentUser={currentUser} />,
     purchases: <PurchasePage currentUser={currentUser} />,
@@ -3235,6 +3230,7 @@ function AssetRegistry({ currentUser }) {
   const [isLoadingAssets, setIsLoadingAssets] = useState(true);
   const [assetError, setAssetError] = useState(null);
   const [searchText, setSearchText] = useState("");
+  const [activityFilter, setActivityFilter] = useState("all");
   const [departments, setDepartments] = useState([]);
   const [departmentLoadError, setDepartmentLoadError] = useState(null);
   const [isLoadingDepartments, setIsLoadingDepartments] = useState(true);
@@ -3327,7 +3323,7 @@ function AssetRegistry({ currentUser }) {
 
   const filteredAssets = assetsData.filter((asset) => {
     const query = searchText.toLowerCase();
-    return (
+    const matchesSearch = (
       asset.name?.toLowerCase().includes(query) ||
       asset.property_number?.toLowerCase().includes(query) ||
       asset.serial_number?.toLowerCase().includes(query) ||
@@ -3335,6 +3331,17 @@ function AssetRegistry({ currentUser }) {
       asset.status?.toLowerCase().includes(query) ||
       asset.condition?.toLowerCase().includes(query)
     );
+
+    const isAssigned = Number(asset.active_assignments_count || 0) > 0 || asset.status === "assigned";
+    const isReported = Number(asset.active_damage_reports_count || 0) > 0;
+    const isInMaintenance = Number(asset.active_maintenance_records_count || 0) > 0 || asset.status === "maintenance";
+    const matchesActivity = activityFilter === "all"
+      || (activityFilter === "assigned" && isAssigned)
+      || (activityFilter === "reported" && isReported)
+      || (activityFilter === "maintenance" && isInMaintenance)
+      || (activityFilter === "clear" && !isAssigned && !isReported && !isInMaintenance);
+
+    return matchesSearch && matchesActivity;
   });
 
   const totalValue = assetsData.reduce(
@@ -3576,6 +3583,22 @@ function AssetRegistry({ currentUser }) {
       ]}
     >
       <DataToolbar searchText={searchText} onSearchChange={setSearchText} />
+      <div className="data-toolbar" style={{ marginTop: -4 }}>
+        <label>
+          <span className="small-text">Activity filter</span>
+          <select
+            className="filter-select"
+            value={activityFilter}
+            onChange={(event) => setActivityFilter(event.target.value)}
+          >
+            <option value="all">All assets</option>
+            <option value="assigned">Assigned</option>
+            <option value="reported">Reported damage</option>
+            <option value="maintenance">In maintenance</option>
+            <option value="clear">No active activity</option>
+          </select>
+        </label>
+      </div>
       {actionError && <div className="alert danger">{actionError}</div>}
       <SuccessModal message={actionSuccess} />
       <AssetTable
@@ -3806,7 +3829,17 @@ function AssetRegistry({ currentUser }) {
         <div className="modal-overlay" role="dialog" aria-modal="true">
           <div className="modal-card asset-detail-modal view-asset-modal">
             <div className="modal-header">
-              <h3>View Asset</h3>
+              <div className="asset-view-heading">
+                <span className="asset-view-icon"><Package size={18} /></span>
+                <div>
+                  <p className="modal-eyebrow">Asset Registry</p>
+                  <h3>Asset details</h3>
+                  <p className="modal-subtitle">Identity, physical units, incidents, and maintenance history.</p>
+                </div>
+              </div>
+              <button className="icon-button" type="button" onClick={closeActionModal} aria-label="Close asset details">
+                <X size={18} />
+              </button>
             </div>
             <div className="asset-detail-body">
               {actionLoading ? (
@@ -5899,8 +5932,7 @@ function EnhancedAssignmentsPage() {
                     }
                   >
                     <option value="permanent">Permanent</option>
-                    <option value="temporary">Temporary</option>
-                    <option value="borrowed">Borrowed</option>
+                    <option value="temporary">Temporary / Borrowed</option>
                   </select>
                 </label>
                 <label>
@@ -8551,20 +8583,32 @@ function TransferPage() {
             <div className="field-row">
               <label>Asset</label>
               <div style={{ position: "relative" }}>
-                <input
-                  value={assetQuery}
-                  onChange={(e) => {
-                    setAssetQuery(e.target.value);
-                    setShowAssetSuggestions(true);
-                    setFormData({ ...formData, asset_id: "" });
-                  }}
-                  onFocus={() => setShowAssetSuggestions(true)}
-                  onBlur={() =>
-                    setTimeout(() => setShowAssetSuggestions(false), 150)
-                  }
-                  placeholder="Type to search assets..."
-                  required
-                />
+                <div className="maintenance-asset-input-row">
+                  <input
+                    value={assetQuery}
+                    onChange={(e) => {
+                      setAssetQuery(e.target.value);
+                      setShowAssetSuggestions(true);
+                      setFormData({ ...formData, asset_id: "" });
+                    }}
+                    onFocus={() => setShowAssetSuggestions(true)}
+                    onBlur={() =>
+                      setTimeout(() => setShowAssetSuggestions(false), 150)
+                    }
+                    placeholder="Type to search assets..."
+                    required
+                  />
+                  <button
+                    className="secondary-button maintenance-scan-button"
+                    type="button"
+                    onClick={() => {
+                      setMaintenanceScannerError(null);
+                      setMaintenanceScannerOpen(true);
+                    }}
+                  >
+                    <QrCode size={16} /> Scan tag
+                  </button>
+                </div>
                 {showAssetSuggestions && (
                   <ul
                     className="suggestions-list"
@@ -8605,11 +8649,7 @@ function TransferPage() {
                           }}
                           onMouseDown={(ev) => {
                             ev.preventDefault();
-                            setFormData({ ...formData, asset_id: a.id });
-                            setAssetQuery(
-                              `${a.name} · ${a.property_number || a.asset_id}`,
-                            );
-                            setShowAssetSuggestions(false);
+                            selectMaintenanceAsset(a);
                           }}
                         >
                           <strong style={{ display: "block" }}>{a.name}</strong>
@@ -9286,7 +9326,7 @@ function TransferPage() {
   );
 }
 
-function MaintenancePage() {
+function MaintenancePage({ currentUser }) {
   const todayIso = new Date().toISOString().slice(0, 10);
   const [records, setRecords] = useState([]);
   const [predictions, setPredictions] = useState([]);
@@ -9296,8 +9336,12 @@ function MaintenancePage() {
   const [showForm, setShowForm] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
+  const [selectedRecord, setSelectedRecord] = useState(null);
+  const [assetUnits, setAssetUnits] = useState([]);
+  const [assetUnitsLoading, setAssetUnitsLoading] = useState(false);
   const [formData, setFormData] = useState({
     asset_id: "",
+    asset_unit_id: "",
     maintenance_type: "",
     description: "",
     scheduled_date: "",
@@ -9306,6 +9350,11 @@ function MaintenancePage() {
   });
   const [assetQuery, setAssetQuery] = useState("");
   const [showAssetSuggestions, setShowAssetSuggestions] = useState(false);
+  const [maintenanceScannerOpen, setMaintenanceScannerOpen] = useState(false);
+  const [maintenanceScannerError, setMaintenanceScannerError] = useState(null);
+  const maintenanceScannerVideoRef = useRef(null);
+  const maintenanceScannerCanvasRef = useRef(null);
+  const maintenanceScannerFrameRef = useRef(null);
 
   useEffect(() => {
     loadRecords();
@@ -9315,6 +9364,65 @@ function MaintenancePage() {
       .then(setAssetsList)
       .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (!maintenanceScannerOpen) return undefined;
+
+    let cancelled = false;
+    let stream;
+    const scanFrame = () => {
+      const video = maintenanceScannerVideoRef.current;
+      const canvas = maintenanceScannerCanvasRef.current;
+      if (!video || !canvas || video.readyState < video.HAVE_ENOUGH_DATA) {
+        maintenanceScannerFrameRef.current = requestAnimationFrame(scanFrame);
+        return;
+      }
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const context = canvas.getContext("2d", { willReadFrequently: true });
+      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const decoded = jsQR(
+        context.getImageData(0, 0, canvas.width, canvas.height).data,
+        canvas.width,
+        canvas.height,
+      );
+      if (decoded?.data) {
+        resolveMaintenanceScan(decoded.data);
+        return;
+      }
+      maintenanceScannerFrameRef.current = requestAnimationFrame(scanFrame);
+    };
+
+    const startScanner = async () => {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: "environment" } },
+          audio: false,
+        });
+        if (cancelled) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+        maintenanceScannerVideoRef.current.srcObject = stream;
+        await maintenanceScannerVideoRef.current.play();
+        maintenanceScannerFrameRef.current = requestAnimationFrame(scanFrame);
+      } catch (error) {
+        setMaintenanceScannerError(error?.message || "Camera access is unavailable.");
+      }
+    };
+
+    startScanner();
+    return () => {
+      cancelled = true;
+      if (maintenanceScannerFrameRef.current) {
+        cancelAnimationFrame(maintenanceScannerFrameRef.current);
+      }
+      stream?.getTracks().forEach((track) => track.stop());
+      if (maintenanceScannerVideoRef.current) {
+        maintenanceScannerVideoRef.current.srcObject = null;
+      }
+    };
+  }, [maintenanceScannerOpen]);
 
   const loadRecords = async () => {
     try {
@@ -9343,6 +9451,7 @@ function MaintenancePage() {
   const scheduleFromPrediction = (prediction) => {
     setFormData({
       asset_id: String(prediction.asset_id),
+      asset_unit_id: "",
       maintenance_type: "preventive",
       description: `Preventive maintenance (projected from ${prediction.avg_interval_days}-day repair pattern).`,
       scheduled_date: "",
@@ -9350,8 +9459,55 @@ function MaintenancePage() {
       status: "pending",
     });
     setAssetQuery(`${prediction.asset_name} · ${prediction.property_number}`);
+    loadAssetUnits(prediction.asset_id);
     setShowForm(true);
   };
+
+  const loadAssetUnits = async (assetId) => {
+    setAssetUnitsLoading(true);
+    try {
+      setAssetUnits(await pcmsApi.assetUnits(assetId));
+    } catch {
+      setAssetUnits([]);
+    } finally {
+      setAssetUnitsLoading(false);
+    }
+  };
+
+  const selectMaintenanceAsset = (asset) => {
+    setFormData((current) => ({ ...current, asset_id: asset.id, asset_unit_id: "" }));
+    setAssetQuery(`${asset.name} · ${asset.property_number || asset.asset_id}`);
+    setShowAssetSuggestions(false);
+    loadAssetUnits(asset.id);
+  };
+
+  const resolveMaintenanceScan = async (decodedValue) => {
+    setMaintenanceScannerError(null);
+    try {
+      const scannedValue = String(decodedValue || "").trim().toLowerCase();
+      const exactMatches = assetsList.filter((asset) =>
+        [asset.property_number, asset.asset_id, asset.serial_number, asset.name]
+          .filter(Boolean)
+          .some((value) => String(value).toLowerCase() === scannedValue),
+      );
+      const searchResults = exactMatches.length
+        ? exactMatches
+        : await pcmsApi.assets({ search: decodedValue, limit: 5 });
+      const asset = searchResults?.[0];
+      if (!asset) {
+        setMaintenanceScannerError(`No asset matches the scanned tag: ${decodedValue}`);
+        return;
+      }
+      selectMaintenanceAsset(asset);
+      setMaintenanceScannerOpen(false);
+    } catch (error) {
+      setMaintenanceScannerError(error?.message || "Unable to resolve the scanned asset.");
+    }
+  };
+
+  const selectedMaintenanceAsset = assetsList.find(
+    (asset) => String(asset.id) === String(formData.asset_id),
+  );
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -9360,6 +9516,7 @@ function MaintenancePage() {
       setSuccess("Maintenance record created successfully");
       setFormData({
         asset_id: "",
+        asset_unit_id: "",
         maintenance_type: "",
         description: "",
         scheduled_date: "",
@@ -9367,11 +9524,18 @@ function MaintenancePage() {
         status: "pending",
       });
       setAssetQuery("");
+      setAssetUnits([]);
       setShowForm(false);
       loadRecords();
     } catch (err) {
       setError(err.message);
     }
+  };
+
+  const formatMaintenanceDate = (value) => {
+    if (!value) return "-";
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
   };
 
   const handleMarkComplete = async (id) => {
@@ -9384,6 +9548,49 @@ function MaintenancePage() {
       setError(err.message);
     }
   };
+
+  const handleDelete = async (item) => {
+    if (!window.confirm("Cancel this maintenance record?")) return;
+    try {
+      await pcmsApi.deleteMaintenanceRecord(item.id);
+      setSuccess("Maintenance record deleted");
+      setRecords((current) => current.filter((record) => record.id !== item.id));
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const printRecord = (item) => {
+    const printWindow = window.open("", "_blank", "width=800,height=700");
+    if (!printWindow) return;
+    printWindow.document.write(`
+      <html><head><title>Maintenance Record #${item.id}</title></head>
+      <body style="font-family:Arial,sans-serif;padding:32px;color:#111827">
+        <h1>Maintenance Record #${item.id}</h1>
+        <p><strong>Asset:</strong> ${item.asset?.name || `Asset #${item.asset_id}`}</p>
+        <p><strong>Property Number:</strong> ${item.asset?.property_number || item.asset_id || "-"}</p>
+        <p><strong>Type:</strong> ${item.type || "-"}</p>
+        <p><strong>Technician:</strong> ${item.technician || "Unassigned"}</p>
+        <p><strong>Scheduled:</strong> ${formatMaintenanceDate(item.scheduled_at)}</p>
+        <p><strong>Completed:</strong> ${formatMaintenanceDate(item.completed_at)}</p>
+        <p><strong>Status:</strong> ${item.status || "-"}</p>
+        <p><strong>Notes:</strong> ${item.notes || "-"}</p>
+        <script>window.print();</script>
+      </body></html>`);
+    printWindow.document.close();
+  };
+
+  const downloadRecord = (item) => {
+    const blob = new Blob([JSON.stringify(item, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `maintenance-record-${item.id}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const canDelete = currentUser?.role === ROLES.SYSTEM_ADMIN;
 
   return (
     <ModulePage
@@ -9501,6 +9708,32 @@ function MaintenancePage() {
                 )}
               </div>
             </div>
+            {Number(selectedMaintenanceAsset?.quantity || 1) > 1 && (
+            <div className="field-row maintenance-field maintenance-field-wide">
+              <label>Physical Unit</label>
+              <select
+                value={formData.asset_unit_id}
+                onChange={(event) =>
+                  setFormData({ ...formData, asset_unit_id: event.target.value })
+                }
+                disabled={!formData.asset_id || assetUnitsLoading}
+              >
+                <option value="">All physical units</option>
+                {assetUnits.map((unit) => (
+                  <option key={unit.id} value={unit.id}>
+                    {unit.unit_code || `Unit ${unit.id}`} · {unit.status || "available"}
+                  </option>
+                ))}
+              </select>
+              <small>
+                {assetUnitsLoading
+                  ? "Loading physical units..."
+                  : assetUnits.length > 0
+                    ? "Choose one unit or leave this as All physical units."
+                    : "No individually tracked units; this schedule applies to the asset."}
+              </small>
+            </div>
+            )}
             <div className="field-row maintenance-field">
               <label>Maintenance Type</label>
               <select
@@ -9569,6 +9802,32 @@ function MaintenancePage() {
         </div>
       )}
 
+      {maintenanceScannerOpen && (
+        <div className="modal-overlay maintenance-scanner-overlay" role="dialog" aria-modal="true" aria-labelledby="maintenance-scanner-title">
+          <div className="modal-card maintenance-scanner-modal">
+            <div className="modal-header">
+              <div>
+                <p className="modal-eyebrow">Asset lookup</p>
+                <h3 id="maintenance-scanner-title">Scan asset tag</h3>
+                <p className="modal-subtitle">Center the QR code inside the camera frame.</p>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setMaintenanceScannerOpen(false)} aria-label="Close asset scanner">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="maintenance-scanner-body">
+              <div className="damage-scanner-camera-frame">
+                <video ref={maintenanceScannerVideoRef} muted playsInline aria-label="Asset tag camera" />
+                <canvas ref={maintenanceScannerCanvasRef} hidden />
+                <span className="damage-scanner-guide" aria-hidden="true" />
+              </div>
+              {maintenanceScannerError && <div className="form-message error">{maintenanceScannerError}</div>}
+              <button className="secondary-button" type="button" onClick={() => setMaintenanceScannerOpen(false)}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="panel">
         <PanelHeader
           title="Predicted Maintenance Due"
@@ -9620,44 +9879,94 @@ function MaintenancePage() {
       {loading ? (
         <div className="loading-card">Loading maintenance records...</div>
       ) : (
-        <div className="timeline">
+        <div className="table-card maintenance-records-table">
           {records.length === 0 ? (
-            <p>No maintenance records yet</p>
+            <div className="maintenance-table-empty">No maintenance records yet</div>
           ) : (
-            records.map((item) => (
-              <div className="timeline-item" key={item.id}>
-                <div
-                  className={`timeline-dot ${(item.status || "pending").toLowerCase()}`}
-                />
-                <div>
-                  <strong>
-                    {item.asset?.name || `Asset #${item.asset_id}`}
-                  </strong>
-                  <p>
-                    {item.type} · {item.technician || "Unassigned"} ·{" "}
-                    {item.scheduled_at
-                      ? new Date(item.scheduled_at).toLocaleDateString()
-                      : "No date set"}
-                  </p>
-                </div>
-                <div className="item-actions">
-                  <span
-                    className={`status ${item.status === "completed" ? "success" : item.status === "failed" ? "danger" : "warning"}`}
-                  >
-                    {item.status}
-                  </span>
-                  {item.status !== "completed" && (
-                    <button
-                      className="small-button"
-                      onClick={() => handleMarkComplete(item.id)}
-                    >
-                      Mark Complete
-                    </button>
-                  )}
-                </div>
-              </div>
-            ))
+            <div className="maintenance-records-table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Asset</th>
+                    <th>Property Number</th>
+                    <th>Physical Unit</th>
+                    <th>Type</th>
+                    <th>Priority</th>
+                    <th>Technician</th>
+                    <th>Scheduled</th>
+                    <th>Completed</th>
+                    <th>Cost</th>
+                    <th>Notes</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {records.map((item) => (
+                    <tr key={item.id}>
+                      <td className="maintenance-asset-cell">
+                        <strong>{item.asset?.name || `Asset #${item.asset_id}`}</strong>
+                        <span>{item.asset?.brand || ""} {item.asset?.model || ""}</span>
+                      </td>
+                      <td>{item.asset?.property_number || item.asset_id || "-"}</td>
+                      <td>{item.assetUnit?.unit_code || "All units"}</td>
+                      <td className="maintenance-capitalize">{item.type || "-"}</td>
+                      <td><span className={`status ${item.priority === "critical" ? "danger" : item.priority === "high" ? "warning" : "info"}`}>{item.priority || "-"}</span></td>
+                      <td>{item.technician || "Unassigned"}</td>
+                      <td>{formatMaintenanceDate(item.scheduled_at)}</td>
+                      <td>{formatMaintenanceDate(item.completed_at)}</td>
+                      <td>{item.cost === null || item.cost === undefined ? "-" : `PHP ${Number(item.cost).toLocaleString()}`}</td>
+                      <td className="maintenance-notes-cell">{item.notes || "-"}</td>
+                      <td><span className={`status ${item.status === "completed" ? "success" : item.status === "failed" ? "danger" : "warning"}`}>{String(item.status || "pending").replaceAll("_", " ")}</span></td>
+                      <td>
+                        <div className="inline-actions small maintenance-actions">
+                          <button className="icon-button" type="button" title="View maintenance record" aria-label={`View maintenance record ${item.id}`} onClick={() => setSelectedRecord(item)}>
+                            <Eye size={16} />
+                          </button>
+                          <button className="icon-button" type="button" title="Print maintenance record" aria-label={`Print maintenance record ${item.id}`} onClick={() => printRecord(item)}>
+                            <Printer size={16} />
+                          </button>
+                          <button className="icon-button" type="button" title="Download maintenance record" aria-label={`Download maintenance record ${item.id}`} onClick={() => downloadRecord(item)}>
+                            <Download size={16} />
+                          </button>
+                          {item.status !== "completed" && (
+                            <button className="icon-button" type="button" title="Mark maintenance complete" aria-label={`Mark maintenance record ${item.id} complete`} onClick={() => handleMarkComplete(item.id)}>
+                              <CheckCircle2 size={16} />
+                            </button>
+                          )}
+                          {canDelete && (
+                            <button className="icon-button danger-action" type="button" title="Delete maintenance record" aria-label={`Delete maintenance record ${item.id}`} onClick={() => handleDelete(item)}>
+                              <Trash2 size={16} />
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
+        </div>
+      )}
+      {selectedRecord && (
+        <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="maintenance-record-title">
+          <div className="modal-card">
+            <div className="modal-header">
+              <h3 id="maintenance-record-title">Maintenance Record #{selectedRecord.id}</h3>
+              <button className="icon-button" type="button" aria-label="Close" onClick={() => setSelectedRecord(null)}>
+                <X size={18} />
+              </button>
+            </div>
+            <div className="asset-description-card">
+              <p><strong>Asset:</strong> {selectedRecord.asset?.name || `Asset #${selectedRecord.asset_id}`}</p>
+              <p><strong>Type:</strong> {selectedRecord.type || "-"}</p>
+              <p><strong>Technician:</strong> {selectedRecord.technician || "Unassigned"}</p>
+              <p><strong>Scheduled:</strong> {formatMaintenanceDate(selectedRecord.scheduled_at)}</p>
+              <p><strong>Status:</strong> {selectedRecord.status || "-"}</p>
+              <p><strong>Notes:</strong> {selectedRecord.notes || "-"}</p>
+            </div>
+          </div>
         </div>
       )}
     </ModulePage>
@@ -9675,8 +9984,18 @@ function DamagePage() {
   const [photoPreview, setPhotoPreview] = useState(null);
   const [assetSearch, setAssetSearch] = useState("");
   const [showAssetSuggestions, setShowAssetSuggestions] = useState(false);
+  const [assetUnits, setAssetUnits] = useState([]);
+  const [assetUnitsLoading, setAssetUnitsLoading] = useState(false);
+  const [selectedReport, setSelectedReport] = useState(null);
+  const [pendingStatusAction, setPendingStatusAction] = useState(null);
+  const [damageScannerOpen, setDamageScannerOpen] = useState(false);
+  const [damageScannerError, setDamageScannerError] = useState(null);
+  const damageScannerVideoRef = useRef(null);
+  const damageScannerCanvasRef = useRef(null);
+  const damageScannerFrameRef = useRef(null);
   const [formData, setFormData] = useState({
     asset_id: "",
+    asset_unit_id: "",
     incident_type: "damaged",
     incident_date: new Date().toISOString().slice(0, 10),
     severity: "moderate",
@@ -9688,11 +10007,73 @@ function DamagePage() {
     loadAssets();
   }, []);
 
+  useEffect(() => {
+    if (!damageScannerOpen) return undefined;
+
+    let cancelled = false;
+    let stream;
+
+    const scanFrame = () => {
+      const video = damageScannerVideoRef.current;
+      const canvas = damageScannerCanvasRef.current;
+      if (!video || !canvas || video.readyState < video.HAVE_ENOUGH_DATA) {
+        damageScannerFrameRef.current = requestAnimationFrame(scanFrame);
+        return;
+      }
+
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const context = canvas.getContext("2d", { willReadFrequently: true });
+      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const decoded = jsQR(
+        context.getImageData(0, 0, canvas.width, canvas.height).data,
+        canvas.width,
+        canvas.height,
+      );
+
+      if (decoded?.data) {
+        resolveDamageScan(decoded.data);
+        return;
+      }
+      damageScannerFrameRef.current = requestAnimationFrame(scanFrame);
+    };
+
+    const startScanner = async () => {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: "environment" } },
+          audio: false,
+        });
+        if (cancelled) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+        damageScannerVideoRef.current.srcObject = stream;
+        await damageScannerVideoRef.current.play();
+        damageScannerFrameRef.current = requestAnimationFrame(scanFrame);
+      } catch (error) {
+        setDamageScannerError(error?.message || "Camera access is unavailable.");
+      }
+    };
+
+    startScanner();
+    return () => {
+      cancelled = true;
+      if (damageScannerFrameRef.current) {
+        cancelAnimationFrame(damageScannerFrameRef.current);
+      }
+      stream?.getTracks().forEach((track) => track.stop());
+      if (damageScannerVideoRef.current) {
+        damageScannerVideoRef.current.srcObject = null;
+      }
+    };
+  }, [damageScannerOpen]);
+
   const loadReports = async () => {
     try {
       setLoading(true);
       const response = await pcmsApi.fetchDamageReports();
-      setReports(response?.data || []);
+      setReports(response || []);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -9716,6 +10097,49 @@ function DamagePage() {
     }
   };
 
+  const selectDamageAsset = async (asset) => {
+    setFormData((current) => ({ ...current, asset_id: asset.id, asset_unit_id: "" }));
+    setAssetSearch(`${asset.name} · ${asset.property_number || asset.asset_id}`);
+    setShowAssetSuggestions(false);
+    setAssetUnitsLoading(true);
+    try {
+      setAssetUnits(await pcmsApi.assetUnits(asset.id));
+    } catch {
+      setAssetUnits([]);
+    } finally {
+      setAssetUnitsLoading(false);
+    }
+  };
+
+  const resolveDamageScan = async (decodedValue) => {
+    setDamageScannerError(null);
+    try {
+      const scannedValue = String(decodedValue || "").trim();
+      const matches = assets.filter((asset) =>
+        [asset.property_number, asset.asset_id, asset.serial_number, asset.name]
+          .filter(Boolean)
+          .some((value) => String(value).toLowerCase() === scannedValue.toLowerCase()),
+      );
+      const searchResults = matches.length
+        ? matches
+        : await pcmsApi.assets({ search: scannedValue, limit: 5 });
+      const asset = searchResults?.[0];
+      if (!asset) {
+        setDamageScannerError(`No asset matches the scanned tag: ${scannedValue}`);
+        damageScannerFrameRef.current = requestAnimationFrame(() => {});
+        return;
+      }
+      await selectDamageAsset(asset);
+      setDamageScannerOpen(false);
+    } catch (error) {
+      setDamageScannerError(error?.message || "Unable to resolve the scanned asset.");
+    }
+  };
+
+  const selectedDamageAsset = assets.find(
+    (asset) => String(asset.id) === String(formData.asset_id),
+  );
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!formData.asset_id) {
@@ -9726,6 +10150,7 @@ function DamagePage() {
     try {
       const submitData = {
         asset_id: parseInt(formData.asset_id),
+        asset_unit_id: formData.asset_unit_id || null,
         incident_type: formData.incident_type,
         incident_date: formData.incident_date,
         severity: formData.severity,
@@ -9748,12 +10173,14 @@ function DamagePage() {
       setSuccess("Damage report submitted successfully");
       setFormData({
         asset_id: "",
+        asset_unit_id: "",
         incident_type: "damaged",
         incident_date: new Date().toISOString().slice(0, 10),
         severity: "moderate",
         description: "",
       });
       setAssetSearch("");
+      setAssetUnits([]);
       setShowAssetSuggestions(false);
       setPhotoFile(null);
       setPhotoPreview(null);
@@ -9771,6 +10198,62 @@ function DamagePage() {
     } catch (err) {
       setError(err.message);
     }
+  };
+
+  const requestStatusUpdate = (report, newStatus, actionLabel) => {
+    setPendingStatusAction({ report, newStatus, actionLabel });
+  };
+
+  const confirmStatusUpdate = async () => {
+    if (!pendingStatusAction) return;
+    const { report, newStatus } = pendingStatusAction;
+    setPendingStatusAction(null);
+    await handleUpdateStatus(report.id, newStatus);
+  };
+
+  const reportAssetName = (report) =>
+    report.asset?.name || `Asset ${report.asset_id}`;
+
+  const reportUnitName = (report) =>
+    report.assetUnit?.unit_code || "All physical units";
+
+  const damageReportHtml = (report) => {
+    const escapeHtml = (value) =>
+      String(value ?? "-")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+
+    return `<!doctype html>
+      <html><head><meta charset="utf-8"><title>Damage Report #${escapeHtml(report.id)}</title>
+      <style>body{font-family:Arial,sans-serif;color:#172033;margin:40px}h1{margin-bottom:4px}p{line-height:1.5}.meta{display:grid;grid-template-columns:160px 1fr;gap:10px;border-top:1px solid #ddd;padding-top:18px}.label{font-weight:700;color:#526175}.description{white-space:pre-wrap;border:1px solid #ddd;padding:14px;margin-top:20px}</style>
+      </head><body><h1>Asset Damage Report</h1><p>Report #${escapeHtml(report.id)}</p>
+      <div class="meta"><span class="label">Asset</span><span>${escapeHtml(reportAssetName(report))}</span>
+      <span class="label">Property Number</span><span>${escapeHtml(report.asset?.property_number || report.asset_id)}</span>
+      <span class="label">Physical Unit</span><span>${escapeHtml(reportUnitName(report))}</span>
+      <span class="label">Incident</span><span>${escapeHtml(report.incident_type)}</span>
+      <span class="label">Date</span><span>${escapeHtml(report.incident_date)}</span>
+      <span class="label">Severity</span><span>${escapeHtml(report.severity)}</span>
+      <span class="label">Status</span><span>${escapeHtml(report.status)}</span></div>
+      <div class="description"><strong>Description</strong><br>${escapeHtml(report.description)}</div>
+      </body></html>`;
+  };
+
+  const printDamageReport = (report) => {
+    const printWindow = window.open("", "_blank", "noopener,noreferrer,width=900,height=700");
+    if (!printWindow) return;
+    printWindow.document.write(damageReportHtml(report).replace("</body>", "<script>window.print();<\/script></body>"));
+    printWindow.document.close();
+  };
+
+  const downloadDamageReport = (report) => {
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(new Blob([damageReportHtml(report)], { type: "text/html" }));
+    link.download = `damage-report-${report.id}.html`;
+    link.click();
+    URL.revokeObjectURL(link.href);
   };
 
   return (
@@ -9807,22 +10290,34 @@ function DamagePage() {
                   style={{ position: "relative" }}
                 >
                   <label>Asset Name</label>
-                  <input
-                    type="search"
-                    value={assetSearch}
-                    onChange={(e) => {
-                      const value = e.target.value;
-                      setAssetSearch(value);
-                      setShowAssetSuggestions(true);
-                      setFormData({ ...formData, asset_id: "" });
-                    }}
-                    onFocus={() => setShowAssetSuggestions(true)}
-                    onBlur={() =>
-                      setTimeout(() => setShowAssetSuggestions(false), 150)
-                    }
-                    placeholder="Search and select an asset"
-                    required
-                  />
+                  <div className="damage-asset-input-row">
+                    <input
+                      type="search"
+                      value={assetSearch}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        setAssetSearch(value);
+                        setShowAssetSuggestions(true);
+                        setFormData({ ...formData, asset_id: "" });
+                      }}
+                      onFocus={() => setShowAssetSuggestions(true)}
+                      onBlur={() =>
+                        setTimeout(() => setShowAssetSuggestions(false), 150)
+                      }
+                      placeholder="Search and select an asset"
+                      required
+                    />
+                    <button
+                      className="secondary-button damage-scan-button"
+                      type="button"
+                      onClick={() => {
+                        setDamageScannerError(null);
+                        setDamageScannerOpen(true);
+                      }}
+                    >
+                      <QrCode size={16} /> Scan tag
+                    </button>
+                  </div>
                   {showAssetSuggestions && (
                     <ul
                       className="suggestions-list"
@@ -9869,11 +10364,7 @@ function DamagePage() {
                             }}
                             onMouseDown={(event) => {
                               event.preventDefault();
-                              setFormData({ ...formData, asset_id: asset.id });
-                              setAssetSearch(
-                                `${asset.name} · ${asset.property_number || asset.asset_id}`,
-                              );
-                              setShowAssetSuggestions(false);
+                              selectDamageAsset(asset);
                             }}
                           >
                             <strong style={{ display: "block" }}>
@@ -9910,6 +10401,32 @@ function DamagePage() {
                     </ul>
                   )}
                 </div>
+                {Number(selectedDamageAsset?.quantity || 1) > 1 && (
+                <div className="field-row damage-field damage-field-wide">
+                  <label>Physical Unit</label>
+                  <select
+                    value={formData.asset_unit_id}
+                    onChange={(event) =>
+                      setFormData({ ...formData, asset_unit_id: event.target.value })
+                    }
+                    disabled={!formData.asset_id || assetUnitsLoading}
+                  >
+                    <option value="">All physical units</option>
+                    {assetUnits.map((unit) => (
+                      <option key={unit.id} value={unit.id}>
+                        {unit.unit_code || `Unit ${unit.id}`} · {unit.status || "available"}
+                      </option>
+                    ))}
+                  </select>
+                  <small>
+                    {assetUnitsLoading
+                      ? "Loading physical units..."
+                      : assetUnits.length > 0
+                        ? "Choose one unit or leave this as All physical units."
+                        : "No individually tracked units; this report applies to the asset."}
+                  </small>
+                </div>
+                )}
                 <div className="field-row damage-field damage-field-wide">
                   <label>Evidence photo <span className="field-optional">Optional</span></label>
                   <div className="damage-upload-row">
@@ -9991,14 +10508,43 @@ function DamagePage() {
         </div>
       )}
 
+      {damageScannerOpen && (
+        <div className="modal-overlay damage-scanner-overlay" role="dialog" aria-modal="true" aria-labelledby="damage-scanner-title">
+          <div className="modal-card damage-scanner-modal">
+            <div className="modal-header">
+              <div>
+                <p className="modal-eyebrow">Asset lookup</p>
+                <h3 id="damage-scanner-title">Scan asset tag</h3>
+                <p className="modal-subtitle">Center the QR code inside the camera frame.</p>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setDamageScannerOpen(false)} aria-label="Close asset scanner">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="damage-scanner-body">
+              <div className="damage-scanner-camera-frame">
+                <video ref={damageScannerVideoRef} muted playsInline aria-label="Asset tag camera" />
+                <canvas ref={damageScannerCanvasRef} hidden />
+                <span className="damage-scanner-guide" aria-hidden="true" />
+              </div>
+              {damageScannerError && <div className="form-message error">{damageScannerError}</div>}
+              <button className="secondary-button" type="button" onClick={() => setDamageScannerOpen(false)}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {loading ? (
         <div className="loading-card">Loading damage reports...</div>
       ) : (
-        <div className="table-card" style={{ overflowX: "auto" }}>
+        <div className="table-card damage-reports-table" style={{ overflowX: "auto" }}>
           <table>
               <thead>
                 <tr>
                   <th>Asset</th>
+                  <th>Physical Unit</th>
                   <th>Incident</th>
                   <th>Date</th>
                   <th>Severity</th>
@@ -10010,7 +10556,7 @@ function DamagePage() {
               <tbody>
                 {reports.length === 0 ? (
                   <tr>
-                    <td colSpan="7" style={{ padding: 16, textAlign: "center" }}>
+                    <td colSpan="8" style={{ padding: 16, textAlign: "center" }}>
                       No damage reports yet
                     </td>
                   </tr>
@@ -10020,6 +10566,7 @@ function DamagePage() {
                       <strong>{report.asset?.name || `Asset ${report.asset_id}`}</strong>
                       <span>{report.asset?.property_number || report.asset_id}</span>
                     </td>
+                    <td>{report.assetUnit?.unit_code || "All units"}</td>
                     <td>{report.incident_type}</td>
                     <td>{report.incident_date || "-"}</td>
                     <td>{report.severity}</td>
@@ -10033,21 +10580,42 @@ function DamagePage() {
                     </td>
                     <td>
                       <div className="inline-actions small">
+                        <button className="icon-button" type="button" title="View damage report" aria-label="View damage report" onClick={() => setSelectedReport(report)}>
+                          <Eye size={15} />
+                        </button>
+                        <button className="icon-button" type="button" title="Print damage report" aria-label="Print damage report" onClick={() => printDamageReport(report)}>
+                          <Printer size={15} />
+                        </button>
+                        <button className="icon-button" type="button" title="Download damage report" aria-label="Download damage report" onClick={() => downloadDamageReport(report)}>
+                          <Download size={15} />
+                        </button>
                         {report.status === "submitted" && (
-                          <button className="small-button" onClick={() => handleUpdateStatus(report.id, "in_review")}>Review</button>
+                          <button className="icon-button damage-action-review" type="button" title="Review damage report" aria-label="Review damage report" onClick={() => requestStatusUpdate(report, "in_review", "Review")}> 
+                            <ClipboardCheck size={15} />
+                          </button>
                         )}
                         {report.status === "in_review" && (
                           <>
-                            <button className="small-button" onClick={() => handleUpdateStatus(report.id, "under_repair")}>Start Repair</button>
-                            <button className="small-button" onClick={() => handleUpdateStatus(report.id, "declared_lost")}>Declare Lost</button>
-                            <button className="small-button" onClick={() => handleUpdateStatus(report.id, "declared_unserviceable")}>Unserviceable</button>
+                            <button className="icon-button damage-action-repair" type="button" title="Start repair" aria-label="Start repair" onClick={() => requestStatusUpdate(report, "under_repair", "Start repair")}>
+                              <Wrench size={15} />
+                            </button>
+                            <button className="icon-button damage-action-lost" type="button" title="Declare lost" aria-label="Declare lost" onClick={() => requestStatusUpdate(report, "declared_lost", "Declare lost")}>
+                              <Archive size={15} />
+                            </button>
+                            <button className="icon-button damage-action-unserviceable" type="button" title="Declare unserviceable" aria-label="Declare unserviceable" onClick={() => requestStatusUpdate(report, "declared_unserviceable", "Declare unserviceable")}>
+                              <Shield size={15} />
+                            </button>
                           </>
                         )}
                         {report.status === "under_repair" && (
-                          <button className="small-button success" onClick={() => handleUpdateStatus(report.id, "repaired")}>Mark Repaired</button>
+                          <button className="icon-button damage-action-success" type="button" title="Mark repaired" aria-label="Mark repaired" onClick={() => requestStatusUpdate(report, "repaired", "Mark repaired")}>
+                            <CheckCircle2 size={15} />
+                          </button>
                         )}
                         {report.status === "declared_unserviceable" && (
-                          <button className="small-button danger-action" onClick={() => handleUpdateStatus(report.id, "disposed")}>Record Disposal</button>
+                          <button className="icon-button damage-action-danger" type="button" title="Record disposal" aria-label="Record disposal" onClick={() => requestStatusUpdate(report, "disposed", "Record disposal")}>
+                            <Trash2 size={15} />
+                          </button>
                         )}
                       </div>
                     </td>
@@ -10055,6 +10623,50 @@ function DamagePage() {
                 ))}
               </tbody>
           </table>
+        </div>
+      )}
+
+      {selectedReport && (
+        <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="damage-report-details-title">
+          <div className="modal-card">
+            <div className="modal-header">
+              <h3 id="damage-report-details-title">Damage Report Details</h3>
+              <button className="icon-button" type="button" onClick={() => setSelectedReport(null)} aria-label="Close damage report details">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="asset-description-card">
+              <p><strong>Asset:</strong> {reportAssetName(selectedReport)}</p>
+              <p><strong>Property Number:</strong> {selectedReport.asset?.property_number || selectedReport.asset_id}</p>
+              <p><strong>Physical Unit:</strong> {reportUnitName(selectedReport)}</p>
+              <p><strong>Incident:</strong> {selectedReport.incident_type}</p>
+              <p><strong>Date:</strong> {selectedReport.incident_date || "-"}</p>
+              <p><strong>Severity:</strong> {selectedReport.severity}</p>
+              <p><strong>Status:</strong> {selectedReport.status}</p>
+              <p><strong>Description:</strong> {selectedReport.description}</p>
+            </div>
+            <div className="modal-actions">
+              <button className="secondary-button" type="button" onClick={() => printDamageReport(selectedReport)}><Printer size={16} /> Print</button>
+              <button className="primary-button" type="button" onClick={() => downloadDamageReport(selectedReport)}><Download size={16} /> Download</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pendingStatusAction && (
+        <div className="modal-overlay damage-verification-overlay" role="dialog" aria-modal="true" aria-labelledby="damage-verification-title">
+          <div className="modal-card damage-verification-modal">
+            <div className="damage-verification-icon"><Shield size={22} /></div>
+            <p className="modal-eyebrow">Verify status change</p>
+            <h3 id="damage-verification-title">{pendingStatusAction.actionLabel}?</h3>
+            <p className="damage-verification-copy">
+              Confirm this action for <strong>{reportAssetName(pendingStatusAction.report)}</strong>.
+            </p>
+            <div className="modal-actions">
+              <button className="secondary-button" type="button" onClick={() => setPendingStatusAction(null)}>Cancel</button>
+              <button className="primary-button" type="button" onClick={confirmStatusUpdate}>Confirm</button>
+            </div>
+          </div>
         </div>
       )}
     </ModulePage>
@@ -12634,6 +13246,7 @@ function AuditPage({ currentUser }) {
   const [actionLoading, setActionLoading] = useState(false);
   const [formData, setFormData] = useState({
     area: "",
+    audit_type: "assets",
     department_id: "",
     scheduled_date: "",
   });
@@ -12641,7 +13254,6 @@ function AuditPage({ currentUser }) {
     audit_id: "",
     asset_id: "",
     found_department_id: "",
-    result: "verified",
   });
   const [assetsList, setAssetsList] = useState([]);
   const [assetQuery, setAssetQuery] = useState("");
@@ -12682,6 +13294,7 @@ function AuditPage({ currentUser }) {
       setSuccess("Audit scheduled successfully");
       setFormData({
         area: "",
+        audit_type: "assets",
         department_id: "",
         scheduled_date: "",
       });
@@ -12710,7 +13323,6 @@ function AuditPage({ currentUser }) {
         audit_id: "",
         asset_id: "",
         found_department_id: "",
-        result: "verified",
       });
       loadAudits();
     } catch (err) {
@@ -12720,9 +13332,73 @@ function AuditPage({ currentUser }) {
 
   const handleCompleteAudit = async (id) => {
     try {
+      const details = await pcmsApi.fetchAudit(id);
+      const auditType = details?.audit?.audit_type || "assets";
+      const uncountedAssets = ["assets", "combined"].includes(auditType)
+        ? details?.summary?.uncounted_assets || 0
+        : 0;
+      const uncountedSupplies = ["supplies", "combined"].includes(auditType)
+        ? (details?.summary?.expected_supplies || 0) - (details?.summary?.counted_supplies || 0)
+        : 0;
+      const incompleteParts = [];
+      if (uncountedAssets > 0) incompleteParts.push(`${uncountedAssets} asset(s) remain physically uncounted`);
+      if (uncountedSupplies > 0) incompleteParts.push(`${uncountedSupplies} supply item(s) remain uncounted`);
+      if (incompleteParts.length > 0 && !window.confirm(`${incompleteParts.join(" and ")}. Complete the audit anyway?`)) {
+        return;
+      }
       await pcmsApi.completeAudit(id);
       setSuccess("Audit completed and summary generated");
       loadAudits();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const handleCountSupply = async (auditId, supply) => {
+    const countedQuantity = window.prompt(
+      `Physical count for ${supply.name} (${supply.unit || "units"})`,
+      supply.counted_quantity ?? supply.expected_quantity ?? 0,
+    );
+    if (countedQuantity === null) return;
+
+    const parsedQuantity = Number(countedQuantity);
+    if (!Number.isInteger(parsedQuantity) || parsedQuantity < 0) {
+      setError("Supply count must be a whole number of zero or more.");
+      return;
+    }
+
+    try {
+      await pcmsApi.countAuditSupply(auditId, {
+        supply_id: supply.id,
+        counted_quantity: parsedQuantity,
+      });
+      setSuccess("Supply count recorded");
+      setAuditDetails(await pcmsApi.fetchAudit(auditId));
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const handleCountAsset = async (auditId, asset) => {
+    const countedQuantity = window.prompt(
+      `Physical count for ${asset.name}`,
+      asset.physical_quantity ?? asset.system_quantity ?? 0,
+    );
+    if (countedQuantity === null) return;
+
+    const parsedQuantity = Number(countedQuantity);
+    if (!Number.isInteger(parsedQuantity) || parsedQuantity < 0) {
+      setError("Asset count must be a whole number of zero or more.");
+      return;
+    }
+
+    try {
+      await pcmsApi.countAuditAsset(auditId, {
+        asset_id: asset.id,
+        counted_quantity: parsedQuantity,
+      });
+      setSuccess("Asset physical count recorded");
+      setAuditDetails(await pcmsApi.fetchAudit(auditId));
     } catch (err) {
       setError(err.message);
     }
@@ -12815,6 +13491,20 @@ function AuditPage({ currentUser }) {
                 }
                 required
               />
+            </div>
+            <div className="field-row">
+              <label>Audit Type</label>
+              <select
+                value={formData.audit_type}
+                onChange={(e) =>
+                  setFormData({ ...formData, audit_type: e.target.value })
+                }
+                required
+              >
+                <option value="assets">Asset Audit</option>
+                <option value="supplies">Supplies Audit</option>
+                <option value="combined">Combined Audit</option>
+              </select>
             </div>
             <div className="field-row">
               <label>Department</label>
@@ -12973,20 +13663,6 @@ function AuditPage({ currentUser }) {
                 ))}
               </select>
             </div>
-            <div className="field-row">
-              <label>Result</label>
-              <select
-                value={scanData.result}
-                onChange={(e) =>
-                  setScanData({ ...scanData, result: e.target.value })
-                }
-                required
-              >
-                <option value="verified">Verified</option>
-                <option value="missing">Missing</option>
-                <option value="wrong_department">Wrong Department</option>
-              </select>
-            </div>
               </div>
             <div className="modal-actions audit-modal-actions">
               <button className="primary-button" type="submit">
@@ -13024,6 +13700,7 @@ function AuditPage({ currentUser }) {
             <thead>
               <tr>
                 <th>Audit Area</th>
+                <th>Type</th>
                 <th>Audit No.</th>
                 <th>Department</th>
                 <th>Scheduled</th>
@@ -13034,7 +13711,7 @@ function AuditPage({ currentUser }) {
             <tbody>
               {audits.length === 0 ? (
                 <tr>
-                  <td colSpan="6">No audits scheduled yet</td>
+                  <td colSpan="7">No audits scheduled yet</td>
                 </tr>
               ) : (
                 audits.map((item) => (
@@ -13042,6 +13719,7 @@ function AuditPage({ currentUser }) {
                     <td>
                       <strong>{item.area}</strong>
                     </td>
+                    <td>{item.audit_type || "assets"}</td>
                     <td>{item.audit_number}</td>
                     <td>
                       {departments.find((d) => d.id === item.department_id)
@@ -13112,7 +13790,7 @@ function AuditPage({ currentUser }) {
                             <Trash2 size={14} />
                           </button>
                         )}
-                        {item.status !== "completed" && (
+                        {item.status !== "completed" && ["assets", "combined"].includes(item.audit_type || "assets") && (
                           <>
                             <button
                               className="icon-button audit-action-button"
@@ -13143,16 +13821,18 @@ function AuditPage({ currentUser }) {
                             >
                               <Camera size={14} />
                             </button>
-                            <button
-                              className="icon-button audit-action-button audit-action-button-success"
-                              type="button"
-                              title="Complete audit"
-                              aria-label={`Complete audit ${item.audit_number}`}
-                              onClick={() => handleCompleteAudit(item.id)}
-                            >
-                              <CheckCircle2 size={14} />
-                            </button>
                           </>
+                        )}
+                        {item.status !== "completed" && (
+                          <button
+                            className="icon-button audit-action-button audit-action-button-success"
+                            type="button"
+                            title="Complete audit"
+                            aria-label={`Complete audit ${item.audit_number}`}
+                            onClick={() => handleCompleteAudit(item.id)}
+                          >
+                            <CheckCircle2 size={14} />
+                          </button>
                         )}
                       </div>
                     </td>
@@ -13169,12 +13849,14 @@ function AuditPage({ currentUser }) {
           details={auditDetails}
           onClose={() => setAuditDetails(null)}
           onPrint={() => printAudit(auditDetails.audit, auditDetails)}
+          onCountAsset={handleCountAsset}
+          onCountSupply={handleCountSupply}
         />
       )}
 
       {editAudit && (
         <div className="modal-overlay" role="dialog" aria-modal="true">
-          <div className="modal-card">
+          <div className="modal-card audit-edit-modal">
             <div className="modal-header">
               <h3>Edit Audit</h3>
               <button className="icon-button" type="button" onClick={() => setEditAudit(null)} aria-label="Close">
@@ -13183,6 +13865,7 @@ function AuditPage({ currentUser }) {
             </div>
             <form className="register-form" onSubmit={handleUpdateAudit}>
               <label>Audit Area<input value={editAudit.area || ""} onChange={(e) => setEditAudit({ ...editAudit, area: e.target.value })} required /></label>
+              <label>Audit Type<select value={editAudit.audit_type || "assets"} onChange={(e) => setEditAudit({ ...editAudit, audit_type: e.target.value })} required><option value="assets">Asset Audit</option><option value="supplies">Supplies Audit</option><option value="combined">Combined Audit</option></select></label>
               <label>Department<select value={editAudit.department_id || ""} onChange={(e) => setEditAudit({ ...editAudit, department_id: e.target.value })} required><option value="">Select department</option>{departments.map((dept) => <option key={dept.id} value={dept.id}>{dept.name}</option>)}</select></label>
               <label>Scheduled Date<input type="date" min={todayIso} value={editAudit.scheduled_date || ""} onChange={(e) => setEditAudit({ ...editAudit, scheduled_date: e.target.value })} required /></label>
               <div className="modal-actions"><button className="secondary-button" type="button" onClick={() => setEditAudit(null)} disabled={actionLoading}>Cancel</button><button className="primary-button" type="submit" disabled={actionLoading}>{actionLoading ? "Saving..." : "Save Changes"}</button></div>
@@ -13204,16 +13887,34 @@ function AuditPage({ currentUser }) {
   );
 }
 
-function AuditVerificationModal({ details, onClose, onPrint }) {
+function AuditVerificationModal({ details, onClose, onPrint, onCountAsset, onCountSupply }) {
   const audit = details.audit || {};
   const scans = audit.audit_scans || audit.auditScans || [];
   const summary = details.summary || {};
+  const expectedAssets = details.expected_assets || [];
+  const expectedSupplies = details.expected_supplies || [];
+  const includesAssets = ["assets", "combined"].includes(audit.audit_type || "assets");
+  const includesSupplies = ["supplies", "combined"].includes(audit.audit_type || "assets");
+  const expectedTotal = (includesAssets ? summary.expected || 0 : 0) + (includesSupplies ? summary.expected_supplies || 0 : 0);
+  const completedTotal = (includesAssets ? (summary.verified || 0) + (summary.wrong_department || 0) : 0) + (includesSupplies ? summary.counted_supplies || 0 : 0);
+  const progressPercent = expectedTotal > 0 ? Math.round((completedTotal / expectedTotal) * 100) : 0;
   return (
     <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="audit-verification-title">
-      <div className="modal-card wide-modal">
+      <div className="modal-card wide-modal audit-verification-modal">
         <div className="modal-header"><h3 id="audit-verification-title">Audit Verification</h3><button className="icon-button" type="button" onClick={onClose} aria-label="Close"><X size={18} /></button></div>
-        <div className="asset-detail-grid"><div><span className="asset-detail-label">Audit No.</span><strong>{audit.audit_number || "-"}</strong></div><div><span className="asset-detail-label">Area</span><strong>{audit.area || "-"}</strong></div><div><span className="asset-detail-label">Status</span><strong>{audit.status || "-"}</strong></div><div><span className="asset-detail-label">Verified</span><strong>{summary.verified ?? 0}</strong></div><div><span className="asset-detail-label">Wrong Department</span><strong>{summary.wrong_department ?? 0}</strong></div><div><span className="asset-detail-label">Missing</span><strong>{summary.missing ?? 0}</strong></div></div>
-        <div className="table-card" style={{ marginTop: 16, maxHeight: 320, overflow: "auto" }}><table><thead><tr><th>Property No.</th><th>Asset</th><th>Found Department</th><th>Result</th></tr></thead><tbody>{scans.length === 0 ? <tr><td colSpan="4">No scans recorded.</td></tr> : scans.map((scan) => <tr key={scan.id}><td>{scan.asset?.property_number || scan.asset_id || "-"}</td><td>{scan.asset?.name || "-"}</td><td>{scan.found_department?.name || scan.foundDepartment?.name || scan.found_department_id || "-"}</td><td><span className={`status ${scan.result === "verified" ? "success" : "warning"}`}>{scan.result || "-"}</span></td></tr>)}</tbody></table></div>
+        <div className="asset-detail-grid"><div><span className="asset-detail-label">Audit No.</span><strong>{audit.audit_number || "-"}</strong></div><div><span className="asset-detail-label">Area</span><strong>{audit.area || "-"}</strong></div><div><span className="asset-detail-label">Type</span><strong>{audit.audit_type || "assets"}</strong></div><div><span className="asset-detail-label">Status</span><strong>{audit.status || "-"}</strong></div>{includesAssets && <><div><span className="asset-detail-label">Expected Assets</span><strong>{summary.expected ?? 0}</strong></div><div><span className="asset-detail-label">Verified</span><strong>{summary.verified ?? 0}</strong></div><div><span className="asset-detail-label">Unverified</span><strong>{summary.unverified ?? 0}</strong></div><div><span className="asset-detail-label">Wrong Department</span><strong>{summary.wrong_department ?? 0}</strong></div><div><span className="asset-detail-label">Missing</span><strong>{summary.missing ?? 0}</strong></div></>}{includesSupplies && <><div><span className="asset-detail-label">Expected Supplies</span><strong>{summary.expected_supplies ?? 0}</strong></div><div><span className="asset-detail-label">Counted Supplies</span><strong>{summary.counted_supplies ?? 0}</strong></div></>}</div>
+        <div style={{ display: "grid", gap: 6, marginTop: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 13, color: "#526175" }}>
+            <strong>Audit progress</strong>
+            <span>{Math.min(100, progressPercent)}%</span>
+          </div>
+          <div style={{ height: 8, overflow: "hidden", borderRadius: 999, background: "#e5e7eb" }}>
+            <div style={{ width: `${Math.min(100, progressPercent)}%`, height: "100%", borderRadius: 999, background: "#2563eb" }} />
+          </div>
+        </div>
+        {expectedSupplies.length > 0 && <div className="table-card audit-supply-counts" style={{ marginTop: 16, overflow: "auto" }}><table><thead><tr><th>SKU</th><th>Supply</th><th>Expected</th><th>Counted</th><th>Variance</th><th>Status</th><th>Action</th></tr></thead><tbody>{expectedSupplies.map((supply) => <tr key={supply.id}><td>{supply.sku || "-"}</td><td>{supply.name || "-"}</td><td>{supply.expected_quantity ?? 0}</td><td>{supply.counted_quantity ?? "-"}</td><td>{supply.variance ?? "-"}</td><td><span className={`status ${supply.status === "matched" ? "success" : supply.status === "variance" ? "danger" : "warning"}`}>{supply.status}</span></td><td>{audit.status !== "completed" && <button className="small-button" type="button" onClick={() => onCountSupply?.(audit.id, supply)}>{supply.status === "uncounted" ? "Count" : "Recount"}</button>}</td></tr>)}</tbody></table></div>}
+        {includesAssets && <><div className="table-card" style={{ marginTop: 16, maxHeight: 280, overflow: "auto" }}><table><thead><tr><th>Property No.</th><th>Asset</th><th>System Qty</th><th>Physical Qty</th><th>Variance</th><th>Status</th><th>Action</th></tr></thead><tbody>{expectedAssets.length === 0 ? <tr><td colSpan="7">No expected assets found for this department.</td></tr> : expectedAssets.map((asset) => <tr key={asset.id}><td>{asset.property_number || "-"}</td><td>{asset.name || "-"}</td><td>{asset.system_quantity ?? 0}</td><td>{asset.physical_quantity ?? "-"}</td><td>{asset.variance ?? "-"}</td><td><span className={`status ${asset.quantity_status === "matched" ? "success" : asset.quantity_status === "uncounted" ? "warning" : "danger"}`}>{asset.quantity_status}</span></td><td>{audit.status !== "completed" && <button className="small-button" type="button" onClick={() => onCountAsset?.(audit.id, asset)}>{asset.quantity_status === "uncounted" ? "Count" : "Recount"}</button>}</td></tr>)}</tbody></table></div>
+        <div className="table-card" style={{ marginTop: 16, maxHeight: 320, overflow: "auto" }}><table><thead><tr><th>Property No.</th><th>Asset</th><th>Found Department</th><th>Result</th></tr></thead><tbody>{scans.length === 0 ? <tr><td colSpan="4">No scans recorded.</td></tr> : scans.map((scan) => <tr key={scan.id}><td>{scan.asset?.property_number || scan.asset_id || "-"}</td><td>{scan.asset?.name || "-"}</td><td>{scan.found_department?.name || scan.foundDepartment?.name || scan.found_department_id || "-"}</td><td><span className={`status ${scan.result === "verified" ? "success" : "warning"}`}>{scan.result || "-"}</span></td></tr>)}</tbody></table></div></>}
         <div className="modal-actions"><button className="secondary-button" type="button" onClick={onClose}>Close</button><button className="primary-button" type="button" onClick={onPrint}><Printer size={15} /> Print Verification</button></div>
       </div>
     </div>
@@ -15012,10 +15713,55 @@ function ReportsPage() {
   const reportRows = () => flattenReportRows(reportData);
 
   const reportHeaders = () => {
+    if (selectedReport === "damage-summary") {
+      return [
+        "id",
+        "asset_name",
+        "property_number",
+        "unit_code",
+        "department_name",
+        "incident_type",
+        "incident_date",
+        "severity",
+        "description",
+        "status",
+        "assessment_notes",
+        "disposal_reference",
+        "assessed_at",
+        "resolved_at",
+        "created_at",
+      ];
+    }
     const rows = reportRows();
     if (!rows.length) return ["value"];
     const keys = [...new Set(rows.flatMap((row) => Object.keys(row || {})))];
     return keys.length > 0 ? keys : ["value"];
+  };
+
+  const reportHeaderLabel = (header) => {
+    const labels = {
+      asset_name: "Asset",
+      property_number: "Property Number",
+      unit_code: "Physical Unit",
+      department_name: "Department",
+      incident_type: "Incident",
+      incident_date: "Incident Date",
+      assessment_notes: "Assessment Notes",
+      disposal_reference: "Disposal Reference",
+      assessed_at: "Assessed At",
+      resolved_at: "Resolved At",
+      created_at: "Reported At",
+    };
+    return labels[header] || header.replaceAll("_", " ");
+  };
+
+  const formatReportValue = (header, value) => {
+    if (value === null || value === undefined || value === "") return "-";
+    if (["incident_date", "assessed_at", "resolved_at", "created_at"].includes(header)) {
+      const date = new Date(value);
+      return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
+    }
+    return String(value);
   };
 
   const handleGenerateReport = async (reportType) => {
@@ -15129,12 +15875,12 @@ function ReportsPage() {
             <h2>{selectedReport || reportData.report_type || "Report"}</h2>
             <p>Generated: {reportData.generated_at ? new Date(reportData.generated_at).toLocaleString() : new Date().toLocaleString()}</p>
             {reportRows().length > 0 ? (
-              <div className="table-card" style={{ marginTop: 16 }}>
+              <div className={`table-card report-detail-table ${selectedReport === "damage-summary" ? "damage-summary-table" : ""}`} style={{ marginTop: 16 }}>
                 <table>
                   <thead>
                     <tr>
                       {reportHeaders().map((header) => (
-                        <th key={header}>{header}</th>
+                        <th key={header}>{reportHeaderLabel(header)}</th>
                       ))}
                     </tr>
                   </thead>
@@ -15142,7 +15888,9 @@ function ReportsPage() {
                     {reportRows().map((row, index) => (
                       <tr key={`report-row-${index}`}>
                         {reportHeaders().map((header) => (
-                          <td key={`${header}-${index}`}>{row?.[header] ?? "-"}</td>
+                          <td key={`${header}-${index}`} className={`report-cell-${header}`}>
+                            {formatReportValue(header, row?.[header])}
+                          </td>
                         ))}
                       </tr>
                     ))}
@@ -16471,6 +17219,69 @@ function AssetDetailGrid({ asset }) {
         </span>
         <p>{displayText(asset?.description)}</p>
       </section>
+      <section className="asset-activity-section" aria-labelledby="asset-activity-title">
+        <span className="asset-detail-label" id="asset-activity-title">
+          Asset Activity
+        </span>
+        <div className="asset-activity-body">
+          <strong className="asset-activity-heading">Physical Units</strong>
+          {asset?.units?.length ? (
+            <div className="asset-unit-table-wrap">
+              <table className="asset-unit-table">
+                <thead>
+                  <tr><th>Unit</th><th>Status</th><th>Condition</th><th>Custodian</th></tr>
+                </thead>
+                <tbody>
+                  {asset.units.map((unit) => (
+                    <tr key={unit.id}>
+                      <td>{unit.unit_code || `Unit ${unit.id}`}</td>
+                      <td>{renderBadge(unit.status, "status")}</td>
+                      <td>{renderBadge(unit.condition, "condition")}</td>
+                      <td>{unit.custodian?.full_name || unit.custodian?.email || "-"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p className="small-text">No physical units recorded.</p>
+          )}
+
+          <strong className="asset-activity-heading">Reported Incidents</strong>
+          {asset?.damage_reports?.length ? (
+            <div className="activity-list expanded">
+              {asset.damage_reports.map((report) => (
+                <div key={report.id}>
+                  <span className="activity-dot" />
+                  <p>
+                    {report.incident_type} · {report.asset_unit?.unit_code || "All units"} · {report.description}
+                  </p>
+                  <time>{report.status}</time>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="small-text">No reported incidents.</p>
+          )}
+
+          <strong className="asset-activity-heading">Maintenance Records</strong>
+          {asset?.maintenance_records?.length ? (
+            <div className="activity-list expanded">
+              {asset.maintenance_records.map((record) => (
+                <div key={record.id}>
+                  <span className="activity-dot" />
+                  <p>
+                    {record.type} · {record.asset_unit?.unit_code || "All units"} · {record.technician || "Unassigned"}
+                  </p>
+                  <time>{record.status}</time>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="small-text">No maintenance records.</p>
+          )}
+        </div>
+      </section>
       <div className="asset-detail-footer-grid">
         {timestamps.map(([label, value]) => (
           <div className="asset-detail-item" key={label}>
@@ -16660,6 +17471,8 @@ function AssetTable({
             <th>Available</th>
             <th>Condition</th>
             <th>Status</th>
+            <th>Damage Reports</th>
+            <th>Activity</th>
             <th>QR Code</th>
             <th className="actions-column">Actions</th>
           </tr>
@@ -16701,6 +17514,12 @@ function AssetTable({
                   <span className="asset-skeleton-pill" />
                 </td>
                 <td>
+                  <span className="asset-skeleton-pill" />
+                </td>
+                <td>
+                  <span className="asset-skeleton-pill" />
+                </td>
+                <td>
                   <span className="asset-skeleton-square" />
                 </td>
                 <td className="actions-column">
@@ -16710,13 +17529,13 @@ function AssetTable({
             ))
           ) : error ? (
             <tr>
-              <td className="asset-table-state" colSpan="11">
+              <td className="asset-table-state" colSpan="13">
                 <div className="alert danger">{error}</div>
               </td>
             </tr>
           ) : assets.length === 0 ? (
             <tr>
-              <td className="asset-table-state" colSpan="11">
+              <td className="asset-table-state" colSpan="13">
                 No assets found.
               </td>
             </tr>
@@ -16753,6 +17572,33 @@ function AssetTable({
                         ? "available"
                         : "assigned"}
                   </span>
+                </td>
+                <td>
+                  {Number(asset.active_damage_reports_count || 0) > 0 ? (
+                    <span className="status danger">
+                      {asset.active_damage_reports_count} open
+                    </span>
+                  ) : (
+                    <span className="status success">None</span>
+                  )}
+                </td>
+                <td>
+                  <div className="inline-actions small">
+                    {Number(asset.active_assignments_count || 0) > 0 && (
+                      <span className="status info">Assigned</span>
+                    )}
+                    {Number(asset.active_damage_reports_count || 0) > 0 && (
+                      <span className="status danger">Reported</span>
+                    )}
+                    {Number(asset.active_maintenance_records_count || 0) > 0 && (
+                      <span className="status warning">Maintenance</span>
+                    )}
+                    {Number(asset.active_assignments_count || 0) === 0 &&
+                      Number(asset.active_damage_reports_count || 0) === 0 &&
+                      Number(asset.active_maintenance_records_count || 0) === 0 && (
+                        <span className="status success">Clear</span>
+                      )}
+                  </div>
                 </td>
                 <td>
                   <div className="inline-actions">

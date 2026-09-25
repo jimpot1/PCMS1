@@ -657,6 +657,7 @@ export async function fetchMaintenancePredictions({ daysAhead = 14 } = {}) {
 export async function createMaintenanceRecord(payload) {
   const record = {
     asset_id: payload.asset_id,
+    asset_unit_id: payload.asset_unit_id || null,
     type: payload.maintenance_type || payload.type,
     priority: payload.priority || "medium",
     technician: payload.technician_name || payload.technician || null,
@@ -678,6 +679,12 @@ export async function updateMaintenanceRecord(id, payload) {
   });
 }
 
+export async function deleteMaintenanceRecord(id) {
+  return request(`/maintenance/${id}`, {
+    method: "DELETE",
+  });
+}
+
 export async function fetchDamageReports({ limit = 200 } = {}) {
   const response = await request(`/damage-reports?per_page=${limit}`);
   return response?.data || [];
@@ -690,6 +697,7 @@ export async function createDamageReport(payload) {
 
   const formData = new FormData();
   formData.append("asset_id", payload.asset_id || "");
+  formData.append("asset_unit_id", payload.asset_unit_id || "");
   formData.append("ocr_scan_id", payload.ocr_scan_id || "");
   formData.append("incident_type", payload.incident_type || "damaged");
   formData.append("incident_date", payload.incident_date || new Date().toISOString().slice(0, 10));
@@ -724,6 +732,7 @@ export async function fetchAudit(id) {
 export async function createAudit(payload) {
   const record = {
     area: payload.area,
+    audit_type: payload.audit_type || "assets",
     department_id: payload.department_id || null,
     scheduled_at: payload.scheduled_date || payload.scheduled_at,
   };
@@ -737,6 +746,7 @@ export async function createAudit(payload) {
 export async function updateAudit(id, payload) {
   const record = {
     area: payload.area,
+    audit_type: payload.audit_type || "assets",
     department_id: payload.department_id || null,
     scheduled_at: payload.scheduled_date || payload.scheduled_at,
   };
@@ -744,6 +754,20 @@ export async function updateAudit(id, payload) {
   return request(`/audits/${id}`, {
     method: "PATCH",
     body: JSON.stringify(record),
+  });
+}
+
+export async function countAuditSupply(id, payload) {
+  return request(`/audits/${id}/supply-count`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function countAuditAsset(id, payload) {
+  return request(`/audits/${id}/asset-count`, {
+    method: "POST",
+    body: JSON.stringify(payload),
   });
 }
 
@@ -1389,6 +1413,7 @@ export const pcmsApi = {
   createMaintenanceRecord: (payload) => createMaintenanceRecord(payload),
   updateMaintenanceRecord: (id, payload) =>
     updateMaintenanceRecord(id, payload),
+  deleteMaintenanceRecord: (id) => deleteMaintenanceRecord(id),
   fetchDamageReports: (opts) => fetchDamageReports(opts),
   damageReports: (opts) => fetchDamageReports(opts),
   createDamageReport: (payload) => createDamageReport(payload),
@@ -1398,6 +1423,8 @@ export const pcmsApi = {
   fetchAudit: (id) => fetchAudit(id),
   createAudit: (payload) => createAudit(payload),
   updateAudit: (id, payload) => updateAudit(id, payload),
+  countAuditSupply: (id, payload) => countAuditSupply(id, payload),
+  countAuditAsset: (id, payload) => countAuditAsset(id, payload),
   deleteAudit: (id) => deleteAudit(id),
   scanAuditAsset: (auditId, payload) => scanAuditAsset(auditId, payload),
   completeAudit: (auditId) => completeAudit(auditId),
