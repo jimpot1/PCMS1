@@ -420,7 +420,6 @@ function App() {
   const [isSigningIn, setIsSigningIn] = useState(false);
   const [currentUser, setCurrentUser] = useState(null);
   const [unresolvedAnomalyCount, setUnresolvedAnomalyCount] = useState(0);
-  const [queueCounts, setQueueCounts] = useState({ assignments: 0, maintenance: 0 });
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState({
     assets: [],
@@ -485,37 +484,6 @@ function App() {
       window.removeEventListener("pcms:anomaly-data-changed", refreshAnomalyCount);
     };
   }, [isAuthenticated, currentUser]);
-
-  useEffect(() => {
-    if (!isAuthenticated || !currentUser) {
-      setQueueCounts({ assignments: 0, maintenance: 0 });
-      return undefined;
-    }
-
-    let active = true;
-    const refreshQueueCounts = async () => {
-      const [assignmentResult, maintenanceResult] = await Promise.allSettled([
-        pcmsApi.assetAssignmentQueue(),
-        pcmsApi.fetchMaintenancePredictions(),
-      ]);
-
-      if (!active) return;
-      setQueueCounts({
-        assignments: assignmentResult.status === 'fulfilled' && Array.isArray(assignmentResult.value) ? assignmentResult.value.length : 0,
-        maintenance: maintenanceResult.status === 'fulfilled' && Array.isArray(maintenanceResult.value) ? maintenanceResult.value.length : 0,
-      });
-    };
-
-    refreshQueueCounts();
-    const interval = setInterval(refreshQueueCounts, 30000);
-    window.addEventListener('pcms:dataChanged', refreshQueueCounts);
-
-    return () => {
-      active = false;
-      clearInterval(interval);
-      window.removeEventListener('pcms:dataChanged', refreshQueueCounts);
-    };
-  }, [isAuthenticated, currentUser?.role]);
 
   useEffect(() => {
     localStorage.setItem("pcms_active_page", activePage);
@@ -791,6 +759,7 @@ function App() {
 
   const handleSelectPage = (pageId) => {
     setActivePage(pageId);
+    setSidebarOpen(false);
 
     const nextPath = getPagePathForRole(pageId, role);
     if (nextPath && nextPath !== window.location.pathname) {
@@ -889,7 +858,7 @@ function App() {
                   <button
                     type="button"
                     key={item.id}
-                    className={`nav-link ${activePage === item.id ? "active" : ""} ${item.id === "monitoring" && unresolvedAnomalyCount > 0 ? "has-anomaly" : ""} ${["assignments", "maintenance"].includes(item.id) && queueCounts[item.id] > 0 ? "has-queue" : ""}`}
+                    className={`nav-link ${activePage === item.id ? "active" : ""} ${item.id === "monitoring" && unresolvedAnomalyCount > 0 ? "has-anomaly" : ""}`}
                     data-label={item.label}
                     onClick={() => handleSelectPage(item.id)}
                   >
@@ -897,11 +866,6 @@ function App() {
                       <item.icon size={18} />
                     </span>
                     <span className="nav-link-label">{item.label}</span>
-                    {['assignments', 'maintenance'].includes(item.id) && queueCounts[item.id] > 0 && (
-                      <span className="nav-count-badge" aria-label={`${queueCounts[item.id]} items in ${item.label}`}>
-                        {queueCounts[item.id] > 99 ? "99+" : queueCounts[item.id]}
-                      </span>
-                    )}
                     {item.id === "monitoring" && unresolvedAnomalyCount > 0 && (
                       <span className="nav-anomaly-badge" aria-label={`${unresolvedAnomalyCount} unresolved anomalies`}>
                         {unresolvedAnomalyCount > 99 ? "99+" : unresolvedAnomalyCount}
@@ -4924,7 +4888,7 @@ function EnhancedAssignmentsPage() {
 
   useEffect(() => {
     if (!formValues.asset_id) {
-      setSelectedPhysicalUnitIds((currentSelection) => currentSelection.length === 0 ? currentSelection : []);
+      setSelectedPhysicalUnitIds([]);
       return;
     }
 
@@ -9864,7 +9828,7 @@ function MaintenancePage({ currentUser }) {
         </div>
       )}
 
-      <div className="panel maintenance-prediction-panel">
+      <div className="panel">
         <PanelHeader
           title="Predicted Maintenance Due"
           subtitle="Projected from each asset's own repair-interval history"
