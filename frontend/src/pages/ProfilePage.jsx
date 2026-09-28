@@ -40,7 +40,7 @@ export default function ProfilePage() {
   };
 
   return (
-    <div className="page-shell">
+    <div className="page-shell profile-page">
       <div className="page-header">
         <button type="button" className="secondary-button back-button" onClick={handleBack}>
           <ArrowLeft size={16} /> Back

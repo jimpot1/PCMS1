@@ -100,7 +100,7 @@ export default function AccountSettings() {
   };
 
   return (
-    <div className="page-shell">
+    <div className="page-shell account-settings-page">
       <div className="page-header">
         <button type="button" className="secondary-button back-button" onClick={handleBack}>
           <ArrowLeft size={16} /> Back

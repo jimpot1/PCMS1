@@ -104,7 +104,7 @@ export default function PurchaseWorkflowMonitor({ currentUser }) {
       </section>
 
       {/* Tab Switcher */}
-      <div className="panel" style={{ padding: '12px 16px', borderBottom: '1px solid #d8dee9', display: 'flex', gap: '8px' }}>
+      <div className="panel purchase-workflow-tabs" style={{ padding: '12px 16px', borderBottom: '1px solid #d8dee9', display: 'flex', gap: '8px' }}>
         <button
           className={`secondary-button ${activeTab === 'monitor' ? 'active' : ''}`}
           onClick={() => setActiveTab('monitor')}

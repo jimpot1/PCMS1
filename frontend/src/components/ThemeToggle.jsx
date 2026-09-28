@@ -1,5 +1,4 @@
 import React from 'react';
-import { Moon, Sun } from 'lucide-react';
 import { useTheme } from '../services/theme.js';
 
 export default function ThemeToggle() {
@@ -13,10 +12,13 @@ export default function ThemeToggle() {
       onClick={toggleTheme}
       role="switch"
       aria-checked={isDark}
-      title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+      aria-label="Dark mode"
+      title={`Dark mode ${isDark ? 'on' : 'off'}`}
     >
-      {isDark ? <Sun size={16} /> : <Moon size={16} />}
-      <span>{isDark ? 'Light mode' : 'Dark mode'}</span>
+      <span>Dark mode</span>
+      <span className="theme-toggle-track" aria-hidden="true">
+        <span className="theme-toggle-thumb" />
+      </span>
     </button>
   );
 }

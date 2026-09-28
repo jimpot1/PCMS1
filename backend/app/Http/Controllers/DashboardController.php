@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Asset;
+use App\Models\AssetAssignment;
 use App\Models\AssetTransfer;
 use App\Models\DamageReport;
 use App\Models\GatePass;
@@ -17,59 +18,116 @@ class DashboardController
 {
     public function ppmoMetrics(): JsonResponse
     {
-        $thisWeekStart = now()->startOfWeek();
-        $thisWeekEnd = now()->endOfWeek();
-        $lastWeekStart = now()->subWeek()->startOfWeek();
-        $lastWeekEnd = now()->subWeek()->endOfWeek();
+        $today = now()->startOfDay();
+        $returnWindowEnd = $today->copy()->addDays(7)->endOfDay();
+        $activeAssignments = AssetAssignment::query()->where('status', 'active');
 
-        $currentPendingReturns = GatePass::where('status', 'approved')
-            ->whereNull('returned_at')
-            ->whereBetween('created_at', [$thisWeekStart, $thisWeekEnd])
-            ->count();
+        $receivingQuery = PurchaseRequest::query()
+            ->with('department')
+            ->where('request_type', 'purchase_order')
+            ->where('status', 'approved')
+            ->whereIn('current_stage', ['property_custodian', 'ppmo_staff'])
+            ->where(function ($query) {
+                $query->whereNull('procurement_status')
+                    ->orWhereNotIn('procurement_status', ['ready_to_release', 'completed']);
+            });
 
-        $previousPendingReturns = GatePass::where('status', 'approved')
-            ->whereNull('returned_at')
-            ->whereBetween('created_at', [$lastWeekStart, $lastWeekEnd])
-            ->count();
+        $releaseActions = [
+            'purchase_request_released',
+            'supply_request_partially_released',
+            'gate_pass_released',
+        ];
 
-        $currentStockCountTasks = DB::table('stock_movements')
-            ->where('movement_type', 'out')
-            ->whereBetween('created_at', [$thisWeekStart, $thisWeekEnd])
-            ->count();
+        $recentOperationActions = [
+            ...$releaseActions,
+            'asset_returned',
+            'gate_pass_returned',
+            'po_stock_received',
+            'po_qc_completed',
+            'audit_completed',
+            'anomaly_resolved',
+        ];
 
-        $previousStockCountTasks = DB::table('stock_movements')
-            ->where('movement_type', 'out')
-            ->whereBetween('created_at', [$lastWeekStart, $lastWeekEnd])
-            ->count();
+        $activityStart = now()->subDays(6)->startOfDay();
+        $releaseCounts = DB::table('activity_logs')
+            ->whereIn('action', $releaseActions)
+            ->whereBetween('created_at', [$activityStart, now()->endOfDay()])
+            ->selectRaw('DATE(created_at) as activity_date, COUNT(*) as total')
+            ->groupBy('activity_date')
+            ->pluck('total', 'activity_date');
 
-        $currentDocumentsPendingPrint = GatePass::where('status', 'approved')
-            ->whereNull('returned_at')
-            ->whereBetween('created_at', [$thisWeekStart, $thisWeekEnd])
-            ->count();
+        $releaseActivity = collect(range(6, 0))
+            ->map(function (int $daysAgo) use ($releaseCounts) {
+                $date = now()->subDays($daysAgo);
+                $dateKey = $date->toDateString();
 
-        $previousDocumentsPendingPrint = GatePass::where('status', 'approved')
-            ->whereNull('returned_at')
-            ->whereBetween('created_at', [$lastWeekStart, $lastWeekEnd])
-            ->count();
+                return [
+                    'date' => $dateKey,
+                    'label' => $date->format('D'),
+                    'releases' => (int) ($releaseCounts[$dateKey] ?? 0),
+                ];
+            })
+            ->values();
+
+        $recentOperations = DB::table('activity_logs')
+            ->whereIn('action', $recentOperationActions)
+            ->orderByDesc('created_at')
+            ->limit(6)
+            ->get(['id', 'action', 'payload', 'status', 'created_at'])
+            ->map(function ($row) {
+                $payload = json_decode($row->payload ?? '{}', true) ?: [];
+                $status = match ($row->action) {
+                    'supply_request_partially_released' => 'Partial release',
+                    'po_qc_completed' => match ($payload['decision'] ?? null) {
+                        'passed' => 'QC passed',
+                        'failed' => 'QC failed',
+                        'hold' => 'QC on hold',
+                        default => 'QC completed',
+                    },
+                    'anomaly_resolved' => 'Resolved',
+                    default => 'Completed',
+                };
+
+                return [
+                    'id' => $row->id,
+                    'action' => $row->action,
+                    'text' => ActivityLogFormatter::format($row->action, $payload),
+                    'status' => $status,
+                    'time' => $row->created_at,
+                ];
+            })
+            ->values();
+
+        $receivingActions = (clone $receivingQuery)
+            ->orderByDesc('updated_at')
+            ->limit(5)
+            ->get()
+            ->map(fn (PurchaseRequest $purchaseRequest) => [
+                'id' => $purchaseRequest->id,
+                'request_number' => $purchaseRequest->request_number,
+                'department' => $purchaseRequest->department?->name ?? $purchaseRequest->department_name ?? 'Unassigned',
+                'procurement_status' => $purchaseRequest->procurement_status,
+                'qc_status' => $purchaseRequest->qc_status,
+                'updated_at' => $purchaseRequest->updated_at,
+            ])
+            ->values();
 
         return response()->json([
-            'pending_returns' => $currentPendingReturns,
-            'stock_count_tasks' => $currentStockCountTasks,
-            'documents_pending_print' => $currentDocumentsPendingPrint,
-            'weekly_summary' => [
-                'current' => [
-                    'label' => 'This week',
-                    'pending_returns' => $currentPendingReturns,
-                    'stock_count_tasks' => $currentStockCountTasks,
-                    'documents_pending_print' => $currentDocumentsPendingPrint,
-                ],
-                'previous' => [
-                    'label' => 'Last week',
-                    'pending_returns' => $previousPendingReturns,
-                    'stock_count_tasks' => $previousStockCountTasks,
-                    'documents_pending_print' => $previousDocumentsPendingPrint,
-                ],
-            ],
+            'returns_due' => (clone $activeAssignments)
+                ->whereNotNull('due_date')
+                ->whereBetween('due_date', [$today->toDateString(), $returnWindowEnd->toDateString()])
+                ->count(),
+            'overdue_returns' => (clone $activeAssignments)
+                ->whereNotNull('due_date')
+                ->whereDate('due_date', '<', $today->toDateString())
+                ->count(),
+            'receiving_action_count' => (clone $receivingQuery)->count(),
+            'receiving_actions' => $receivingActions,
+            'open_anomaly_alerts' => DB::table('anomaly_alerts')
+                ->where('status', '!=', 'resolved')
+                ->count(),
+            'release_activity' => $releaseActivity,
+            'recent_operations' => $recentOperations,
         ]);
     }
 

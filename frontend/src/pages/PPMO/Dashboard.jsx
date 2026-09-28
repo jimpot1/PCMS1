@@ -1,281 +1,338 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Area, AreaChart, Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { PackageCheck, Boxes, Truck, RotateCcw, ClipboardList, Printer, QrCode, Barcode, FileText, CheckCircle2, Bell } from 'lucide-react';
-import StaffStatCard from '../../components/StaffStatCard.jsx';
+import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { AlertTriangle, ArrowUpRight, ClipboardCheck, PackageCheck, RefreshCw, RotateCcw, Truck } from 'lucide-react';
 import { pcmsApi } from '../../services/api.js';
+
+function formatDashboardDate(value) {
+  if (!value) return 'Date unavailable';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? String(value)
+    : date.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
+function formatStage(value) {
+  return String(value || 'Awaiting receipt').replace(/_/g, ' ');
+}
+
+function getActivityStatusTone(status) {
+  if (status === 'Resolved' || status === 'QC passed' || status === 'Completed') return 'success';
+  if (status === 'QC failed') return 'danger';
+  if (status === 'QC on hold' || status === 'Partial release') return 'warning';
+  return '';
+}
 
 export default function PPMODashboard() {
   const navigate = useNavigate();
-  const [stats, setStats] = useState(null);
-  const [queue, setQueue] = useState([]);
-  const [receiving, setReceiving] = useState([]);
-  const [verification, setVerification] = useState([]);
+  const [releaseQueue, setReleaseQueue] = useState(null);
+  const [metrics, setMetrics] = useState(null);
+  const [queueError, setQueueError] = useState(null);
+  const [metricsError, setMetricsError] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshNonce, setRefreshNonce] = useState(0);
+  const hasLoaded = useRef(false);
 
   useEffect(() => {
-    let mounted = true;
+    let active = true;
+    let requestInFlight = false;
 
-    async function load() {
-      try {
-        setLoading(true);
-        const [queueResponse, receivingResponse, metricsResponse] = await Promise.all([
-          pcmsApi.ppmoReleaseQueue(),
-          pcmsApi.fetchGatePasses({ limit: 10 }),
-          pcmsApi.ppmoMetrics()
-        ]);
+    const loadDashboard = async () => {
+      if (requestInFlight) return;
+      requestInFlight = true;
+      if (!hasLoaded.current) setLoading(true);
+      else setRefreshing(true);
 
-        if (!mounted) return;
+      const [queueResult, metricsResult] = await Promise.allSettled([
+        pcmsApi.ppmoReleaseQueue(),
+        pcmsApi.ppmoMetrics(),
+      ]);
 
-        setQueue([
-          ...queueResponse.purchaseRequests.slice(0, 5).map((item) => ({ id: item.id, type: 'Purchase Request', reference: item.request_number, requester: item.requester?.email || 'Unknown', department: item.department?.name || item.department_name || 'Unknown', status: item.status || 'Approved', preparedBy: item.prepared_by || 'PPMO', releaseDate: item.updated_at || item.created_at || 'TBD' })),
-          ...queueResponse.gatePasses.slice(0, 5).map((item) => ({ id: item.id, type: 'Gate Pass', reference: item.gate_pass_number, requester: item.requester?.email || 'Unknown', department: item.department?.name || item.department_name || 'Unknown', status: item.status || 'Approved', preparedBy: item.prepared_by || 'PPMO', releaseDate: item.updated_at || item.created_at || 'TBD' }))
-        ]);
+      if (active) {
+        if (queueResult.status === 'fulfilled') {
+          setReleaseQueue({
+            purchaseRequests: Array.isArray(queueResult.value?.purchaseRequests) ? queueResult.value.purchaseRequests : [],
+            gatePasses: Array.isArray(queueResult.value?.gatePasses) ? queueResult.value.gatePasses : [],
+          });
+          setQueueError(null);
+        } else {
+          setQueueError(queueResult.reason?.message || 'Unable to load the release queue.');
+        }
 
-        setReceiving(receivingResponse.slice(0, 5).map((item) => ({ id: item.id, supplier: item.supplier_name || 'Supplier', purchaseOrder: item.purchase_order_number || item.id, items: item.items_count || 0, arrivalTime: item.arrival_time || item.updated_at || '', status: item.status || 'Pending' })));
-        setVerification([{ id: 1, label: 'Stock verification needed', details: 'Select items pending physical verification.' }]);
-        const currentMetrics = metricsResponse?.weekly_summary?.current || {};
+        if (metricsResult.status === 'fulfilled') {
+          setMetrics(metricsResult.value || {});
+          setMetricsError(null);
+        } else {
+          setMetricsError(metricsResult.reason?.message || 'Unable to load dashboard metrics.');
+        }
 
-        setStats({
-          approvedReleases: queueResponse.purchaseRequests.length + queueResponse.gatePasses.length,
-          itemsReady: queueResponse.purchaseRequests.length + queueResponse.gatePasses.length,
-          todaysDeliveries: receivingResponse.length,
-          pendingReturns: currentMetrics.pending_returns ?? metricsResponse?.pending_returns ?? 0,
-          stockCountTasks: currentMetrics.stock_count_tasks ?? metricsResponse?.stock_count_tasks ?? 0,
-          documentsPendingPrint: currentMetrics.documents_pending_print ?? metricsResponse?.documents_pending_print ?? 0
-        });
-      } catch (err) {
-        if (!mounted) return;
-        setError(err.message || 'Unable to load dashboard data.');
-      } finally {
-        if (!mounted) setLoading(false);
-        if (mounted) setLoading(false);
+        hasLoaded.current = true;
+        setLoading(false);
+        setRefreshing(false);
       }
+
+      requestInFlight = false;
+    };
+
+    loadDashboard();
+    const interval = setInterval(loadDashboard, 60000);
+    window.addEventListener('pcms:dataChanged', loadDashboard);
+    window.addEventListener('pcms:anomaly-data-changed', loadDashboard);
+    window.addEventListener('focus', loadDashboard);
+
+    return () => {
+      active = false;
+      clearInterval(interval);
+      window.removeEventListener('pcms:dataChanged', loadDashboard);
+      window.removeEventListener('pcms:anomaly-data-changed', loadDashboard);
+      window.removeEventListener('focus', loadDashboard);
+    };
+  }, [refreshNonce]);
+
+  const purchaseRequests = releaseQueue?.purchaseRequests || [];
+  const gatePasses = releaseQueue?.gatePasses || [];
+  const releaseItems = [];
+  const seenReleaseItems = new Set();
+
+  for (const item of purchaseRequests) {
+    const key = `purchase-${item.id}`;
+    if (!seenReleaseItems.has(key)) {
+      seenReleaseItems.add(key);
+      releaseItems.push({
+        id: key,
+        reference: item.request_number || `Request ${item.id}`,
+        type: 'Purchase request',
+        department: item.department?.name || item.department_name || 'Department not assigned',
+        detail: item.requester?.email || item.requested_by_name || 'Requester not available',
+      });
     }
-
-    load();
-    return () => { mounted = false };
-  }, []);
-
-  if (error) {
-    return <div className="staff-panel"><div className="form-message error">{error}</div></div>;
   }
 
-  const handleQuickAction = (route) => navigate(route);
-  const statCards = [
-    { icon: PackageCheck, label: 'Approved Releases This Week', value: stats?.approvedReleases ?? '—', tone: 'blue', route: '/ppmo/approved-release-queue' },
-    { icon: RotateCcw, label: 'Pending Returns This Week', value: stats?.pendingReturns ?? '—', tone: 'orange', route: '/ppmo/returns' },
-    { icon: Printer, label: 'Documents Pending Print This Week', value: stats?.documentsPendingPrint ?? '—', tone: 'indigo', route: '/ppmo/purchase-order-documents' }
-  ];
+  for (const item of gatePasses) {
+    const key = `gate-pass-${item.id}`;
+    if (!seenReleaseItems.has(key)) {
+      seenReleaseItems.add(key);
+      releaseItems.push({
+        id: key,
+        reference: item.gate_pass_number || `Gate pass ${item.id}`,
+        type: 'Gate pass',
+        department: item.department?.name || item.department_name || 'Department not assigned',
+        detail: item.requester?.email || 'Requester not available',
+      });
+    }
+  }
 
-  const releaseTrendData = [
-    { day: 'Mon', approved: 0, released: 0 },
-    { day: 'Tue', approved: 0, released: 0 },
-    { day: 'Wed', approved: 0, released: 0 },
-    { day: 'Thu', approved: 0, released: 0 },
-    { day: 'Fri', approved: 0, released: 0 },
-    { day: 'Sat', approved: 0, released: 0 }
-  ];
+  const receivingActions = Array.isArray(metrics?.receiving_actions) ? metrics.receiving_actions : [];
+  const recentOperations = Array.isArray(metrics?.recent_operations) ? metrics.recent_operations : [];
+  const releaseActivity = Array.isArray(metrics?.release_activity)
+    ? metrics.release_activity.map((item) => ({
+      ...item,
+      label: item.date
+        ? new Date(`${item.date}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+        : item.label,
+    }))
+    : [];
+  const weeklyReleaseCount = releaseActivity.reduce((total, item) => total + Number(item.releases || 0), 0);
+  const overdueReturns = Number(metrics?.overdue_returns || 0);
+  const returnsDue = Number(metrics?.returns_due || 0);
+  const openAnomalies = Number(metrics?.open_anomaly_alerts || 0);
+  const retry = () => setRefreshNonce((current) => current + 1);
 
-  const operationalLoadData = [
-    { name: 'Release', value: 0 },
-    { name: 'Receiving', value: 0 },
-    { name: 'Audit', value: 0 },
-    { name: 'Returns', value: 0 }
-  ];
-
-  const quickActions = [
-    { label: 'Prepare Release', icon: PackageCheck, route: '/ppmo/release-receipt-preparation' },
-    { label: 'Print Gate Pass', icon: FileText, route: '/ppmo/gate-pass-preparation' },
-    { label: 'Supplies Inventory', icon: Boxes, route: '/ppmo/supplies' },
-    { label: 'OCR Asset Tagging', icon: QrCode, route: '/ppmo/ocr' }
+  const cards = [
+    { label: 'Ready for release', value: releaseQueue ? releaseItems.length : '—', detail: 'Approved items awaiting processing', icon: PackageCheck, tone: 'blue', route: '/ppmo/approved-release-queue' },
+    { label: 'Receiving & QC', value: metrics ? Number(metrics.receiving_action_count || 0) : '—', detail: 'Purchase orders needing receipt or QC', icon: Truck, tone: 'teal', route: '/ppmo/receive-deliveries' },
+    { label: 'Returns due in 7 days', value: metrics ? returnsDue : '—', detail: `${overdueReturns} overdue`, icon: RotateCcw, tone: 'orange', route: '/ppmo/returns' },
+    { label: 'Overdue returns', value: metrics ? overdueReturns : '—', detail: 'Active assignments past due', icon: ClipboardCheck, tone: 'indigo', route: '/ppmo/returns' },
+    { label: 'Open anomaly alerts', value: metrics ? openAnomalies : '—', detail: 'Unresolved inventory alerts', icon: AlertTriangle, tone: 'red', route: '/ppmo/monitoring' },
   ];
 
   return (
-    <div className="staff-dashboard-page">
-      <section className="staff-hero-card">
-        <div className="staff-hero-copy">
-          <p>Operations overview</p>
-          <h2>Assist in inventory operations, releases, receiving, and documentation.</h2>
+    <div className="ppmo-dashboard-page">
+      <header className="ppmo-dashboard-header">
+        <div>
+          <p className="ppmo-dashboard-eyebrow">Property operations</p>
+          <h2>PPMO Dashboard</h2>
+          <p>Review work ready for processing, upcoming returns, and inventory alerts.</p>
         </div>
-        <div className="staff-hero-actions">
-          <button className="primary-button" type="button" onClick={() => handleQuickAction('/ppmo/release-receipt-preparation')}>Prepare Release</button>
-          <button className="secondary-button" type="button" onClick={() => handleQuickAction('/ppmo/supplies')}>Supplies Inventory</button>
+        <div className="ppmo-dashboard-header-actions">
+          <button className="staff-icon-btn" type="button" onClick={retry} disabled={refreshing} aria-label="Refresh dashboard" title="Refresh dashboard">
+            <RefreshCw size={16} className={refreshing ? 'is-spinning' : ''} />
+          </button>
+          <button className="primary-button" type="button" onClick={() => navigate('/ppmo/approved-release-queue')}>
+            <PackageCheck size={16} /> Review release queue <ArrowUpRight size={15} />
+          </button>
         </div>
-      </section>
+      </header>
 
-      <section className="staff-stats-grid">
-        {statCards.map(({ icon, label, value, tone, route }) => (
-          <StaffStatCard key={label} icon={icon} label={label} value={value} tone={tone} onClick={() => handleQuickAction(route)} />
+      <section className="ppmo-dashboard-stat-grid" aria-label="Operational summary">
+        {loading && !hasLoaded.current ? cards.map(({ label, icon: Icon }) => (
+          <div className="ppmo-dashboard-stat-skeleton" key={label} aria-label={`Loading ${label}`}>
+            <span className="ppmo-dashboard-skeleton-icon"><Icon size={18} /></span>
+            <span className="ppmo-dashboard-skeleton-line" />
+            <span className="ppmo-dashboard-skeleton-value" />
+          </div>
+        )) : cards.map(({ icon: Icon, label, value, detail, tone, route }) => (
+          <button key={label} className={`ppmo-dashboard-stat ${tone}`} type="button" onClick={() => navigate(route)}>
+            <span className="ppmo-dashboard-stat-icon"><Icon size={18} /></span>
+            <span className="ppmo-dashboard-stat-label">{label}</span>
+            <strong>{value}</strong>
+            <span className="ppmo-dashboard-stat-detail">{detail}</span>
+          </button>
         ))}
       </section>
 
-      <section className="staff-analytics-grid">
-        <div className="staff-panel staff-chart-panel">
-          <div className="staff-panel-header">
+      <section className="ppmo-dashboard-primary-grid">
+        <section className="staff-panel ppmo-dashboard-panel ppmo-action-panel">
+          <div className="ppmo-dashboard-panel-header">
             <div>
-              <h3>Release Trend</h3>
-              <p>Approved vs released items across the week.</p>
+              <h3>Action required</h3>
+              <p>Queues and records that need PPMO processing.</p>
             </div>
           </div>
-          <div className="chart-wrap">
-            <ResponsiveContainer width="100%" height={230}>
-              <AreaChart data={releaseTrendData}>
-                <defs>
-                  <linearGradient id="approvedFill" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#2563eb" stopOpacity={0.35} />
-                    <stop offset="95%" stopColor="#2563eb" stopOpacity={0.02} />
-                  </linearGradient>
-                  <linearGradient id="releasedFill" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#14b8a6" stopOpacity={0.28} />
-                    <stop offset="95%" stopColor="#14b8a6" stopOpacity={0.02} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
-                <XAxis dataKey="day" tickLine={false} axisLine={false} />
-                <YAxis tickLine={false} axisLine={false} allowDecimals={false} />
-                <Tooltip />
-                <Area type="monotone" dataKey="approved" stroke="#2563eb" strokeWidth={2.5} fill="url(#approvedFill)" />
-                <Area type="monotone" dataKey="released" stroke="#14b8a6" strokeWidth={2.5} fill="url(#releasedFill)" />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
 
-        <div className="staff-panel staff-chart-panel">
-          <div className="staff-panel-header">
-            <div>
-              <h3>Operational Load</h3>
-              <p>Current workload mix across workflow areas.</p>
+          <div className="ppmo-dashboard-action-group">
+            <div className="ppmo-dashboard-group-heading">
+              <h4>Ready for release</h4>
+              <button type="button" className="ppmo-dashboard-text-link" onClick={() => navigate('/ppmo/approved-release-queue')}>View queue</button>
             </div>
-          </div>
-          <div className="chart-wrap">
-            <ResponsiveContainer width="100%" height={230}>
-              <BarChart data={operationalLoadData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
-                <XAxis dataKey="name" tickLine={false} axisLine={false} />
-                <YAxis tickLine={false} axisLine={false} allowDecimals={false} />
-                <Tooltip />
-                <Bar dataKey="value" radius={[8, 8, 0, 0]} fill="#6366f1" />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-      </section>
-
-      <section className="staff-dashboard-grid">
-        <div className="staff-panel">
-          <div className="staff-panel-header">
-            <div>
-              <h3>Approved Release Queue</h3>
-              <p>Shows approved requests assigned by Property Custodian.</p>
-            </div>
-          </div>
-          {loading ? <div className="loading-card">Loading approved releases…</div> : (
-            <div className="staff-table-scroll">
-              <table className="staff-table">
-                <thead>
-                  <tr>
-                    <th>Request No</th>
-                    <th>Requester</th>
-                    <th>Department</th>
-                    <th>Release Status</th>
-                    <th>Prepared By</th>
-                    <th>Release Date</th>
-                    <th>Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {queue.length === 0 ? (
-                    <tr><td colSpan="7" className="empty-state">No approved requests assigned.</td></tr>
-                  ) : queue.map((item) => (
-                    <tr key={`${item.type}-${item.id}`}>
-                      <td>{item.reference}</td>
-                      <td>{item.requester}</td>
-                      <td>{item.department}</td>
-                      <td><span className="status success">{item.status}</span></td>
-                      <td>{item.preparedBy}</td>
-                      <td>{item.releaseDate}</td>
-                      <td><button className="secondary-button" type="button">View</button></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-
-        <div className="staff-panel">
-          <div className="staff-panel-header">
-            <div>
-              <h3>Today's Receiving</h3>
-              <p>Incoming deliveries.</p>
-            </div>
-          </div>
-          {loading ? <div className="loading-card">Loading deliveries…</div> : (
-            <div className="staff-table-scroll">
-              <table className="staff-table">
-                <thead>
-                  <tr>
-                    <th>Supplier</th>
-                    <th>Purchase Order</th>
-                    <th>Items</th>
-                    <th>Arrival Time</th>
-                    <th>Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {receiving.length === 0 ? (
-                    <tr><td colSpan="5" className="empty-state">No deliveries scheduled today.</td></tr>
-                  ) : receiving.map((item) => (
-                    <tr key={item.id}>
-                      <td>{item.supplier}</td>
-                      <td>{item.purchaseOrder}</td>
-                      <td>{item.items}</td>
-                      <td>{item.arrivalTime}</td>
-                      <td><span className={`status ${item.status === 'Pending' ? 'warning' : 'success'}`}>{item.status}</span></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-
-        <div className="staff-panel">
-          <div className="staff-panel-header">
-            <div>
-              <h3>Stock Verification</h3>
-              <p>Shows inventory requiring verification.</p>
-            </div>
-          </div>
-          <div className="staff-panel-content">
-            {verification.map((item) => (
-              <div key={item.id} className="staff-block-item">
-                <strong>{item.label}</strong>
-                <p>{item.details}</p>
+            {queueError ? (
+              <div className="ppmo-dashboard-inline-error" role="alert">
+                <span>{queueError}</span>
+                <button type="button" onClick={retry}>Retry</button>
               </div>
-            ))}
+            ) : loading && !releaseQueue ? (
+              <div className="ppmo-dashboard-empty">Loading release queue...</div>
+            ) : releaseItems.length === 0 ? (
+              <div className="ppmo-dashboard-empty">No approved items are waiting for release.</div>
+            ) : (
+              <div className="ppmo-dashboard-action-list">
+                {releaseItems.slice(0, 4).map((item) => (
+                  <button key={item.id} type="button" className="ppmo-dashboard-action-row" onClick={() => navigate('/ppmo/approved-release-queue')}>
+                    <span className="ppmo-dashboard-action-copy">
+                      <strong>{item.reference}</strong>
+                      <small>{item.type} · {item.department} · {item.detail}</small>
+                    </span>
+                    <span className="ppmo-dashboard-tag">Ready</span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
-        </div>
+
+          <div className="ppmo-dashboard-action-group">
+            <div className="ppmo-dashboard-group-heading">
+              <h4>Receiving & quality control</h4>
+              <button type="button" className="ppmo-dashboard-text-link" onClick={() => navigate('/ppmo/receive-deliveries')}>View receiving</button>
+            </div>
+            {metricsError ? (
+              <div className="ppmo-dashboard-inline-error" role="alert">
+                <span>{metricsError}</span>
+                <button type="button" onClick={retry}>Retry</button>
+              </div>
+            ) : loading && !metrics ? (
+              <div className="ppmo-dashboard-empty">Loading receiving work...</div>
+            ) : receivingActions.length === 0 ? (
+              <div className="ppmo-dashboard-empty">No purchase orders are waiting for receipt or quality control.</div>
+            ) : (
+              <div className="ppmo-dashboard-action-list">
+                {receivingActions.slice(0, 4).map((item) => {
+                  const receivingState = item.qc_status && item.qc_status !== 'pending'
+                    ? `QC ${formatStage(item.qc_status)}`
+                    : item.procurement_status === 'received' ? 'QC pending' : 'Receipt pending';
+                  return (
+                    <button key={item.id} type="button" className="ppmo-dashboard-action-row" onClick={() => navigate('/ppmo/receive-deliveries')}>
+                      <span className="ppmo-dashboard-action-copy">
+                        <strong>{item.request_number || `Purchase order ${item.id}`}</strong>
+                        <small>{item.department || 'Department not assigned'} · Updated {formatDashboardDate(item.updated_at)}</small>
+                      </span>
+                      <span className="ppmo-dashboard-tag warning">{receivingState}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {(returnsDue > 0 || overdueReturns > 0 || openAnomalies > 0) && !metricsError && (
+            <div className="ppmo-dashboard-alert-links">
+              {(returnsDue > 0 || overdueReturns > 0) && (
+                <button type="button" className="ppmo-dashboard-alert-link" onClick={() => navigate('/ppmo/returns')}>
+                  <RotateCcw size={15} /> {overdueReturns > 0 ? `${overdueReturns} overdue return${overdueReturns === 1 ? '' : 's'}` : `${returnsDue} return${returnsDue === 1 ? '' : 's'} due this week`}
+                </button>
+              )}
+              {openAnomalies > 0 && (
+                <button type="button" className="ppmo-dashboard-alert-link danger" onClick={() => navigate('/ppmo/monitoring')}>
+                  <AlertTriangle size={15} /> {openAnomalies} unresolved anomaly alert{openAnomalies === 1 ? '' : 's'}
+                </button>
+              )}
+            </div>
+          )}
+        </section>
+
+        <section className="staff-panel ppmo-dashboard-panel ppmo-dashboard-chart-panel">
+          <div className="ppmo-dashboard-panel-header">
+            <div>
+              <h3>Release activity</h3>
+              <p>Recorded purchase, supply, and gate-pass releases over the last 7 days.</p>
+            </div>
+            {!metricsError && metrics && <strong className="ppmo-dashboard-chart-total">{weeklyReleaseCount} total</strong>}
+          </div>
+          {metricsError ? (
+            <div className="ppmo-dashboard-inline-error" role="alert">
+              <span>{metricsError}</span>
+              <button type="button" onClick={retry}>Retry</button>
+            </div>
+          ) : loading && !metrics ? (
+            <div className="ppmo-dashboard-chart-skeleton" aria-label="Loading release activity" />
+          ) : weeklyReleaseCount === 0 ? (
+            <div className="ppmo-dashboard-chart-empty">No release activity recorded for this period.</div>
+          ) : (
+            <div className="ppmo-dashboard-chart-wrap">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={releaseActivity} margin={{ top: 12, right: 12, bottom: 0, left: -18 }}>
+                  <CartesianGrid stroke="var(--chart-grid)" strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fill: 'var(--text-light)', fontSize: 11 }} />
+                  <YAxis allowDecimals={false} width={36} tickLine={false} axisLine={false} tick={{ fill: 'var(--text-light)', fontSize: 11 }} />
+                  <Tooltip />
+                  <Area type="monotone" dataKey="releases" name="Completed releases" stroke="#4f91e8" strokeWidth={2} fill="rgba(79, 145, 232, 0.16)" />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </section>
       </section>
 
-      <section className="staff-panel">
-        <div className="staff-panel-header">
+      <section className="staff-panel ppmo-dashboard-panel ppmo-dashboard-recent-panel">
+        <div className="ppmo-dashboard-panel-header">
           <div>
-            <h3>Quick Actions</h3>
-            <p>Common operational workflows for PPMO staff.</p>
+            <h3>Recent operational activity</h3>
+            <p>Latest recorded releases, returns, receiving, QC, and anomaly resolutions.</p>
           </div>
         </div>
-        <div className="staff-quick-grid">
-          {quickActions.map(({ label, icon: Icon, route }) => (
-            <button key={label} className="staff-quick-action" type="button" onClick={() => handleQuickAction(route)}>
-              <Icon size={18} />
-              <span>{label}</span>
-            </button>
-          ))}
-        </div>
+        {metricsError ? (
+          <div className="ppmo-dashboard-inline-error" role="alert">
+            <span>{metricsError}</span>
+            <button type="button" onClick={retry}>Retry</button>
+          </div>
+        ) : loading && !metrics ? (
+          <div className="ppmo-dashboard-empty">Loading recent activity...</div>
+        ) : recentOperations.length === 0 ? (
+          <div className="ppmo-dashboard-empty">No recent PPMO operational activity recorded.</div>
+        ) : (
+          <ul className="ppmo-dashboard-activity-list">
+            {recentOperations.map((item) => (
+              <li key={item.id}>
+                <span className="ppmo-dashboard-activity-marker" />
+                <span className="ppmo-dashboard-activity-copy">
+                  <strong>{item.text || formatStage(item.action)}</strong>
+                  <small>{formatDashboardDate(item.time)}</small>
+                </span>
+                {item.status && <span className={`ppmo-dashboard-tag ${getActivityStatusTone(item.status)}`}>{item.status}</span>}
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
     </div>
   );
