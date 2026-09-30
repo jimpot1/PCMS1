@@ -4009,6 +4009,7 @@ function DepartmentsPage() {
     name: "",
     location: "",
   });
+  const [showDepartmentForm, setShowDepartmentForm] = useState(false);
   const [isSavingDepartment, setIsSavingDepartment] = useState(false);
   const [departmentSuccess, setDepartmentSuccess] = useState(null);
 
@@ -4033,6 +4034,12 @@ function DepartmentsPage() {
     setNewDepartment((current) => ({ ...current, [field]: value }));
   };
 
+  const closeDepartmentForm = () => {
+    if (isSavingDepartment) return;
+    setShowDepartmentForm(false);
+    setDepartmentError(null);
+  };
+
   const handleAddDepartment = async (event) => {
     event.preventDefault();
     setDepartmentError(null);
@@ -4044,6 +4051,7 @@ function DepartmentsPage() {
       setDepartmentRows((current) => [created, ...current]);
       setDepartmentSuccess("Department added successfully.");
       setNewDepartment({ code: "", name: "", location: "" });
+      setShowDepartmentForm(false);
     } catch (error) {
       setDepartmentError(error?.message || "Failed to add department.");
     } finally {
@@ -4057,58 +4065,92 @@ function DepartmentsPage() {
       subtitle="Department custodians, locations, and asset accountability."
       primary="Add Department"
       icon={Building2}
+      onPrimary={() => {
+        setDepartmentError(null);
+        setShowDepartmentForm(true);
+      }}
     >
-      <div className="panel">
-        <div className="panel-header">
-          <h3>New Department</h3>
+      <SuccessModal message={departmentSuccess} />
+      {showDepartmentForm && (
+        <div
+          className="modal-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="new-department-title"
+          onClick={closeDepartmentForm}
+        >
+          <div
+            className="modal-card"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="modal-header">
+              <h3 id="new-department-title">New Department</h3>
+              <button
+                className="icon-button"
+                type="button"
+                onClick={closeDepartmentForm}
+                aria-label="Close new department form"
+                disabled={isSavingDepartment}
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <form className="register-form" onSubmit={handleAddDepartment}>
+              <div className="form-grid">
+                <label>
+                  Department Code
+                  <input
+                    value={newDepartment.code}
+                    onChange={(event) =>
+                      handleDepartmentChange("code", event.target.value)
+                    }
+                    required
+                  />
+                </label>
+                <label>
+                  Department Name
+                  <input
+                    value={newDepartment.name}
+                    onChange={(event) =>
+                      handleDepartmentChange("name", event.target.value)
+                    }
+                    required
+                  />
+                </label>
+                <label>
+                  Location
+                  <input
+                    value={newDepartment.location}
+                    onChange={(event) =>
+                      handleDepartmentChange("location", event.target.value)
+                    }
+                  />
+                </label>
+              </div>
+              {departmentError && (
+                <div className="alert danger">{departmentError}</div>
+              )}
+              <div className="modal-actions">
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={closeDepartmentForm}
+                  disabled={isSavingDepartment}
+                >
+                  <X size={16} /> Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="primary-button"
+                  disabled={isSavingDepartment}
+                >
+                  {isSavingDepartment ? "Saving…" : "Add Department"}
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
-        <form className="register-form" onSubmit={handleAddDepartment}>
-          <div className="form-grid">
-            <label>
-              Department Code
-              <input
-                value={newDepartment.code}
-                onChange={(event) =>
-                  handleDepartmentChange("code", event.target.value)
-                }
-                required
-              />
-            </label>
-            <label>
-              Department Name
-              <input
-                value={newDepartment.name}
-                onChange={(event) =>
-                  handleDepartmentChange("name", event.target.value)
-                }
-                required
-              />
-            </label>
-            <label>
-              Location
-              <input
-                value={newDepartment.location}
-                onChange={(event) =>
-                  handleDepartmentChange("location", event.target.value)
-                }
-              />
-            </label>
-          </div>
-          {departmentError && (
-            <div className="alert danger">{departmentError}</div>
-          )}
-          <SuccessModal message={departmentSuccess} />
-          <div className="modal-actions">
-            <button
-              type="submit"
-              className="primary-button"
-              disabled={isSavingDepartment}
-            >
-              {isSavingDepartment ? "Saving…" : "Add Department"}
-            </button>
-          </div>
-        </form>
-      </div>
+      )}
 
       <div className="table-card">
         {isLoadingDepartmentsPage ? (
@@ -16463,20 +16505,14 @@ function UsersPage() {
       )}
 
       {editingUser && (
-        <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="edit-user-title">
-          <div className="modal-card user-form-modal" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-overlay" role="dialog" aria-modal="true">
+          <div className="modal-card" style={{ maxWidth: 520 }}>
             <div className="modal-header">
-              <div>
-                <h3 id="edit-user-title">Edit User</h3>
-                <p className="modal-subtitle">
-                  Update account details, access, or password.
-                </p>
-              </div>
+              <h3>Edit User</h3>
               <button
                 className="icon-button"
-                type="button"
                 onClick={() => setEditingUser(null)}
-                aria-label="Close edit user form"
+                aria-label="Close"
               >
                 <X size={18} />
               </button>

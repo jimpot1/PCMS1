@@ -12,6 +12,7 @@ use App\Models\PhysicalAudit;
 use App\Models\PurchaseRequest;
 use App\Services\ActivityLogFormatter;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 class DashboardController
@@ -131,7 +132,7 @@ class DashboardController
         ]);
     }
 
-    public function __invoke(): JsonResponse
+    public function __invoke(Request $request): JsonResponse
     {
         $pendingRequests = PurchaseRequest::where('status', 'pending')->count();
         $pendingTransfers = AssetTransfer::where('status', 'pending')->count();
@@ -166,7 +167,7 @@ class DashboardController
             ],
             'status_breakdown' => $this->statusBreakdown(),
             'monthly_analytics' => $this->monthlyAnalytics(),
-            'recent_activities' => $this->recentActivities(),
+            'recent_activities' => $this->recentActivities($request->user()->role),
             'anomaly_preview' => $this->anomalyPreview(),
         ]);
     }
@@ -214,9 +215,14 @@ class DashboardController
             ->all();
     }
 
-    protected function recentActivities(): array
+    protected function recentActivities(string $viewerRole): array
     {
-        return DB::table('activity_logs')
+        $activityQuery = DB::table('activity_logs');
+        if ($viewerRole !== 'System Administrator') {
+            $activityQuery->whereNotIn('action', ['user_logged_in', 'user_logged_out']);
+        }
+
+        return $activityQuery
             ->orderByDesc('created_at')
             ->limit(8)
             ->get(['action', 'payload', 'created_at'])

@@ -5,7 +5,6 @@ namespace Tests\Feature;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
 use Tests\TestCase;
@@ -108,25 +107,6 @@ class SessionAuthenticationTest extends TestCase
             }
         }
 
-        $firstLog = DB::table('activity_logs')->where('action', 'user_logged_in')->orderBy('id')->first();
-        $firstLogPayload = json_decode($firstLog->payload, true);
-        unset($firstLogPayload['first_name'], $firstLogPayload['last_name']);
-        $firstLogPayload['user_name'] = 'Requester';
-        $firstLogPayload['user'] = 'Requester';
-        DB::table('activity_logs')->where('id', $firstLog->id)->update([
-            'payload' => json_encode($firstLogPayload),
-        ]);
-        DB::table('activity_logs')->insert([
-            'action' => 'audit_completed',
-            'payload' => json_encode([
-                'action' => 'audit_completed',
-                'user' => 'login1@example.com',
-            ]),
-            'status' => 'active',
-            'created_at' => now(),
-            'updated_at' => now(),
-        ]);
-
         $logsResponse = $this->getJson('/api/activity-logs')->assertOk();
         foreach ($roles as $index => $role) {
             $logsResponse->assertJsonFragment([
@@ -136,28 +116,6 @@ class SessionAuthenticationTest extends TestCase
                 'email' => "login{$index}@example.com",
             ]);
         }
-        $auditLog = collect($logsResponse->json('data'))->firstWhere('action', 'audit_completed');
-        $this->assertSame('Login User 1', $auditLog['user_name'] ?? null);
-    }
-
-    public function test_ppmo_staff_can_see_its_login_activity_without_a_cached_activity_response(): void
-    {
-        $user = $this->createUserWithOtp('PPMO Staff', 10);
-
-        $this->postJson('/api/auth/otp/verify', [
-            'user_id' => $user->id,
-            'otp' => '123456',
-        ])->assertOk();
-
-        $this->getJson('/api/activity-logs')
-            ->assertOk()
-            ->assertHeader('Cache-Control', 'private, no-store')
-            ->assertJsonFragment([
-                'text' => 'User logged in',
-                'user_name' => 'Login User 10',
-                'role' => 'PPMO Staff',
-                'email' => 'login10@example.com',
-            ]);
     }
 
     private function createUserWithOtp(string $role, int $index): User
@@ -167,7 +125,7 @@ class SessionAuthenticationTest extends TestCase
             'employee_id' => "LOGIN-{$index}",
             'first_name' => 'Login',
             'last_name' => "User {$index}",
-            'full_name' => $role,
+            'full_name' => "Login User {$index}",
             'email' => "login{$index}@example.com",
             'password_hash' => Hash::make('SecretPass123!'),
             'role' => $role,

@@ -142,8 +142,8 @@ class AuthController extends Controller
         }
 
         $authenticatedUser = Auth::guard('web')->user();
-        $userName = trim(implode(' ', array_filter([$authenticatedUser->first_name, $authenticatedUser->last_name])))
-            ?: $authenticatedUser->full_name
+        $userName = $authenticatedUser->full_name
+            ?: trim(implode(' ', array_filter([$authenticatedUser->first_name, $authenticatedUser->last_name])))
             ?: $authenticatedUser->email;
 
         DB::table('activity_logs')->insert([
@@ -153,8 +153,6 @@ class AuthController extends Controller
                 'user_id' => $authenticatedUser->id,
                 'user_name' => $userName,
                 'user' => $userName,
-                'first_name' => $authenticatedUser->first_name,
-                'last_name' => $authenticatedUser->last_name,
                 'role' => $authenticatedUser->role,
                 'email' => $authenticatedUser->email,
                 'username' => $authenticatedUser->employee_id,
