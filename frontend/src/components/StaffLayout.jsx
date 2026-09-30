@@ -1,14 +1,19 @@
-﻿import React, { useState } from 'react';
-import { Outlet } from 'react-router-dom';
+﻿import React, { useEffect, useState } from 'react';
+import { Outlet, useLocation } from 'react-router-dom';
 import { X } from 'lucide-react';
 import StaffSidebar from './StaffSidebar.jsx';
 import StaffHeader from './StaffHeader.jsx';
 
 export default function StaffLayout({ currentUser, onLogout }) {
+  const location = useLocation();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
+
+  useEffect(() => {
+    setMobileOpen(false);
+  }, [location.pathname]);
 
   const closeLogoutConfirm = () => setShowLogoutConfirm(false);
 

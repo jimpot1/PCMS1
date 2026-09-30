@@ -1,12 +1,12 @@
 .staff-shell { display: flex; min-height: 100vh; background: var(--background); }
-.staff-sidebar { width: 230px; flex-shrink: 0; background: #fff; border-right: 1px solid var(--border); box-shadow: 0 8px 30px rgba(15, 23, 42, 0.04); transition: width 0.2s ease; position: sticky; top: 0; left: 0; align-self: stretch; }
+.staff-sidebar { width: 230px; flex-shrink: 0; background: #fff; border-right: 1px solid var(--border); box-shadow: 0 8px 30px rgba(15, 23, 42, 0.04); transition: width 0.2s ease; position: sticky; top: 0; left: 0; align-self: flex-start; height: 100vh; height: 100dvh; }
 .staff-sidebar.collapsed { width: 76px; }
 .staff-sidebar-inner { display: flex; flex-direction: column; height: 100%; padding: 12px 10px; }
 .staff-brand { display: flex; align-items: center; gap: 10px; padding: 8px 8px 12px; border-bottom: 1px solid var(--border); margin-bottom: 10px; }
 .staff-brand-icon { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; background: linear-gradient(135deg, #dbeafe, #eff6ff); color: var(--primary); font-size: 11px; font-weight: 700; }
 .staff-brand h3 { margin: 0; font-size: 14px; color: var(--text); }
 .staff-brand p { margin: 2px 0 0; font-size: 11px; color: var(--muted); line-height: 1.3; }
-.staff-nav { display: grid; gap: 10px; padding-top: 8px; overflow-y: auto; overflow-x: hidden; max-height: calc(100vh - 260px); scrollbar-width: thin; scrollbar-color: rgba(148, 163, 184, 0.8) transparent; }
+.staff-nav { display: grid; gap: 10px; padding-top: 8px; overflow-y: auto; overflow-x: hidden; min-height: 0; max-height: calc(100vh - 260px); max-height: calc(100dvh - 180px); scrollbar-width: thin; scrollbar-color: rgba(148, 163, 184, 0.8) transparent; }
 .staff-nav::-webkit-scrollbar { width: 8px; }
 .staff-nav::-webkit-scrollbar-track { background: transparent; }
 .staff-nav::-webkit-scrollbar-thumb { background: rgba(148, 163, 184, 0.7); border-radius: 999px; }
@@ -886,10 +886,26 @@
   .staff-sidebar.collapsed .staff-logout-btn span { display: none; }
 }
 @media (max-width: 980px) {
-  .staff-sidebar, .staff-sidebar.collapsed { position: fixed; inset: 0 auto 0 0; z-index: 60; width: 280px; min-width: 280px; max-width: 88vw; height: 100dvh; overflow: hidden; transform: translateX(-100%); transition: transform .2s ease; }
-  .staff-sidebar.mobile-open { transform: translateX(0); }
-  .staff-sidebar-backdrop { display: block; position: fixed; inset: 0; z-index: 55; background: rgba(15, 23, 42, .35); }
-  .staff-main { width: 100%; margin-left: 0; }
+  .staff-shell { flex-direction: row; }
+  .staff-sidebar, .staff-sidebar.collapsed { position: sticky; inset: auto; flex: 0 0 230px; width: 230px; min-width: 230px; max-width: 230px; height: 100vh; height: 100dvh; transform: none; transition: flex-basis .2s ease, width .2s ease, min-width .2s ease; }
+  .staff-sidebar.collapsed { flex-basis: 68px; width: 68px; min-width: 68px; }
+  .staff-sidebar-backdrop { display: none; }
+  .staff-main { width: auto; flex: 1 1 0; min-width: 0; margin-left: 0; }
+}
+@media (max-width: 600px) {
+  .staff-sidebar, .staff-sidebar.collapsed { flex-basis: 68px; width: 68px; min-width: 68px; max-width: 68px; }
+  .staff-sidebar .staff-brand { justify-content: center; padding: 0; }
+  .staff-sidebar .staff-brand > div:not(.staff-brand-icon),
+  .staff-sidebar .staff-section-title,
+  .staff-sidebar .staff-nav-item > span:not(.staff-nav-icon):not(.nav-anomaly-badge):not(.nav-count-badge),
+  .staff-sidebar .staff-profile-card > div:not(.staff-avatar),
+  .staff-sidebar .staff-logout-btn span { display: none; }
+  .staff-sidebar .staff-nav { padding-right: 0; padding-left: 0; }
+  .staff-sidebar .staff-nav-list { padding: 0; }
+  .staff-sidebar .staff-nav-item { width: 44px; min-width: 44px; max-width: 44px; justify-content: center; margin: 4px auto; padding: 0; }
+  .staff-sidebar .staff-sidebar-footer { padding-right: 6px; padding-left: 6px; }
+  .staff-sidebar .staff-profile-card { justify-content: center; padding-right: 0; padding-left: 0; }
+  .staff-sidebar .staff-logout-btn { width: 44px; height: 44px; padding: 0; margin: 0 auto; }
 }
 
 body.pcms-dark .staff-sidebar,

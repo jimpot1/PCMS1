@@ -420,6 +420,7 @@ function App() {
   const [isSigningIn, setIsSigningIn] = useState(false);
   const [currentUser, setCurrentUser] = useState(null);
   const [unresolvedAnomalyCount, setUnresolvedAnomalyCount] = useState(0);
+  const [queueCounts, setQueueCounts] = useState({ assignments: 0, maintenance: 0 });
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState({
     assets: [],
@@ -484,6 +485,37 @@ function App() {
       window.removeEventListener("pcms:anomaly-data-changed", refreshAnomalyCount);
     };
   }, [isAuthenticated, currentUser]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !currentUser) {
+      setQueueCounts({ assignments: 0, maintenance: 0 });
+      return undefined;
+    }
+
+    let active = true;
+    const refreshQueueCounts = async () => {
+      const [assignmentResult, maintenanceResult] = await Promise.allSettled([
+        pcmsApi.assetAssignmentQueue(),
+        pcmsApi.fetchMaintenancePredictions(),
+      ]);
+
+      if (!active) return;
+      setQueueCounts({
+        assignments: assignmentResult.status === 'fulfilled' && Array.isArray(assignmentResult.value) ? assignmentResult.value.length : 0,
+        maintenance: maintenanceResult.status === 'fulfilled' && Array.isArray(maintenanceResult.value) ? maintenanceResult.value.length : 0,
+      });
+    };
+
+    refreshQueueCounts();
+    const interval = setInterval(refreshQueueCounts, 30000);
+    window.addEventListener('pcms:dataChanged', refreshQueueCounts);
+
+    return () => {
+      active = false;
+      clearInterval(interval);
+      window.removeEventListener('pcms:dataChanged', refreshQueueCounts);
+    };
+  }, [isAuthenticated, currentUser?.role]);
 
   useEffect(() => {
     localStorage.setItem("pcms_active_page", activePage);
@@ -759,7 +791,6 @@ function App() {
 
   const handleSelectPage = (pageId) => {
     setActivePage(pageId);
-    setSidebarOpen(false);
 
     const nextPath = getPagePathForRole(pageId, role);
     if (nextPath && nextPath !== window.location.pathname) {
@@ -858,7 +889,7 @@ function App() {
                   <button
                     type="button"
                     key={item.id}
-                    className={`nav-link ${activePage === item.id ? "active" : ""} ${item.id === "monitoring" && unresolvedAnomalyCount > 0 ? "has-anomaly" : ""}`}
+                    className={`nav-link ${activePage === item.id ? "active" : ""} ${item.id === "monitoring" && unresolvedAnomalyCount > 0 ? "has-anomaly" : ""} ${["assignments", "maintenance"].includes(item.id) && queueCounts[item.id] > 0 ? "has-queue" : ""}`}
                     data-label={item.label}
                     onClick={() => handleSelectPage(item.id)}
                   >
@@ -866,6 +897,11 @@ function App() {
                       <item.icon size={18} />
                     </span>
                     <span className="nav-link-label">{item.label}</span>
+                    {['assignments', 'maintenance'].includes(item.id) && queueCounts[item.id] > 0 && (
+                      <span className="nav-count-badge" aria-label={`${queueCounts[item.id]} items in ${item.label}`}>
+                        {queueCounts[item.id] > 99 ? "99+" : queueCounts[item.id]}
+                      </span>
+                    )}
                     {item.id === "monitoring" && unresolvedAnomalyCount > 0 && (
                       <span className="nav-anomaly-badge" aria-label={`${unresolvedAnomalyCount} unresolved anomalies`}>
                         {unresolvedAnomalyCount > 99 ? "99+" : unresolvedAnomalyCount}
@@ -4888,7 +4924,7 @@ function EnhancedAssignmentsPage() {
 
   useEffect(() => {
     if (!formValues.asset_id) {
-      setSelectedPhysicalUnitIds([]);
+      setSelectedPhysicalUnitIds((currentSelection) => currentSelection.length === 0 ? currentSelection : []);
       return;
     }
 
@@ -9828,7 +9864,7 @@ function MaintenancePage({ currentUser }) {
         </div>
       )}
 
-      <div className="panel">
+      <div className="panel maintenance-prediction-panel">
         <PanelHeader
           title="Predicted Maintenance Due"
           subtitle="Projected from each asset's own repair-interval history"
@@ -16427,14 +16463,20 @@ function UsersPage() {
       )}
 
       {editingUser && (
-        <div className="modal-overlay" role="dialog" aria-modal="true">
-          <div className="modal-card" style={{ maxWidth: 520 }}>
+        <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="edit-user-title">
+          <div className="modal-card user-form-modal" onClick={(event) => event.stopPropagation()}>
             <div className="modal-header">
-              <h3>Edit User</h3>
+              <div>
+                <h3 id="edit-user-title">Edit User</h3>
+                <p className="modal-subtitle">
+                  Update account details, access, or password.
+                </p>
+              </div>
               <button
                 className="icon-button"
+                type="button"
                 onClick={() => setEditingUser(null)}
-                aria-label="Close"
+                aria-label="Close edit user form"
               >
                 <X size={18} />
               </button>
@@ -16737,29 +16779,36 @@ function ActivityPage() {
 
   useEffect(() => {
     let mounted = true;
-    pcmsApi
-      .activityLogs({ limit: 100 })
-      .then((response) => {
-        if (mounted) setLogs(response || []);
-      })
-      .catch((err) => {
+    const loadLogs = async () => {
+      try {
+        const response = await pcmsApi.activityLogs({ limit: 100 });
+        if (mounted) {
+          setLogs(response || []);
+          setError(null);
+        }
+      } catch (err) {
         if (mounted) setError(err?.message || "Unable to load activity logs.");
-      })
-      .finally(() => {
+      } finally {
         if (mounted) setLoading(false);
-      });
+      }
+    };
+
+    loadLogs();
+    const interval = window.setInterval(loadLogs, 30000);
     return () => {
       mounted = false;
+      window.clearInterval(interval);
     };
   }, []);
 
   const handleExport = () => {
     exportRowsToCsv("activity-logs.csv", logs, [
-      { label: "Time", value: (log) => log.time },
-      { label: "Action", value: (log) => log.action },
-      { label: "Description", value: (log) => log.text },
-      { label: "User", value: (log) => log.user },
-      { label: "IP", value: (log) => log.ip },
+      { label: "Date and Time", value: (log) => log.time },
+      { label: "Activity", value: (log) => log.text || log.action },
+      { label: "User Name", value: (log) => log.user_name || log.user },
+      { label: "User Role", value: (log) => log.role },
+      { label: "Email/Username", value: (log) => log.email || log.username },
+      { label: "IP Address", value: (log) => log.ip },
       { label: "Status", value: (log) => log.status },
     ]);
   };
@@ -16782,19 +16831,27 @@ function ActivityPage() {
           ) : (
             <table className="activity-log-table">
               <thead>
-                <tr><th>Time</th><th>Action</th><th>Description</th><th>User</th><th>IP Address</th><th>Status</th></tr>
+                <tr><th>Date and Time</th><th>Activity</th><th>User Name</th><th>User Role</th><th>Email/Username</th><th>IP Address</th><th>Status</th></tr>
               </thead>
               <tbody>
-                {logs.map((log) => (
-                  <tr key={log.id}>
-                    <td title={log.time}>{formatRelativeTime(log.time)}</td>
-                    <td><span className="status info">{log.action || "activity"}</span></td>
-                    <td>{log.text || "-"}</td>
-                    <td>{log.user || "-"}</td>
-                    <td>{log.ip || "-"}</td>
-                    <td>{log.status || "-"}</td>
-                  </tr>
-                ))}
+                {logs.map((log) => {
+                  const dateTime = log.time ? new Date(log.time) : null;
+                  const formattedTime = dateTime && !Number.isNaN(dateTime.getTime())
+                    ? dateTime.toLocaleString()
+                    : log.time || "-";
+
+                  return (
+                    <tr key={log.id}>
+                      <td title={log.time}>{formattedTime}</td>
+                      <td><span className="status info">{log.text || log.action || "activity"}</span></td>
+                      <td>{log.user_name || log.user || "-"}</td>
+                      <td>{log.role || "-"}</td>
+                      <td>{log.email || log.username || "-"}</td>
+                      <td>{log.ip || "-"}</td>
+                      <td>{log.status || "-"}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           )}

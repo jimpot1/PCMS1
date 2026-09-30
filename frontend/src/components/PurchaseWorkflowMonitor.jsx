@@ -144,7 +144,7 @@ export default function PurchaseWorkflowMonitor({ currentUser }) {
           <label>Current Stage<select value={filters.current_stage} onChange={(event) => updateFilter('current_stage', event.target.value)}><option value="">All stages</option>{WORKFLOW_STAGES.map((stage) => <option key={stage.key} value={stage.key}>{stage.label}</option>)}</select></label>
           <label>From<input type="date" value={filters.date_from} onChange={(event) => updateFilter('date_from', event.target.value)} /></label>
           <label>To<input type="date" value={filters.date_to} onChange={(event) => updateFilter('date_to', event.target.value)} /></label>
-          <label className="workflow-search">Search<div className="search-input"><Search size={15} /><input value={filters.search} onChange={(event) => updateFilter('search', event.target.value)} placeholder="Request number or requester" /></div></label>
+          <label className="workflow-search">Search<div className="search-input"><Search size={15} /><input type="search" value={filters.search} onChange={(event) => updateFilter('search', event.target.value)} placeholder="Request number or requester" /></div></label>
           <button className="secondary-button" type="submit"><Search size={15} /> Apply filters</button>
           <button className="secondary-button" type="button" onClick={resetFilters}><Filter size={15} /> Clear</button>
         </form>

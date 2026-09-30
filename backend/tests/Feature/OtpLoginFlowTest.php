@@ -27,6 +27,13 @@ class OtpLoginFlowTest extends TestCase
             'status' => 'active',
         ]);
 
+        $this->postJson('/api/auth/login', [
+            'email' => 'jane.doe@gmail.com',
+            'password' => 'WrongPassword123!',
+        ])->assertUnauthorized();
+
+        $this->assertDatabaseMissing('activity_logs', ['action' => 'user_logged_in']);
+
         $response = $this->postJson('/api/auth/login', [
             'email' => 'jane.doe@gmail.com',
             'password' => 'SecretPass123!',
@@ -38,6 +45,7 @@ class OtpLoginFlowTest extends TestCase
 
         $this->assertGuest();
         $this->assertDatabaseHas('otp_verifications', ['user_id' => $user->id]);
+        $this->assertDatabaseMissing('activity_logs', ['action' => 'user_logged_in']);
     }
 
     public function test_invalid_otp_is_rejected(): void
@@ -69,6 +77,7 @@ class OtpLoginFlowTest extends TestCase
             ->assertJsonPath('message', 'Invalid or expired verification code.');
 
         $this->assertGuest();
+        $this->assertDatabaseMissing('activity_logs', ['action' => 'user_logged_in']);
     }
 
     public function test_valid_otp_verification_sets_session_for_protected_routes(): void

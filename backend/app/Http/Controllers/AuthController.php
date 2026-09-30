@@ -8,6 +8,7 @@ use App\Services\OtpVerificationService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rules\Password;
@@ -141,6 +142,29 @@ class AuthController extends Controller
         }
 
         $authenticatedUser = Auth::guard('web')->user();
+        $userName = trim(implode(' ', array_filter([$authenticatedUser->first_name, $authenticatedUser->last_name])))
+            ?: $authenticatedUser->full_name
+            ?: $authenticatedUser->email;
+
+        DB::table('activity_logs')->insert([
+            'action' => 'user_logged_in',
+            'payload' => json_encode([
+                'action' => 'user_logged_in',
+                'user_id' => $authenticatedUser->id,
+                'user_name' => $userName,
+                'user' => $userName,
+                'first_name' => $authenticatedUser->first_name,
+                'last_name' => $authenticatedUser->last_name,
+                'role' => $authenticatedUser->role,
+                'email' => $authenticatedUser->email,
+                'username' => $authenticatedUser->employee_id,
+                'ip' => $request->ip(),
+                'user_agent' => $request->userAgent(),
+            ]),
+            'status' => 'active',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
 
         return response()->json([
             'message' => 'Verification successful.',

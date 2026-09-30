@@ -1324,7 +1324,7 @@ export function assignmentExportUrl() {
 }
 
 export async function fetchActivityLogs({ limit = 50 } = {}) {
-  const response = await request(`/activity-logs?per_page=${limit}`);
+  const response = await request(`/activity-logs?per_page=${limit}`, { cache: "no-store" });
   return response?.data || [];
 }
 
