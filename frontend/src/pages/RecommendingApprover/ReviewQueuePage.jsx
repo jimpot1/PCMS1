@@ -1,22 +1,25 @@
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { Check, Eraser, X } from 'lucide-react';
 import ReviewQueue from '../../components/ReviewQueue.jsx';
 import ReviewRequest from './ReviewRequest.jsx';
 import { pcmsApi } from '../../services/api.js';
 import SuccessModal from '../../components/SuccessModal.jsx';
+import useLiveSync from '../../hooks/useLiveSync.js';
 
 export default function RecommendingApproverReviewQueue() {
   const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const hasLoadedRef = useRef(false);
 
   const loadQueue = useCallback(async () => {
     try {
-      setLoading(true);
+      if (!hasLoadedRef.current) setLoading(true);
       setError(null);
       const response = await pcmsApi.recommendingReviewQueue();
       const data = Array.isArray(response) ? response : response?.data || [];
       setRequests(data);
+      hasLoadedRef.current = true;
     } catch (err) {
       setError(err.message || 'Unable to load review queue.');
     } finally {
@@ -42,6 +45,11 @@ export default function RecommendingApproverReviewQueue() {
   const [bulkSuccess, setBulkSuccess] = useState(null);
   const [bulkConfirm, setBulkConfirm] = useState(null); // 'approve' | 'reject' | null
   const [bulkRejectReason, setBulkRejectReason] = useState('');
+
+  useLiveSync(async () => {
+    const response = await pcmsApi.recommendingReviewQueue();
+    setRequests(Array.isArray(response) ? response : response?.data || []);
+  }, { enabled: !modalOpen && !bulkActionLoading && !bulkConfirm });
 
   const eligibleRequests = useMemo(
     () => requests.filter((r) => r.current_stage === 'recommending_approver' && r.status === 'pending'),

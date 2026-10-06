@@ -1,9 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ClipboardList, CheckCircle2, XCircle, AlertTriangle, ShieldCheck, FileText } from 'lucide-react';
 import RecommendingApproverStatCard from '../../components/RecommendingApproverStatCard.jsx';
 import ReviewQueue from '../../components/ReviewQueue.jsx';
 import { pcmsApi } from '../../services/api.js';
+import useLiveSync from '../../hooks/useLiveSync.js';
 
 export default function RecommendingApproverDashboard() {
   const navigate = useNavigate();
@@ -18,13 +19,14 @@ export default function RecommendingApproverDashboard() {
   const [queue, setQueue] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const hasLoadedRef = useRef(false);
 
   useEffect(() => {
     let active = true;
 
     async function load() {
       try {
-        setLoading(true);
+        if (!hasLoadedRef.current) setLoading(true);
         setError(null);
         const response = await pcmsApi.recommendingApproverDashboard();
         if (!active) return;
@@ -41,6 +43,7 @@ export default function RecommendingApproverDashboard() {
           conditionalApprovals: stats.conditional_approvals ?? 0,
           validationIssues: stats.validation_issues ?? 0,
         });
+        hasLoadedRef.current = true;
       } catch (err) {
         if (!active) return;
         setError(err.message || 'Unable to load recommending approver dashboard.');
@@ -55,6 +58,22 @@ export default function RecommendingApproverDashboard() {
 
     return () => { active = false; window.removeEventListener('recommendingApproverDataChanged', onDataChanged); };
   }, []);
+
+  useLiveSync(async () => {
+    const response = await pcmsApi.recommendingApproverDashboard();
+    const nextStats = response?.stats || {};
+    setQueue(Array.isArray(response?.queue) ? response.queue : []);
+    hasLoadedRef.current = true;
+    setStats({
+      pendingReviews: nextStats.pending ?? 0,
+      approvedRecommendations: nextStats.approved ?? 0,
+      rejectedRequests: nextStats.rejected ?? 0,
+      informationRequired: nextStats.information_required ?? 0,
+      conditionalApprovals: nextStats.conditional_approvals ?? 0,
+      validationIssues: nextStats.validation_issues ?? 0,
+    });
+    setError(null);
+  });
 
   const handleView = (request) => {
     navigate(`/recommending-approver/review/${request.id}`);

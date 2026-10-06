@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { ShieldCheck, Loader2, AlertTriangle } from 'lucide-react';
 import ReviewQueue from '../../components/ReviewQueue.jsx';
 import { pcmsApi } from '../../services/api.js';
+import useLiveSync from '../../hooks/useLiveSync.js';
 
 export default function ConditionalApprovals() {
   const [requests, setRequests] = useState([]);
@@ -40,6 +41,18 @@ export default function ConditionalApprovals() {
     loadConditionalApprovals();
     return () => { mounted = false; };
   }, []);
+
+  useLiveSync(async () => {
+    const source = await pcmsApi.purchaseRequests({ current_stage: 'recommending_approver', limit: 200 });
+    setRequests((Array.isArray(source) ? source : []).filter((request) => {
+      const status = String(request.status || '').toLowerCase();
+      return status === 'conditionally_approved'
+        || status === 'conditional_approval'
+        || Boolean(request.conditional_notes)
+        || Boolean(request.conditions)
+        || Boolean(request.condition_notes);
+    }));
+  });
 
   const handleView = (request) => {
     navigate(`/recommending-approver/review/${request.id}`);

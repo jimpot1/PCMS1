@@ -4,11 +4,11 @@
 
 export const ROLES = {
   PPMO_STAFF: 'PPMO Staff',
-  OIC: 'Property Custodian',
+  OIC: 'OIC',
   DEPARTMENT_HEAD: 'Department Head',
   RECOMMENDING_APPROVER: 'Recommending Approver',
-  PRESIDENT_CEO: 'President',
-  DEPARTMENT_REQUESTER: 'Department Requester',
+  PRESIDENT_CEO: 'President / CEO',
+  DEPARTMENT_REQUESTER: 'Requester',
   SYSTEM_ADMIN: 'System Administrator',
 };
 
@@ -114,15 +114,16 @@ export function hasPermission(role, permission) {
  * Get displayable role name
  */
 export function getRoleDisplayName(role) {
+  const normalizedRole = role === 'President' || role === 'CEO' ? ROLES.PRESIDENT_CEO : role;
   const roleNames = {
     [ROLES.PPMO_STAFF]: 'PPMO Staff',
-    [ROLES.OIC]: 'Officer in Charge',
+    [ROLES.OIC]: 'OIC',
     [ROLES.DEPARTMENT_HEAD]: 'Department Head',
     [ROLES.RECOMMENDING_APPROVER]: 'Recommending Approver',
-    [ROLES.PRESIDENT_CEO]: 'President/CEO',
-    [ROLES.DEPARTMENT_REQUESTER]: 'Department Requester',
+    [ROLES.PRESIDENT_CEO]: 'President / CEO',
+    [ROLES.DEPARTMENT_REQUESTER]: 'Requester',
     [ROLES.SYSTEM_ADMIN]: 'System Administrator',
   };
 
-  return roleNames[role] || role;
+  return roleNames[normalizedRole] || normalizedRole || role;
 }

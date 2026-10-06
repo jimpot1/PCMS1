@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Loader2, AlertTriangle, FileText } from 'lucide-react';
 import { pcmsApi } from '../../services/api.js';
+import useLiveSync from '../../hooks/useLiveSync.js';
 
 export default function ApprovalHistory() {
   const [history, setHistory] = useState([]);
@@ -29,6 +30,12 @@ export default function ApprovalHistory() {
     loadHistory();
     return () => { mounted = false; };
   }, []);
+
+  useLiveSync(async () => {
+    const items = await pcmsApi.departmentHeadApprovalHistory();
+    setHistory((items || []).slice().sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at)));
+    setError(null);
+  });
 
   return (
     <section className="department-panel-card">

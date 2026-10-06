@@ -76,7 +76,9 @@ export default function PPMODashboard() {
     };
 
     loadDashboard();
-    const interval = setInterval(loadDashboard, 60000);
+    const interval = setInterval(() => {
+      if (document.visibilityState === 'visible') loadDashboard();
+    }, 20000);
     window.addEventListener('pcms:dataChanged', loadDashboard);
     window.addEventListener('pcms:anomaly-data-changed', loadDashboard);
     window.addEventListener('focus', loadDashboard);

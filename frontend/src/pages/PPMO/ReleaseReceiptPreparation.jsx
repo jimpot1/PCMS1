@@ -3,6 +3,7 @@ import { FileText, AlertTriangle, Loader2, Receipt, Download, Eye, Printer, X } 
 import { pcmsApi, releaseReceiptUrl } from '../../services/api.js';
 import { exportHtmlToPdf } from '../../utils/pdfExport.js';
 import { TableSkeleton } from '../../components/TableSkeleton.jsx';
+import useLiveSync from '../../hooks/useLiveSync.js';
 
 export default function ReleaseReceiptPreparation() {
   const [requests, setRequests] = useState([]);
@@ -44,6 +45,8 @@ export default function ReleaseReceiptPreparation() {
   useEffect(() => {
     loadReleased();
   }, []);
+
+  useLiveSync(refreshReleasedSilently, { enabled: !preview && !generatingId });
 
   // Renders the receipt inline in a modal (via an iframe) instead of a
   // popup window. Popups require navigating a new window to a data:/blob:

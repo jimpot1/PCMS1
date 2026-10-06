@@ -34,6 +34,7 @@ import {
   QrCode,
   Barcode,
   RotateCcw,
+  RefreshCw,
   Search,
   Settings,
   Shield,
@@ -147,6 +148,7 @@ import {
 } from "./services/auth.js";
 import { ROLES, hasPermission } from "./services/roles.js";
 import { pcmsApi, assetQrCodeUrl } from "./services/api.js";
+import useLiveSync from "./hooks/useLiveSync.js";
 import { getPasswordRequirements, validateStrongPassword } from "./utils/passwordRules.js";
 import jsQR from "jsqr";
 import { TableSkeleton, ListSkeleton } from "./components/TableSkeleton.jsx";
@@ -277,7 +279,7 @@ const resolveActivePageFromPath = (pathname) => {
 };
 
 const getPagePathForRole = (pageId, role) => {
-  if (role === "President" || role === "CEO") {
+  if (role === "President / CEO" || role === "President" || role === "CEO") {
     const paths = {
       dashboard: "/president/dashboard",
       approvals: "/president/approvals",
@@ -363,7 +365,7 @@ const getPagePathForRole = (pageId, role) => {
 };
 
 const getDashboardPathForRole = (role) => {
-  if (role === "President" || role === "CEO") return "/president/dashboard";
+  if (role === "President / CEO" || role === "President" || role === "CEO") return "/president/dashboard";
   if (role === "Department Head") return "/department-head/dashboard";
   if (role === "OIC" || role === "Property Custodian") return "/oic/dashboard";
   if (role === "PPMO Staff") return "/ppmo/dashboard";
@@ -445,77 +447,64 @@ function App() {
     [activePage, currentUser],
   );
 
-  useEffect(() => {
-    if (!isAuthenticated) return;
-    const loadNotifications = () =>
-      pcmsApi
-        .notifications()
-        .then(setNotifData)
-        .catch(() => {});
-    loadNotifications();
-    const interval = setInterval(loadNotifications, 60000);
-    return () => clearInterval(interval);
-  }, [isAuthenticated]);
+  useLiveSync(
+    async () => {
+      const response = await pcmsApi.notifications();
+      setNotifData(response?.data || []);
+    },
+    { enabled: isAuthenticated && currentUser?.role === ROLES.SYSTEM_ADMIN },
+  );
 
-  useEffect(() => {
-    if (!isAuthenticated || !currentUser || !hasPermission(currentUser.role, "canViewReports")) {
-      setUnresolvedAnomalyCount(0);
-      return undefined;
-    }
-
-    let active = true;
-    const refreshAnomalyCount = async () => {
-      try {
-        const summary = await pcmsApi.fetchAnomalySummary();
-        if (active) {
-          setUnresolvedAnomalyCount(Math.max(0, Number(summary?.open_unresolved || 0)));
-        }
-      } catch {
-        // Keep the last known count when the monitoring summary is temporarily unavailable.
+  const canRefreshAnomalies =
+    isAuthenticated && currentUser && hasPermission(currentUser.role, "canViewReports");
+  useLiveSync(
+    async () => {
+      if (!canRefreshAnomalies) {
+        setUnresolvedAnomalyCount(0);
+        return;
       }
-    };
+      const summary = await pcmsApi.fetchAnomalySummary();
+      setUnresolvedAnomalyCount(Math.max(0, Number(summary?.open_unresolved || 0)));
+    },
+    { enabled: !!canRefreshAnomalies && currentUser?.role === ROLES.SYSTEM_ADMIN },
+  );
 
-    refreshAnomalyCount();
-    const interval = setInterval(refreshAnomalyCount, 30000);
-    window.addEventListener("pcms:anomaly-data-changed", refreshAnomalyCount);
-
-    return () => {
-      active = false;
-      clearInterval(interval);
-      window.removeEventListener("pcms:anomaly-data-changed", refreshAnomalyCount);
-    };
-  }, [isAuthenticated, currentUser]);
-
-  useEffect(() => {
+  const refreshQueueCounts = async () => {
     if (!isAuthenticated || !currentUser) {
       setQueueCounts({ assignments: 0, maintenance: 0 });
-      return undefined;
+      return;
     }
+    const [assignmentResult, maintenanceResult] = await Promise.allSettled([
+      pcmsApi.assetAssignmentQueue(),
+      pcmsApi.fetchMaintenancePredictions(),
+    ]);
+    setQueueCounts({
+      assignments: assignmentResult.status === "fulfilled" && Array.isArray(assignmentResult.value) ? assignmentResult.value.length : 0,
+      maintenance: maintenanceResult.status === "fulfilled" && Array.isArray(maintenanceResult.value) ? maintenanceResult.value.length : 0,
+    });
+  };
+  useLiveSync(refreshQueueCounts, {
+    enabled: isAuthenticated && currentUser?.role === ROLES.SYSTEM_ADMIN,
+  });
 
-    let active = true;
-    const refreshQueueCounts = async () => {
-      const [assignmentResult, maintenanceResult] = await Promise.allSettled([
-        pcmsApi.assetAssignmentQueue(),
-        pcmsApi.fetchMaintenancePredictions(),
-      ]);
-
-      if (!active) return;
-      setQueueCounts({
-        assignments: assignmentResult.status === 'fulfilled' && Array.isArray(assignmentResult.value) ? assignmentResult.value.length : 0,
-        maintenance: maintenanceResult.status === 'fulfilled' && Array.isArray(maintenanceResult.value) ? maintenanceResult.value.length : 0,
-      });
+  useEffect(() => {
+    if (!isAuthenticated || currentUser?.role !== ROLES.SYSTEM_ADMIN) return undefined;
+    const refreshAnomalyBadge = async () => {
+      if (!canRefreshAnomalies) return;
+      try {
+        const summary = await pcmsApi.fetchAnomalySummary();
+        setUnresolvedAnomalyCount(Math.max(0, Number(summary?.open_unresolved || 0)));
+      } catch {
+        // Keep the last known badge count when monitoring is unavailable.
+      }
     };
-
-    refreshQueueCounts();
-    const interval = setInterval(refreshQueueCounts, 30000);
-    window.addEventListener('pcms:dataChanged', refreshQueueCounts);
-
+    window.addEventListener("pcms:dataChanged", refreshQueueCounts);
+    window.addEventListener("pcms:anomaly-data-changed", refreshAnomalyBadge);
     return () => {
-      active = false;
-      clearInterval(interval);
-      window.removeEventListener('pcms:dataChanged', refreshQueueCounts);
+      window.removeEventListener("pcms:dataChanged", refreshQueueCounts);
+      window.removeEventListener("pcms:anomaly-data-changed", refreshAnomalyBadge);
     };
-  }, [isAuthenticated, currentUser?.role]);
+  }, [isAuthenticated, currentUser?.role, canRefreshAnomalies]);
 
   useEffect(() => {
     localStorage.setItem("pcms_active_page", activePage);
@@ -695,6 +684,14 @@ function App() {
     return unsubscribe;
   }, []);
 
+  useLiveSync(async () => {
+    const sessionUser = await getCurrentUserProfile();
+    if (sessionUser) {
+      setCurrentUser(sessionUser);
+      setIsAuthenticated(true);
+    }
+  }, { enabled: isAuthenticated, intervalMs: 30000 });
+
   const handleLogin = async ({ email, password, remember }) => {
     setAuthError(null);
     setIsSigningIn(true);
@@ -841,7 +838,7 @@ function App() {
   }
 
   const role = currentUser?.role;
-  const isPresident = role === "President" || role === "CEO";
+  const isPresident = role === "President / CEO" || role === "President" || role === "CEO";
   const isDepartmentHead = role === "Department Head";
   const isRequester = role === "Requester";
   const isPpmoStaff = role === "PPMO Staff";
@@ -1914,6 +1911,8 @@ function RequesterDashboard({ currentUser, onLogout }) {
     loadSummary();
   }, []);
 
+  useLiveSync(loadSummary);
+
   const stats = summary?.stats || {};
   const quickActions = [
     {
@@ -2223,12 +2222,13 @@ function RequesterStatus({ records: initialRecords = [] }) {
 function RequesterReceiveItems({ onChanged, initialItems = [] }) {
   const [items, setItems] = useState(initialItems);
   const [loading, setLoading] = useState(true);
+  const [processingId, setProcessingId] = useState(null);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
 
   const loadItems = async () => {
     try {
-      setLoading(true);
+      if (items.length === 0) setLoading(true);
       setItems(await pcmsApi.requesterGatePasses({ deliverable: true }));
     } catch (err) {
       setError(err.message);
@@ -2241,12 +2241,18 @@ function RequesterReceiveItems({ onChanged, initialItems = [] }) {
     loadItems();
   }, []);
 
+  useLiveSync(async () => {
+    setItems(await pcmsApi.requesterGatePasses({ deliverable: true }));
+  });
+
   const confirmReceipt = async (id) => {
+    if (processingId) return;
     const receiving_signature = window.prompt(
       "Receiving signature / typed name:",
     );
     if (!receiving_signature) return;
     try {
+      setProcessingId(id);
       setError(null);
       await pcmsApi.requesterConfirmReceipt(id, {
         receiving_signature,
@@ -2257,6 +2263,8 @@ function RequesterReceiveItems({ onChanged, initialItems = [] }) {
       onChanged?.();
     } catch (err) {
       setError(err.message);
+    } finally {
+      setProcessingId(null);
     }
   };
 
@@ -2284,9 +2292,10 @@ function RequesterReceiveItems({ onChanged, initialItems = [] }) {
               <button
                 className="primary-button"
                 type="button"
+                disabled={processingId === item.id}
                 onClick={() => confirmReceipt(item.id)}
               >
-                <CheckCircle2 size={16} /> Confirm Receipt
+                <CheckCircle2 size={16} /> {processingId === item.id ? "Confirming…" : "Confirm Receipt"}
               </button>
             </article>
           ))}
@@ -2503,7 +2512,7 @@ function DepartmentHeadDashboard({ currentUser, onLogout }) {
 
   const loadQueue = async () => {
     try {
-      setLoading(true);
+      if (queue.length === 0) setLoading(true);
       const data = await pcmsApi.departmentHeadApprovalQueue();
       setQueue([
         ...data.purchaseRequests.map((item) => ({
@@ -2843,6 +2852,12 @@ function Dashboard({ onNavigate }) {
       mounted = false;
     };
   }, []);
+
+  useLiveSync(async () => {
+    const response = await pcmsApi.dashboard();
+    setData(response);
+    setError(null);
+  });
 
   const m = data?.metrics || {};
   const monthlyData = data?.monthly_analytics || [];
@@ -3264,6 +3279,7 @@ function buildAssetPayload(values) {
 function AssetRegistry({ currentUser }) {
   const [assetsData, setAssetsData] = useState([]);
   const [isLoadingAssets, setIsLoadingAssets] = useState(true);
+  const [isRefreshingAssets, setIsRefreshingAssets] = useState(false);
   const [assetError, setAssetError] = useState(null);
   const [searchText, setSearchText] = useState("");
   const [activityFilter, setActivityFilter] = useState("all");
@@ -3300,6 +3316,15 @@ function AssetRegistry({ currentUser }) {
     status: "available",
   });
 
+  useLiveSync(async () => {
+    const [assets, departmentList] = await Promise.all([
+      pcmsApi.assets({ limit: 200, search: searchText || "" }),
+      pcmsApi.departments(),
+    ]);
+    setAssetsData(assets || []);
+    setDepartments(departmentList || []);
+  }, { enabled: !showRegisterDialog && !actionModal.type });
+
   // Load departments once
   useEffect(() => {
     let mounted = true;
@@ -3329,22 +3354,26 @@ function AssetRegistry({ currentUser }) {
 
   // Load assets and support server-side search (debounced)
   const assetsSearchTimer = useRef(null);
+  const assetsHaveLoadedRef = useRef(false);
   useEffect(() => {
     let mounted = true;
     setAssetError(null);
-    setIsLoadingAssets(true);
+    if (assetsHaveLoadedRef.current) setIsRefreshingAssets(true);
+    else setIsLoadingAssets(true);
 
     const load = async (search) => {
       try {
         const assets = await pcmsApi.assets({ limit: 200, search });
         if (!mounted) return;
         setAssetsData(assets || []);
+        assetsHaveLoadedRef.current = true;
       } catch (error) {
         if (!mounted) return;
         setAssetError(error?.message || "Unable to load assets.");
       } finally {
         if (!mounted) return;
         setIsLoadingAssets(false);
+        setIsRefreshingAssets(false);
       }
     };
 
@@ -3636,6 +3665,11 @@ function AssetRegistry({ currentUser }) {
         </label>
       </div>
       {actionError && <div className="alert danger">{actionError}</div>}
+      {isRefreshingAssets && (
+        <div className="inline-refresh-status" role="status" aria-live="polite">
+          <RefreshCw size={14} className="spin" /> Updating assets…
+        </div>
+      )}
       <SuccessModal message={actionSuccess} />
       <AssetTable
         assets={filteredAssets}
@@ -3662,7 +3696,7 @@ function AssetRegistry({ currentUser }) {
 
       {showRegisterDialog && (
         <div className="modal-overlay" role="dialog" aria-modal="true">
-          <div className="modal-card">
+          <div className="modal-card asset-register-modal">
             <div className="modal-header">
               <h3>Register New Asset</h3>
               <button
@@ -4030,6 +4064,11 @@ function DepartmentsPage() {
     loadDepartments();
   }, []);
 
+  useLiveSync(async () => {
+    const departmentList = await pcmsApi.departments();
+    setDepartmentRows(departmentList || []);
+  }, { enabled: !showDepartmentForm });
+
   const handleDepartmentChange = (field, value) => {
     setNewDepartment((current) => ({ ...current, [field]: value }));
   };
@@ -4263,7 +4302,7 @@ function AssetReturnPage() {
   };
 
   const loadReturns = async () => {
-    setLoading(true);
+    if (assignments.length === 0) setLoading(true);
     try {
       const records = await pcmsApi.assignments({ limit: 200 });
       setAssignments(records || []);
@@ -4278,6 +4317,11 @@ function AssetReturnPage() {
   useEffect(() => {
     loadReturns();
   }, []);
+
+  useLiveSync(async () => {
+    const records = await pcmsApi.assignments({ limit: 200 });
+    setAssignments(records || []);
+  }, { enabled: !returnAssignment });
 
   const openReturn = (assignment, source = "inspect") => {
     setMessage(null);
@@ -4797,6 +4841,10 @@ function EnhancedAssignmentsPage() {
     const assets = await Promise.resolve(pcmsApi.assets({ limit: 200 }));
     setAssetsList(assets || []);
   };
+
+  useLiveSync(async () => {
+    await Promise.all([loadAssignments(filters), loadAssets()]);
+  }, { enabled: !showForm && !selectedAssignment && !verificationAssignment });
 
   useEffect(() => {
     async function load() {
@@ -8339,9 +8387,14 @@ function TransferPage() {
       .catch(() => {});
   }, []);
 
+  useLiveSync(async () => {
+    const history = await pcmsApi.ocrHistory({ limit: 6 });
+    setOcrHistory(history || []);
+  }, { enabled: !isScanning });
+
   const loadTransfers = async (nextFilters = filters) => {
     try {
-      setLoading(true);
+      if (transfers.length === 0) setLoading(true);
       const [list, stats] = await Promise.allSettled([
         pcmsApi.fetchTransfers({ ...nextFilters, limit: 200 }),
         pcmsApi.transferDashboard(),
@@ -8354,6 +8407,15 @@ function TransferPage() {
       setLoading(false);
     }
   };
+
+  useLiveSync(async () => {
+    const [list, stats] = await Promise.allSettled([
+      pcmsApi.fetchTransfers({ ...filters, limit: 200 }),
+      pcmsApi.transferDashboard(),
+    ]);
+    if (list.status === "fulfilled") setTransfers(list.value || []);
+    if (stats.status === "fulfilled") setDashboard(stats.value || null);
+  }, { enabled: !showForm && !executeDialog.open && !selectedTransfer });
 
   const selectedAsset = assetsList.find(
     (asset) => String(asset.id) === String(formData.asset_id),
@@ -9504,7 +9566,7 @@ function MaintenancePage({ currentUser }) {
 
   const loadRecords = async () => {
     try {
-      setLoading(true);
+      if (records.length === 0) setLoading(true);
       const response = await pcmsApi.fetchMaintenanceRecords();
       setRecords(response || []);
     } catch (err) {
@@ -9516,7 +9578,7 @@ function MaintenancePage({ currentUser }) {
 
   const loadPredictions = async () => {
     try {
-      setLoadingPredictions(true);
+      if (predictions.length === 0) setLoadingPredictions(true);
       const response = await pcmsApi.fetchMaintenancePredictions();
       setPredictions(response || []);
     } catch (err) {
@@ -9525,6 +9587,17 @@ function MaintenancePage({ currentUser }) {
       setLoadingPredictions(false);
     }
   };
+
+  useLiveSync(async () => {
+    const [recordsResponse, predictionsResponse, assetsResponse] = await Promise.allSettled([
+      pcmsApi.fetchMaintenanceRecords(),
+      pcmsApi.fetchMaintenancePredictions(),
+      pcmsApi.assets({ limit: 200 }),
+    ]);
+    if (recordsResponse.status === "fulfilled") setRecords(recordsResponse.value || []);
+    if (predictionsResponse.status === "fulfilled") setPredictions(predictionsResponse.value || []);
+    if (assetsResponse.status === "fulfilled") setAssetsList(assetsResponse.value || []);
+  }, { enabled: !showForm && !selectedRecord && !maintenanceScannerOpen });
 
   const scheduleFromPrediction = (prediction) => {
     setFormData({
@@ -10149,7 +10222,7 @@ function DamagePage() {
 
   const loadReports = async () => {
     try {
-      setLoading(true);
+      if (reports.length === 0) setLoading(true);
       const response = await pcmsApi.fetchDamageReports();
       setReports(response || []);
     } catch (err) {
@@ -10167,6 +10240,15 @@ function DamagePage() {
       setError(err.message);
     }
   };
+
+  useLiveSync(async () => {
+    const [reportsResponse, assetsResponse] = await Promise.allSettled([
+      pcmsApi.fetchDamageReports(),
+      pcmsApi.assets({ limit: 200 }),
+    ]);
+    if (reportsResponse.status === "fulfilled") setReports(reportsResponse.value || []);
+    if (assetsResponse.status === "fulfilled") setAssets(assetsResponse.value || []);
+  }, { enabled: !showForm && !selectedReport && !damageScannerOpen });
 
   const handlePhotoSelect = (file) => {
     if (file) {
@@ -10850,7 +10932,7 @@ function SuppliesPage({ currentUser }) {
     }
 
     try {
-      setLoading(true);
+      if (supplies.length === 0) setLoading(true);
       const response = await pcmsApi.fetchSupplies({
         department_id: departmentId,
       });
@@ -10891,6 +10973,23 @@ function SuppliesPage({ currentUser }) {
       setError(err.message);
     }
   };
+
+  useLiveSync(async () => {
+    const [suppliesResponse, requestsResponse, movementsResponse] = await Promise.allSettled([
+      selectedDepartmentId
+        ? pcmsApi.fetchSupplies({ department_id: selectedDepartmentId })
+        : Promise.resolve([]),
+      pcmsApi.fetchSupplyRequestQueue({ limit: 200, ...requestFilters }),
+      pcmsApi.fetchStockMovements({
+        limit: 200,
+        department_id: requestFilters.department_id,
+        movement_type: "out",
+      }),
+    ]);
+    if (suppliesResponse.status === "fulfilled") setSupplies(suppliesResponse.value || []);
+    if (requestsResponse.status === "fulfilled") setSupplyRequests(requestsResponse.value || []);
+    if (movementsResponse.status === "fulfilled") setAllocations(movementsResponse.value || []);
+  }, { enabled: !showForm && !showMovement && !editingSupply && !deletingSupply });
 
   const handleAddSupply = async (e) => {
     e.preventDefault();
@@ -12733,7 +12832,7 @@ function PurchasePage({ currentUser }) {
 
   const loadRequests = async () => {
     try {
-      setLoading(true);
+      if (requests.length === 0) setLoading(true);
       const response = await pcmsApi.fetchPurchaseRequests();
       setRequests(response?.data || []);
     } catch (err) {
@@ -12742,6 +12841,11 @@ function PurchasePage({ currentUser }) {
       setLoading(false);
     }
   };
+
+  useLiveSync(async () => {
+    const response = await pcmsApi.fetchPurchaseRequests();
+    setRequests(response?.data || []);
+  }, { enabled: !showForm });
 
   const handleCreateRequest = async (e) => {
     e.preventDefault();
@@ -12975,7 +13079,7 @@ function GatePassPage() {
 
   const loadPasses = async () => {
     try {
-      setLoading(true);
+      if (passes.length === 0) setLoading(true);
       const response = await pcmsApi.fetchGatePasses();
       setPasses(response?.data || []);
     } catch (err) {
@@ -12984,6 +13088,15 @@ function GatePassPage() {
       setLoading(false);
     }
   };
+
+  useLiveSync(async () => {
+    const [passesResponse, assetsResponse] = await Promise.all([
+      pcmsApi.fetchGatePasses(),
+      pcmsApi.assets({ limit: 200 }),
+    ]);
+    setPasses(passesResponse?.data || []);
+    setAssetsList(assetsResponse || []);
+  }, { enabled: !showForm && !showScanner });
 
   const handleCreatePass = async (e) => {
     e.preventDefault();
@@ -13351,7 +13464,7 @@ function AuditPage({ currentUser }) {
 
   const loadAudits = async () => {
     try {
-      setLoading(true);
+      if (audits.length === 0) setLoading(true);
       const response = await pcmsApi.fetchAudits();
       setAudits(response || []);
     } catch (err) {
@@ -13360,6 +13473,17 @@ function AuditPage({ currentUser }) {
       setLoading(false);
     }
   };
+
+  useLiveSync(async () => {
+    const [auditsResponse, departmentsResponse, assetsResponse] = await Promise.allSettled([
+      pcmsApi.fetchAudits(),
+      pcmsApi.departments(),
+      pcmsApi.assets({ limit: 200 }),
+    ]);
+    if (auditsResponse.status === "fulfilled") setAudits(auditsResponse.value || []);
+    if (departmentsResponse.status === "fulfilled") setDepartments(departmentsResponse.value || []);
+    if (assetsResponse.status === "fulfilled") setAssetsList(assetsResponse.value || []);
+  }, { enabled: !showForm && !showScan && !showMobileScan && !selectedAudit && !editAudit && !deleteAudit });
 
   const handleCreateAudit = async (e) => {
     e.preventDefault();
@@ -14971,7 +15095,7 @@ function MonitoringPage({ currentUser }) {
 
   const loadAnomalies = async () => {
     try {
-      setLoading(true);
+      if (anomalies.length === 0) setLoading(true);
       const [response, summaryResponse] = await Promise.all([
         pcmsApi.fetchAnomalies(),
         pcmsApi.fetchAnomalySummary(),
@@ -14997,6 +15121,15 @@ function MonitoringPage({ currentUser }) {
       setLoading(false);
     }
   };
+
+  useLiveSync(async () => {
+    const [response, summaryResponse] = await Promise.all([
+      pcmsApi.fetchAnomalies(),
+      pcmsApi.fetchAnomalySummary(),
+    ]);
+    setAnomalies(response || []);
+    setSummaryData(summaryResponse || null);
+  }, { enabled: !selectedAnomaly && !analysisRunning });
 
   const handleResolveAnomaly = async (id) => {
     try {
@@ -15745,6 +15878,12 @@ function ReportsPage() {
   const [selectedReport, setSelectedReport] = useState(null);
   const reportRef = useRef(null);
 
+  useLiveSync(async () => {
+    if (!selectedReport) return;
+    const response = await pcmsApi.generateReport(selectedReport);
+    setReportData(response?.data || response || {});
+  }, { enabled: !!selectedReport, intervalMs: 60000 });
+
   const reports = [
     {
       id: "audit-summary",
@@ -15844,7 +15983,7 @@ function ReportsPage() {
 
   const handleGenerateReport = async (reportType) => {
     try {
-      setLoading(true);
+      if (!reportData) setLoading(true);
       setError(null);
       const response = await pcmsApi.generateReport(reportType);
       const payload = response?.data || response || {};
@@ -16018,6 +16157,11 @@ function NotificationsPage({ onNavigate }) {
     };
   }, []);
 
+  useLiveSync(async () => {
+    const response = await pcmsApi.notifications();
+    setItems(response?.data || []);
+  });
+
   const handleNotificationClick = async (item) => {
     if (item && !item.read && item.source && item.id) {
       try {
@@ -16131,11 +16275,15 @@ const USER_ROLES = [
   "System Administrator",
   "Property Custodian",
   "PPMO Staff",
+  "OIC",
   "Department Head",
+  "Recommending Approver",
   "Requester",
-  "President",
-  "CEO",
+  "President / CEO",
 ];
+
+const normalizeManagedUserRole = (role) =>
+  role === "President" || role === "CEO" ? "President / CEO" : role || "";
 
 function UsersPage() {
   const [users, setUsers] = useState([]);
@@ -16183,7 +16331,7 @@ function UsersPage() {
 
   const loadUsers = async () => {
     try {
-      setLoading(true);
+      if (users.length === 0) setLoading(true);
       const response = await pcmsApi.users();
       setUsers(response || []);
     } catch (err) {
@@ -16192,6 +16340,15 @@ function UsersPage() {
       setLoading(false);
     }
   };
+
+  useLiveSync(async () => {
+    const [usersResponse, departmentsResponse] = await Promise.all([
+      pcmsApi.users(),
+      pcmsApi.departments(),
+    ]);
+    setUsers(usersResponse || []);
+    setDepartmentsList(departmentsResponse || []);
+  }, { enabled: !showInviteForm && !editingUser });
 
   const handleInvite = async (e) => {
     e.preventDefault();
@@ -16266,7 +16423,7 @@ function UsersPage() {
       email: user.email || "",
       password: "",
       password_confirmation: "",
-      role: user.role || "",
+      role: normalizeManagedUserRole(user.role),
       department: user.department || "",
     });
   };
@@ -16506,9 +16663,14 @@ function UsersPage() {
 
       {editingUser && (
         <div className="modal-overlay" role="dialog" aria-modal="true">
-          <div className="modal-card" style={{ maxWidth: 520 }}>
+          <div className="modal-card user-form-modal user-form-modal--compact">
             <div className="modal-header">
-              <h3>Edit User</h3>
+              <div>
+                <h3>Edit User</h3>
+                <p className="modal-subtitle">
+                  Update account details and permissions.
+                </p>
+              </div>
               <button
                 className="icon-button"
                 onClick={() => setEditingUser(null)}
@@ -16813,29 +16975,23 @@ function ActivityPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  useEffect(() => {
-    let mounted = true;
-    const loadLogs = async () => {
-      try {
-        const response = await pcmsApi.activityLogs({ limit: 100 });
-        if (mounted) {
-          setLogs(response || []);
-          setError(null);
-        }
-      } catch (err) {
-        if (mounted) setError(err?.message || "Unable to load activity logs.");
-      } finally {
-        if (mounted) setLoading(false);
-      }
-    };
+  const loadLogs = async () => {
+    try {
+      const response = await pcmsApi.activityLogs({ limit: 100 });
+      setLogs(response || []);
+      setError(null);
+    } catch (err) {
+      setError(err?.message || "Unable to load activity logs.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
+  useEffect(() => {
     loadLogs();
-    const interval = window.setInterval(loadLogs, 30000);
-    return () => {
-      mounted = false;
-      window.clearInterval(interval);
-    };
   }, []);
+
+  useLiveSync(loadLogs);
 
   const handleExport = () => {
     exportRowsToCsv("activity-logs.csv", logs, [
@@ -16901,9 +17057,25 @@ function SettingsPage() {
   const [values, setValues] = useState(null);
   const [message, setMessage] = useState(null);
   const [error, setError] = useState(null);
-  useEffect(() => { pcmsApi.systemSettings().then((response) => setValues(response.data)).catch((err) => setError(err.message)); }, []);
+  const savedValuesRef = useRef(null);
+  useEffect(() => {
+    pcmsApi.systemSettings()
+      .then((response) => {
+        savedValuesRef.current = JSON.stringify(response.data);
+        setValues(response.data);
+      })
+      .catch((err) => setError(err.message));
+  }, []);
+  useLiveSync(async () => {
+    const response = await pcmsApi.systemSettings();
+    const nextValues = response.data;
+    if (JSON.stringify(values) === savedValuesRef.current) {
+      savedValuesRef.current = JSON.stringify(nextValues);
+      setValues(nextValues);
+    }
+  }, { enabled: !!values && JSON.stringify(values) === savedValuesRef.current });
   const save = async () => {
-    try { setError(null); const response = await pcmsApi.updateSystemSettings(values); setValues(response.data); setMessage("System settings saved."); }
+    try { setError(null); const response = await pcmsApi.updateSystemSettings(values); savedValuesRef.current = JSON.stringify(response.data); setValues(response.data); setMessage("System settings saved."); }
     catch (err) { setError(err.message); }
   };
   if (!values) return <ModulePage title="Settings" subtitle="Loading system configuration…" icon={Settings}><div className="loading-card">Loading settings…</div></ModulePage>;

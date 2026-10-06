@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { pcmsApi } from '../services/api.js';
+import useLiveSync from '../hooks/useLiveSync.js';
 import ExecutiveApprovalCard from './ExecutiveApprovalCard.jsx';
 import SuccessModal from './SuccessModal.jsx';
 import { AlertTriangle, CheckCircle2, Loader2 } from 'lucide-react';
@@ -17,7 +18,7 @@ export default function ExecutiveApprovalQueue() {
 
   const load = async () => {
     try {
-      setLoading(true);
+      if (items.length === 0) setLoading(true);
       setError(null);
       const data = await pcmsApi.pendingApprovals();
       setItems(data?.data || data || []);
@@ -32,6 +33,11 @@ export default function ExecutiveApprovalQueue() {
   useEffect(() => { 
     load();
   }, []);
+
+  useLiveSync(async () => {
+    const data = await pcmsApi.pendingApprovals();
+    setItems(data?.data || data || []);
+  }, { enabled: !actionInProgress && !bulkInProgress });
 
   // Drop selections for items that are no longer in the queue (e.g. after a refresh)
   useEffect(() => {
@@ -194,6 +200,7 @@ export default function ExecutiveApprovalQueue() {
           <div className="form-message error">
             <AlertTriangle size={18} />
             {error}
+            <button className="secondary-button" type="button" onClick={load}>Retry</button>
           </div>
         )}
         

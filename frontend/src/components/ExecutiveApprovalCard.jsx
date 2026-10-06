@@ -22,8 +22,8 @@ export default function ExecutiveApprovalCard({ item, onApprove, onReject, onRev
         <div className="amount">{item.total_amount ? `PHP ${Number(item.total_amount).toLocaleString()}` : item.estimated_cost ? `PHP ${Number(item.estimated_cost).toLocaleString()}` : '-'}</div>
         <div className="actions">
           <button className="primary-button" disabled={isLoading} onClick={() => onApprove && onApprove(item)}>{isLoading ? 'Working…' : 'Approve'}</button>
-          <button className="danger-button" disabled={isLoading} onClick={() => onReject && onReject(item)}>Reject</button>
-          <button className="warning-button" disabled={isLoading} onClick={() => onRevision && onRevision(item)}>Revision</button>
+          <button className="danger-button" disabled={isLoading} onClick={() => onReject && onReject(item)}>{isLoading ? 'Working…' : 'Reject'}</button>
+          <button className="warning-button" disabled={isLoading} onClick={() => onRevision && onRevision(item)}>{isLoading ? 'Working…' : 'Revision'}</button>
         </div>
       </div>
     </article>

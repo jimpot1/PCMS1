@@ -36,6 +36,7 @@ export default function PurchaseWorkflowMonitor({ currentUser }) {
   const [departments, setDepartments] = useState([]);
   const [filters, setFilters] = useState({ status: 'all', department_id: '', request_type: '', current_stage: '', date_from: '', date_to: '', search: '' });
   const [loading, setLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState(null);
   const [notice, setNotice] = useState(null);
   const [selected, setSelected] = useState(null);
@@ -45,7 +46,8 @@ export default function PurchaseWorkflowMonitor({ currentUser }) {
   const canDelete = currentUser?.role === 'System Administrator';
 
   const load = async () => {
-    setLoading(true);
+    if (items.length === 0) setLoading(true);
+    else setIsRefreshing(true);
     setError(null);
     try {
       const query = {
@@ -61,6 +63,7 @@ export default function PurchaseWorkflowMonitor({ currentUser }) {
       setError(err.message || 'Unable to load purchase workflow monitor.');
     } finally {
       setLoading(false);
+      setIsRefreshing(false);
     }
   };
 
@@ -100,7 +103,7 @@ export default function PurchaseWorkflowMonitor({ currentUser }) {
           <h1>Purchase Workflow</h1>
           <p>{activeTab === 'monitor' ? 'Monitor the shared request workflow and inspect every approval and release record.' : 'Process purchase order receipts and quality checks'}</p>
         </div>
-        {activeTab === 'monitor' && <button className="secondary-button" type="button" onClick={load}><RefreshCw size={15} /> Refresh data</button>}
+        {activeTab === 'monitor' && <button className="secondary-button" type="button" onClick={load} disabled={isRefreshing}><RefreshCw size={15} className={isRefreshing ? 'spin' : ''} /> {isRefreshing ? 'Refreshing…' : 'Refresh data'}</button>}
       </section>
 
       {/* Tab Switcher */}
@@ -150,7 +153,8 @@ export default function PurchaseWorkflowMonitor({ currentUser }) {
         </form>
       </div>
       <div className="panel workflow-table-panel">
-        {loading ? <div className="loading-state">Loading workflow records...</div> : items.length === 0 ? <div className="workflow-empty-state"><div className="workflow-empty-icon"><Search size={20} /></div><h3>No requests found</h3><p>Try changing the filters or search term.</p><button className="secondary-button" type="button" onClick={resetFilters}>Reset filters</button></div> : <div className="table-responsive workflow-table-scroll"><table className="data-table workflow-table"><thead><tr><th>Request Number</th><th>Requester</th><th>Department</th><th>Type</th><th className="numeric">Total Amount</th><th>Current Stage</th><th>Status</th><th>Date Submitted</th><th>Current Approver</th><th className="actions-heading">Actions</th></tr></thead><tbody>{items.map((item) => <tr key={item.id}><td className="font-mono">{item.request_number || `PR-${item.id}`}</td><td className="truncate-cell" title={displayName(item)}>{displayName(item)}</td><td className="truncate-cell" title={item.department?.name || item.department_name || '-'}>{item.department?.name || item.department_name || '-'}</td><td>{item.request_type || '-'}</td><td className="numeric">PHP {Number(item.total_amount || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td><td><span className="stage-badge">{stageLabel(item.current_stage)}</span></td><td><span className={`status-badge status-${item.status || 'pending'}`}>{item.status || '-'}</span></td><td>{item.created_at ? new Date(item.created_at).toLocaleDateString() : '-'}</td><td className="truncate-cell" title={item.workflow?.next_approver?.name || item.workflow?.next_approver_role || '-'}>{item.workflow?.next_approver?.name || item.workflow?.next_approver_role || '-'}</td><td className="actions-cell">{actionButtons(item)}</td></tr>)}</tbody></table></div>}
+        {isRefreshing && <div className="inline-refresh-status" role="status" aria-live="polite"><RefreshCw size={14} className="spin" /> Updating workflow records…</div>}
+        {loading && items.length === 0 ? <div className="loading-state">Loading workflow records...</div> : items.length === 0 ? <div className="workflow-empty-state"><div className="workflow-empty-icon"><Search size={20} /></div><h3>No requests found</h3><p>Try changing the filters or search term.</p><button className="secondary-button" type="button" onClick={resetFilters}>Reset filters</button></div> : <div className="table-responsive workflow-table-scroll"><table className="data-table workflow-table"><thead><tr><th>Request Number</th><th>Requester</th><th>Department</th><th>Type</th><th className="numeric">Total Amount</th><th>Current Stage</th><th>Status</th><th>Date Submitted</th><th>Current Approver</th><th className="actions-heading">Actions</th></tr></thead><tbody>{items.map((item) => <tr key={item.id}><td className="font-mono">{item.request_number || `PR-${item.id}`}</td><td className="truncate-cell" title={displayName(item)}>{displayName(item)}</td><td className="truncate-cell" title={item.department?.name || item.department_name || '-'}>{item.department?.name || item.department_name || '-'}</td><td>{item.request_type || '-'}</td><td className="numeric">PHP {Number(item.total_amount || 0).toLocaleString('en-PH', { minimumFractionDigits: 2 })}</td><td><span className="stage-badge">{stageLabel(item.current_stage)}</span></td><td><span className={`status-badge status-${item.status || 'pending'}`}>{item.status || '-'}</span></td><td>{item.created_at ? new Date(item.created_at).toLocaleDateString() : '-'}</td><td className="truncate-cell" title={item.workflow?.next_approver?.name || item.workflow?.next_approver_role || '-'}>{item.workflow?.next_approver?.name || item.workflow?.next_approver_role || '-'}</td><td className="actions-cell">{actionButtons(item)}</td></tr>)}</tbody></table></div>}
       </div>
       {selected && <PurchaseRequestDetails request={selected} onClose={() => setSelected(null)} onPrint={() => printPurchaseRequest(selected)} onEdit={canModify(selected) ? () => { setEditTarget(selected); setSelected(null); } : null} onDelete={canDelete && canModify(selected) ? () => { setDeleteTarget(selected); setSelected(null); } : null} />}
       {editTarget && <RequestEditModal request={editTarget} departments={departments} onClose={() => setEditTarget(null)} onSaved={() => refreshAfterAction('Purchase request updated.')} />}

@@ -44,7 +44,7 @@ class PurchaseRequestController extends Controller
             ->when($request->boolean('mine') || $request->user()?->role === 'Requester', fn ($query) => $query->where('requested_by', $request->user()?->id))
             ->when($request->user()?->role === 'Department Head', fn ($query) => $query->where('department_id', $this->departmentIdForUser($request->user())))
             ->when($request->user()?->role === 'Recommending Approver', fn ($query) => $query->where('current_stage', 'recommending_approver')->where('status', 'pending'))
-            ->when(in_array($request->user()?->role, ['President', 'CEO'], true), fn ($query) => $query->where('current_stage', 'president')->where('status', 'pending'))
+            ->when(in_array($request->user()?->role, ['President / CEO', 'President', 'CEO'], true), fn ($query) => $query->where('current_stage', 'president')->where('status', 'pending'))
             ->when(
                 in_array($request->user()?->role, ['PPMO Staff', 'Property Custodian', 'OIC'], true)
                     && ($request->filled('current_stage') || $request->filled('status')),
@@ -1523,7 +1523,7 @@ class PurchaseRequestController extends Controller
             'department_head' => ['Department Head'],
             'recommending_approver' => ['Recommending Approver'],
             'property_custodian' => ['Property Custodian', 'OIC'],
-            'president' => ['President', 'CEO'],
+            'president' => ['President / CEO', 'President', 'CEO'],
         ];
 
         return isset($stageRoleMap[$stage]) && in_array($role, $stageRoleMap[$stage]);
@@ -1537,6 +1537,7 @@ class PurchaseRequestController extends Controller
             'Property Custodian' => 'property_custodian',
             'OIC' => 'property_custodian',
             'PPMO Staff' => 'ppmo_staff',
+            'President / CEO' => 'president',
             'President' => 'president',
             'CEO' => 'president',
         ];
@@ -2677,9 +2678,9 @@ HTML;
     protected function getAuthorizedApproverForRequest(PurchaseRequest $purchaseRequest): ?User
     {
         return User::query()
-            ->whereIn('role', ['CEO', 'President'])
+            ->whereIn('role', ['President / CEO', 'CEO', 'President'])
             ->where('status', 'active')
-            ->orderByRaw("CASE role WHEN 'CEO' THEN 1 WHEN 'President' THEN 2 ELSE 3 END")
+            ->orderByRaw("CASE role WHEN 'President / CEO' THEN 1 WHEN 'CEO' THEN 2 WHEN 'President' THEN 3 ELSE 4 END")
             ->first();
     }
 

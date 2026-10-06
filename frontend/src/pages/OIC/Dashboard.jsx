@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { CheckCircle2, Eye, Package, PackageCheck, FileText, Shield, ShieldCheck, ArrowRight, RefreshCw } from 'lucide-react';
 import { pcmsApi } from '../../services/api.js';
+import useLiveSync from '../../hooks/useLiveSync.js';
 import SuccessModal from '../../components/SuccessModal.jsx';
 
 export default function OicDashboard() {
@@ -16,7 +17,7 @@ export default function OicDashboard() {
 
   const loadQueue = async () => {
     try {
-      setLoading(true);
+      if (queue.purchaseRequests.length === 0 && queue.gatePasses.length === 0) setLoading(true);
       const data = await pcmsApi.oicReleaseQueue();
       setQueue({
         purchaseRequests: data.purchaseRequests || [],
@@ -33,6 +34,15 @@ export default function OicDashboard() {
   useEffect(() => {
     loadQueue();
   }, []);
+
+  useLiveSync(async () => {
+    const data = await pcmsApi.oicReleaseQueue();
+    setQueue({
+      purchaseRequests: data.purchaseRequests || [],
+      gatePasses: data.gatePasses || [],
+    });
+    setError(null);
+  }, { enabled: !selectedItem && !processingId });
 
   const queueItems = useMemo(() => {
     return [

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Upload, Loader2, ClipboardList, Eye, Camera, X, Printer, Download, PackageCheck } from 'lucide-react';
 import { pcmsApi } from '../../services/api.js';
+import useLiveSync from '../../hooks/useLiveSync.js';
 import { TableSkeleton } from '../../components/TableSkeleton.jsx';
 import { LIFECYCLE_STATE_LABELS, resolveLifecycleState } from '../../components/PurchaseWorkflowTimeline.jsx';
 import SuccessModal from '../../components/SuccessModal.jsx';
@@ -503,9 +504,29 @@ export default function ReceivingWorkflow() {
     loadPurchaseOrders();
   }, []);
 
+  useLiveSync(async () => {
+    const [propertyStageResponse, ppmoStageResponse] = await Promise.all([
+      pcmsApi.fetchPurchaseRequests({
+        current_stage: 'property_custodian',
+        status: 'approved',
+        request_type: 'purchase_order',
+        limit: 200,
+      }),
+      pcmsApi.fetchPurchaseRequests({
+        current_stage: 'ppmo_staff',
+        status: 'approved',
+        request_type: 'purchase_order',
+        limit: 200,
+      }),
+    ]);
+    setPoList([...propertyStageResponse, ...ppmoStageResponse].filter((po, index, list) =>
+      list.findIndex((item) => item.id === po.id) === index,
+    ));
+  }, { enabled: step === 'list' && !selectedPo && !processingId });
+
   const loadPurchaseOrders = async () => {
     try {
-      setLoading(true);
+      if (poList.length === 0) setLoading(true);
       setError(null);
 
       const [propertyStageResponse, ppmoStageResponse] = await Promise.all([

@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { Bell, ChevronDown } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { pcmsApi } from '../services/api.js';
+import useLiveSync from '../hooks/useLiveSync.js';
 import { ROLES, getRoleDisplayName } from '../services/roles.js';
 import ThemeToggle from './ThemeToggle.jsx';
 
@@ -43,12 +44,14 @@ export default function HeaderActions({ currentUser, onLogout }) {
     }
 
     let mounted = true;
+    let hasLoaded = false;
     async function load() {
-      setLoading(true);
+      if (!hasLoaded) setLoading(true);
       try {
         const data = await pcmsApi.notifications();
         if (!mounted) return;
         setNotifData(data || { data: [], unread_count: 0 });
+        hasLoaded = true;
       } catch (e) {
         // ignore
       } finally {
@@ -61,18 +64,20 @@ export default function HeaderActions({ currentUser, onLogout }) {
       // refresh notifications as soon as any workflow action happens anywhere in the app
       load();
     }
-    const intv = setInterval(load, 15000);
     window.addEventListener('recommendingApproverDataChanged', onAppDataChanged);
     window.addEventListener('pcms:dataChanged', onAppDataChanged);
-    window.addEventListener('focus', onAppDataChanged);
     return () => {
       mounted = false;
-      clearInterval(intv);
       window.removeEventListener('recommendingApproverDataChanged', onAppDataChanged);
       window.removeEventListener('pcms:dataChanged', onAppDataChanged);
-      window.removeEventListener('focus', onAppDataChanged);
     };
   }, [currentUser?.role]);
+
+  useLiveSync(async () => {
+    if (currentUser?.role === ROLES.SYSTEM_ADMIN) return;
+    const data = await pcmsApi.notifications();
+    setNotifData(data || { data: [], unread_count: 0 });
+  }, { enabled: !!currentUser && currentUser.role !== ROLES.SYSTEM_ADMIN });
 
   useEffect(() => {
     function handleClickOutside(e) {

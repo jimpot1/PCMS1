@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Bell, Loader2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { pcmsApi } from '../services/api.js';
+import useLiveSync from '../hooks/useLiveSync.js';
 
 export default function UserNotificationsPage({ title = 'Notifications', subtitle = 'Your notifications.' }) {
   const [items, setItems] = useState([]);
@@ -27,6 +28,11 @@ export default function UserNotificationsPage({ title = 'Notifications', subtitl
       mounted = false;
     };
   }, []);
+
+  useLiveSync(async () => {
+    const response = await pcmsApi.notifications();
+    setItems(response?.data || []);
+  }, { enabled: !marking });
 
   const handleMarkAllRead = async () => {
     if (marking || items.length === 0) {

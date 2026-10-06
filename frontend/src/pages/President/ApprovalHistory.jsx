@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { pcmsApi } from '../../services/api.js';
+import useLiveSync from '../../hooks/useLiveSync.js';
 
 export default function ApprovalHistory() {
   const [requests, setRequests] = useState([]);
@@ -31,6 +32,12 @@ export default function ApprovalHistory() {
       mounted = false;
     };
   }, []);
+
+  useLiveSync(async () => {
+    const allRequests = await pcmsApi.purchaseRequests({ limit: 200 });
+    setRequests(Array.isArray(allRequests) ? allRequests : allRequests?.data || []);
+    setError(null);
+  });
 
   const historyItems = requests
     .filter((request) => {

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { BarChart3, Clock, Loader2, AlertTriangle } from 'lucide-react';
 import { pcmsApi } from '../../services/api.js';
+import useLiveSync from '../../hooks/useLiveSync.js';
 
 export default function DepartmentAnalyticsPage() {
   const [analytics, setAnalytics] = useState(null);
@@ -29,6 +30,12 @@ export default function DepartmentAnalyticsPage() {
     loadAnalytics();
     return () => { mounted = false; };
   }, []);
+
+  useLiveSync(async () => {
+    const data = await pcmsApi.departmentHeadDashboard();
+    setAnalytics(data || null);
+    setError(null);
+  });
 
   const formatCurrency = (value) => new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP' }).format(Number(value || 0));
 

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { AlertTriangle, Loader2, ShieldCheck } from 'lucide-react';
 import ReviewQueue from '../../components/ReviewQueue.jsx';
 import { pcmsApi } from '../../services/api.js';
+import useLiveSync from '../../hooks/useLiveSync.js';
 
 export default function ValidationAnomalies() {
   const [requests, setRequests] = useState([]);
@@ -41,6 +42,21 @@ export default function ValidationAnomalies() {
     loadAnomalies();
     return () => { mounted = false; };
   }, []);
+
+  useLiveSync(async () => {
+    const source = await pcmsApi.purchaseRequests({ limit: 200 });
+    setRequests((Array.isArray(source) ? source : []).filter((request) => {
+      const statuses = [
+        request.validation_status,
+        request.budget_validation_status,
+        request.anomaly_status,
+        request.technical_status,
+      ].map((status) => String(status || '').toLowerCase());
+      return statuses.some((status) =>
+        status && !['passed', 'approved', 'not_applicable'].includes(status),
+      );
+    }));
+  });
 
   return (
     <section className="recommending-panel-card">

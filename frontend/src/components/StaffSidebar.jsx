@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import { pcmsApi } from '../services/api.js';
+import useLiveSync from '../hooks/useLiveSync.js';
 import { hasPermission } from '../services/roles.js';
 import {
   Activity,
@@ -116,12 +117,10 @@ export default function StaffSidebar({ currentUser, onLogout, collapsed, mobileO
     };
 
     refreshAnomalyCount();
-    const interval = setInterval(refreshAnomalyCount, 30000);
     window.addEventListener('pcms:anomaly-data-changed', refreshAnomalyCount);
 
     return () => {
       active = false;
-      clearInterval(interval);
       window.removeEventListener('pcms:anomaly-data-changed', refreshAnomalyCount);
     };
   }, [currentUser?.role]);
@@ -149,15 +148,34 @@ export default function StaffSidebar({ currentUser, onLogout, collapsed, mobileO
     };
 
     refreshQueueCounts();
-    const interval = setInterval(refreshQueueCounts, 30000);
     window.addEventListener('pcms:dataChanged', refreshQueueCounts);
 
     return () => {
       active = false;
-      clearInterval(interval);
       window.removeEventListener('pcms:dataChanged', refreshQueueCounts);
     };
   }, [currentUser?.role]);
+
+  useLiveSync(async () => {
+    if (currentUser && hasPermission(currentUser.role, 'canViewReports')) {
+      const summary = await pcmsApi.fetchAnomalySummary();
+      setUnresolvedAnomalyCount(Math.max(0, Number(summary?.open_unresolved || 0)));
+    }
+  }, { enabled: !!currentUser && hasPermission(currentUser.role, 'canViewReports') });
+
+  useLiveSync(async () => {
+    if (!currentUser) return;
+    const [assignmentResult, maintenanceResult, releaseResult] = await Promise.allSettled([
+      pcmsApi.assetAssignmentQueue(),
+      pcmsApi.fetchMaintenancePredictions(),
+      pcmsApi.ppmoReleaseQueue(),
+    ]);
+    setQueueCounts({
+      assignments: assignmentResult.status === 'fulfilled' && Array.isArray(assignmentResult.value) ? assignmentResult.value.length : 0,
+      maintenance: maintenanceResult.status === 'fulfilled' && Array.isArray(maintenanceResult.value) ? maintenanceResult.value.length : 0,
+      release: releaseResult.status === 'fulfilled' && Array.isArray(releaseResult.value?.purchaseRequests) ? releaseResult.value.purchaseRequests.length : 0,
+    });
+  }, { enabled: !!currentUser });
 
   return (
     <>

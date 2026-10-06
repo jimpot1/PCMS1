@@ -17,7 +17,7 @@ class StockMovementController extends Controller
 {
     $validated = $request->validate([
         'supply_id' => ['required', 'exists:supplies,id'],
-        'movement_type' => ['required', 'in:in,write_off'],
+        'movement_type' => ['required', 'in:in,out,write_off'],
         'quantity' => ['required', 'integer', 'min:1'],
         'department_id' => ['required', 'exists:departments,id'],
         'write_off_category' => ['required_if:movement_type,write_off', 'nullable', 'in:damaged,expired,lost,unusable,other'],
@@ -42,7 +42,7 @@ if (! $supply) {
             ], 422);
         }
         // Guard against stock-out driving stock negative
-        if ($validated['movement_type'] === 'write_off' && $supply->stock < $validated['quantity']) {
+        if (in_array($validated['movement_type'], ['out', 'write_off'], true) && $supply->stock < $validated['quantity']) {
             DB::rollBack();
 
             return response()->json([

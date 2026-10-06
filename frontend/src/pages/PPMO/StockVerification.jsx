@@ -1,14 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { Package, Loader2, AlertTriangle, AlertCircle } from 'lucide-react';
 import { pcmsApi } from '../../services/api.js';
-import SuccessModal from '../../components/SuccessModal.jsx';
+import useLiveSync from '../../hooks/useLiveSync.js';
 
 export default function StockVerification() {
   const [supplies, setSupplies] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [verificationData, setVerificationData] = useState({});
-  const [success, setSuccess] = useState(null);
 
   useEffect(() => {
     const loadSupplies = async () => {
@@ -27,6 +26,11 @@ export default function StockVerification() {
 
     loadSupplies();
   }, []);
+
+  useLiveSync(async () => {
+    const data = await pcmsApi.supplies();
+    setSupplies(data?.data || data || []);
+  }, { enabled: Object.keys(verificationData).length === 0 });
 
   const handleQuantityChange = (supplyId, quantity) => {
     setVerificationData(prev => ({
@@ -48,9 +52,7 @@ export default function StockVerification() {
         return;
       }
 
-      // TODO: Call API to update verified quantities
-      setSuccess(`Verified stock for ${updates.length} item(s).`);
-      setVerificationData({});
+      setError('Stock verification is not connected to a persistence endpoint. No inventory quantities were changed.');
     } catch (err) {
       setError(`Failed to verify stock: ${err.message}`);
     }
@@ -82,7 +84,6 @@ export default function StockVerification() {
           <p>{error}</p>
         </div>
       )}
-      <SuccessModal message={success} />
 
       <div className="panel">
         <div className="info-box">

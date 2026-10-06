@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Activity, Loader2, AlertTriangle } from 'lucide-react';
 import { pcmsApi } from '../../services/api.js';
+import useLiveSync from '../../hooks/useLiveSync.js';
 
 export default function AuditTrail() {
   const [logs, setLogs] = useState([]);
@@ -28,6 +29,12 @@ export default function AuditTrail() {
     loadLogs();
     return () => { mounted = false; };
   }, []);
+
+  useLiveSync(async () => {
+    const data = await pcmsApi.activityLogs({ limit: 200 });
+    setLogs(Array.isArray(data) ? data : []);
+    setError(null);
+  });
 
   return (
     <section className="recommending-panel-card">

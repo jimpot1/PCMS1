@@ -11,7 +11,7 @@ use Illuminate\Validation\Rules\Password;
 
 class UserController
 {
-    private const ROLES = [
+    private const ROLE_OPTIONS = [
         'System Administrator',
         'Property Custodian',
         'PPMO Staff',
@@ -19,9 +19,19 @@ class UserController
         'Department Head',
         'Recommending Approver',
         'Requester',
-        'President',
-        'CEO',
+        'President / CEO',
     ];
+
+    private const LEGACY_ROLES = ['President', 'CEO'];
+
+    protected static function normalizeRole(?string $role): ?string
+    {
+        if (in_array($role, self::LEGACY_ROLES, true)) {
+            return 'President / CEO';
+        }
+
+        return $role;
+    }
 
     public function index(Request $request): JsonResponse
     {
@@ -50,13 +60,14 @@ class UserController
             'email' => ['required', 'email', 'max:160', 'unique:users,email'],
             'password' => ['nullable', 'string', 'confirmed', Password::min(8)->mixedCase()->numbers()->symbols()],
             'password_confirmation' => ['nullable', 'string'],
-            'role' => ['required', 'string', 'in:' . implode(',', self::ROLES)],
+            'role' => ['required', 'string', 'in:' . implode(',', [...self::ROLE_OPTIONS, ...self::LEGACY_ROLES])],
             'department' => ['nullable', 'string', 'max:160'],
         ], [
             'password.min' => 'Password must be at least 8 characters long.',
             'password.confirmed' => 'Password confirmation does not match.',
         ]);
 
+        $validated['role'] = self::normalizeRole($validated['role']);
         $temporaryPassword = $validated['password'] ?? Str::password(12, symbols: true);
         $fullName = trim("{$validated['first_name']} " . (($validated['middle_name'] ?? null) ? "{$validated['middle_name']} " : '') . $validated['last_name']);
 
@@ -94,7 +105,7 @@ class UserController
             'email' => ['sometimes', 'email', 'max:160', 'unique:users,email,' . $user->id],
             'password' => ['sometimes', 'nullable', 'string', 'confirmed', Password::min(8)->mixedCase()->numbers()->symbols()],
             'password_confirmation' => ['sometimes', 'nullable', 'string'],
-            'role' => ['sometimes', 'string', 'in:' . implode(',', self::ROLES)],
+            'role' => ['sometimes', 'string', 'in:' . implode(',', [...self::ROLE_OPTIONS, ...self::LEGACY_ROLES])],
             'department' => ['sometimes', 'nullable', 'string', 'max:160'],
             'status' => ['sometimes', 'in:active,inactive'],
         ], [
@@ -107,6 +118,10 @@ class UserController
             $middleName = array_key_exists('middle_name', $validated) ? $validated['middle_name'] : $user->middle_name;
             $lastName = $validated['last_name'] ?? $user->last_name;
             $validated['full_name'] = trim("{$firstName} " . ($middleName ? "{$middleName} " : '') . $lastName);
+        }
+
+        if (isset($validated['role'])) {
+            $validated['role'] = self::normalizeRole($validated['role']);
         }
 
         if (filled($validated['password'] ?? null)) {

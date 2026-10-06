@@ -66,6 +66,8 @@ class UserSeeder extends Seeder
             ]
         );
 
+        User::query()->whereIn('role', ['President', 'CEO'])->update(['role' => 'President / CEO']);
+
         User::updateOrCreate(
             ['email' => 'president@pcms.test'],
             [
@@ -73,28 +75,15 @@ class UserSeeder extends Seeder
                 'first_name' => 'System',
                 'middle_name' => null,
                 'last_name' => 'President',
-                'full_name' => 'System President',
+                'full_name' => 'System President / CEO',
                 'password_hash' => Hash::make('Password123!'),
-                'role' => 'President',
+                'role' => 'President / CEO',
                 'department' => null,
                 'status' => 'active',
             ]
         );
 
-        User::updateOrCreate(
-            ['email' => 'ceo@pcms.test'],
-            [
-                'employee_id' => 'CEO-001',
-                'first_name' => 'System',
-                'middle_name' => null,
-                'last_name' => 'CEO',
-                'full_name' => 'System CEO',
-                'password_hash' => Hash::make('Password123!'),
-                'role' => 'CEO',
-                'department' => null,
-                'status' => 'active',
-            ]
-        );
+        User::query()->where('email', 'ceo@pcms.test')->update(['role' => 'President / CEO']);
 
         User::updateOrCreate(
             ['email' => 'recommender@pcms.test'],

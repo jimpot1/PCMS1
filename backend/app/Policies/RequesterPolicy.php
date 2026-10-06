@@ -28,6 +28,6 @@ class RequesterPolicy
 
     protected function isElevated(User $user): bool
     {
-        return in_array($user->role, ['Department Head', 'Property Custodian', 'PPMO Staff', 'President', 'CEO', 'System Administrator'], true);
+        return in_array($user->role, ['Department Head', 'Property Custodian', 'PPMO Staff', 'President / CEO', 'President', 'CEO', 'System Administrator'], true);
     }
 }

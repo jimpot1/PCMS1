@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { pcmsApi } from '../services/api.js';
 import { Loader2, BarChart3, Clock, TrendingUp, CheckCircle2 } from 'lucide-react';
+import useLiveSync from '../hooks/useLiveSync.js';
 
 const formatCurrency = (value) => {
   if (value == null || Number.isNaN(Number(value))) return 'PHP 0';
@@ -89,6 +90,41 @@ export default function ExecutiveAnalytics() {
       mounted = false;
     };
   }, []);
+
+  useLiveSync(async () => {
+    const [pendingResponse, requestsResponse] = await Promise.all([
+      pcmsApi.pendingApprovals(),
+      pcmsApi.purchaseRequests({ limit: 200 }),
+    ]);
+    const pendingCount = Array.isArray(pendingResponse)
+      ? pendingResponse.length
+      : pendingResponse?.data?.length || 0;
+    const requests = Array.isArray(requestsResponse)
+      ? requestsResponse
+      : requestsResponse?.data || [];
+    const departmentCounts = requests.reduce((counts, request) => {
+      const department = request.department_name || request.department || 'Unknown';
+      counts[department] = (counts[department] || 0) + 1;
+      return counts;
+    }, {});
+    setStats({
+      pending: pendingCount,
+      approved: requests.filter((request) => request.status === 'approved').length,
+      rejected: requests.filter((request) => request.status === 'rejected').length,
+      waitingRelease: requests.filter((request) => request.current_stage === 'property_custodian' && request.status === 'pending').length,
+      released: requests.filter((request) => request.status === 'released').length,
+      totalRequests: requests.length,
+    });
+    setTopDepartments(Object.entries(departmentCounts)
+      .map(([department, count]) => ({ department, count }))
+      .sort((left, right) => right.count - left.count)
+      .slice(0, 4));
+    setLatestApprovals(requests
+      .filter((request) => ['approved', 'rejected', 'released'].includes(request.status))
+      .sort((left, right) => new Date(right.updated_at || right.created_at).getTime() - new Date(left.updated_at || left.created_at).getTime())
+      .slice(0, 5));
+    setError(null);
+  });
 
   return (
     <section className="exec-analytics">

@@ -9,6 +9,14 @@ The setup works on localhost because:
 - Backend API runs on `http://127.0.0.1:8000`
 - Python services run on `localhost:5000` (anomaly) and `localhost:5002` (OCR)
 
+## Laravel Scheduler
+The backend registers an hourly anomaly analysis and daily maintenance reminders in `backend/routes/console.php`. The scheduler must be running for those jobs to execute.
+
+- Windows development: run `php artisan schedule:work` from the `backend` directory in one persistent terminal.
+- Linux/Hostinger: configure a cron job to run `php artisan schedule:run` from the `backend` directory every minute.
+
+Run only one scheduler instance per environment. The anomaly sweep uses an overlap lock to avoid concurrent duplicate runs.
+
 ## Changes Made
 
 ### 1. Frontend Configuration (Fixed)

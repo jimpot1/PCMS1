@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { AlertTriangle, Check, CheckCircle2, Eye, Loader2, RotateCcw, X } from 'lucide-react';
 import { pcmsApi } from '../../services/api.js';
+import useLiveSync from '../../hooks/useLiveSync.js';
 
 export default function PendingApprovals() {
   const [items, setItems] = useState([]);
@@ -11,7 +12,7 @@ export default function PendingApprovals() {
 
   const loadQueue = async () => {
     try {
-      setLoading(true);
+      if (items.length === 0) setLoading(true);
       setError(null);
       const data = await pcmsApi.departmentHeadApprovalQueue();
       setItems(data?.purchaseRequests || []);
@@ -26,6 +27,11 @@ export default function PendingApprovals() {
   useEffect(() => {
     loadQueue();
   }, []);
+
+  useLiveSync(async () => {
+    const data = await pcmsApi.departmentHeadApprovalQueue();
+    setItems(data?.purchaseRequests || []);
+  }, { enabled: !selectedItem && !actionInProgress });
 
   const handleApprove = async (item) => {
     try {

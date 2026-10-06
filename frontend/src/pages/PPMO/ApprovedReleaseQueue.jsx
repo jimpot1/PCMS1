@@ -4,6 +4,7 @@ import { assetQrCodeUrl, pcmsApi } from '../../services/api.js';
 import RequestEditModal from '../../components/RequestEditModal.jsx';
 import { TableSkeleton } from '../../components/TableSkeleton.jsx';
 import SuccessModal from '../../components/SuccessModal.jsx';
+import useLiveSync from '../../hooks/useLiveSync.js';
 
 function getReleaseErrorMessage(error) {
   const rawMessage = error?.message || 'Unable to release this item.';
@@ -31,7 +32,7 @@ export default function ApprovedReleaseQueue() {
 
   const loadQueue = async () => {
     try {
-      setLoading(true);
+      if (items.length === 0) setLoading(true);
       setError(null);
       const data = await pcmsApi.ppmoReleaseQueue();
       setItems(data?.purchaseRequests || []);
@@ -47,6 +48,11 @@ export default function ApprovedReleaseQueue() {
     loadQueue();
     pcmsApi.departments().then(setDepartments).catch(() => {});
   }, []);
+
+  useLiveSync(async () => {
+    const data = await pcmsApi.ppmoReleaseQueue();
+    setItems(data?.purchaseRequests || []);
+  }, { enabled: !processingId && !confirmTarget && !viewTarget && !editTarget });
 
   const openEdit = (item) => {
     setEditTarget(item);

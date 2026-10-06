@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { ClipboardList, Loader2, AlertTriangle } from 'lucide-react';
 import { Eye } from 'lucide-react';
 import { pcmsApi } from '../../services/api.js';
+import useLiveSync from '../../hooks/useLiveSync.js';
 
 export default function PendingReviews() {
   const [requests, setRequests] = useState([]);
@@ -34,6 +35,15 @@ export default function PendingReviews() {
 
     return () => { mounted = false; window.removeEventListener('recommendingApproverDataChanged', onDataChanged); };
   }, []);
+
+  useLiveSync(async () => {
+    const data = await pcmsApi.purchaseRequests({
+      current_stage: 'recommending_approver',
+      status: 'pending',
+      limit: 200,
+    });
+    setRequests(Array.isArray(data) ? data : []);
+  });
 
   const handleView = (request) => {
     navigate(`/recommending-approver/review/${request.id}`);

@@ -1,10 +1,11 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import DepartmentHeadStatCard from '../../components/DepartmentHeadStatCard.jsx';
 import QuickActionCard from '../../components/QuickActionCard.jsx';
 import DepartmentAnalytics from '../../components/DepartmentAnalytics.jsx';
 import RecentActivity from '../../components/RecentActivity.jsx';
 import { pcmsApi } from '../../services/api.js';
+import useLiveSync from '../../hooks/useLiveSync.js';
 import { CheckCircle2, Clock, Inbox, Loader2, RotateCw } from 'lucide-react';
 
 function formatCurrency(value) {
@@ -16,13 +17,15 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState({});
   const [error, setError] = useState(null);
+  const hasLoadedRef = useRef(false);
 
   const loadDashboard = useCallback(async () => {
     try {
-      setLoading(true);
+      if (!hasLoadedRef.current) setLoading(true);
       setError(null);
       const resp = await pcmsApi.departmentHeadDashboard();
       setData(resp || {});
+      hasLoadedRef.current = true;
     } catch (err) {
       setError(err.message || 'Failed to load dashboard');
     } finally {
@@ -34,9 +37,15 @@ export default function DashboardPage() {
     loadDashboard();
     const onChange = () => loadDashboard();
     window.addEventListener('departmentHeadDataChanged', onChange);
-    const poll = setInterval(() => loadDashboard(), 30000);
-    return () => { window.removeEventListener('departmentHeadDataChanged', onChange); clearInterval(poll); };
+    return () => { window.removeEventListener('departmentHeadDataChanged', onChange); };
   }, [loadDashboard]);
+
+  useLiveSync(async () => {
+    const response = await pcmsApi.departmentHeadDashboard();
+    setData(response || {});
+    hasLoadedRef.current = true;
+    setError(null);
+  });
 
   return (
     <>
@@ -67,9 +76,15 @@ export default function DashboardPage() {
           </div>
         </div>
         <div className="department-panel-body">
-          {error ? (
-            <div className="form-message error">{error}</div>
-          ) : loading || (data.pending_requests && data.pending_requests.length > 0) ? (
+          {error && <div className="form-message error">{error}<button className="secondary-button" type="button" onClick={loadDashboard}>Retry</button></div>}
+          {loading && !hasLoadedRef.current ? (
+            <div className="table-responsive">
+              <table className="data-table">
+                <thead><tr><th>Request Number</th><th>Requester</th><th>Department</th><th>Purpose</th><th>Amount</th><th>Submitted</th><th>Actions</th></tr></thead>
+                <tbody><tr><td colSpan="7" className="table-loading-row"><Loader2 size={20} className="spin" /><span>Loading pending requests...</span></td></tr></tbody>
+              </table>
+            </div>
+          ) : data.pending_requests && data.pending_requests.length > 0 ? (
             <div className="table-responsive">
               <table className="data-table">
                 <thead>
@@ -84,14 +99,7 @@ export default function DashboardPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {loading ? (
-                    <tr>
-                      <td colSpan="7" className="table-loading-row">
-                        <Loader2 size={20} className="spin" />
-                        <span>Loading pending requests...</span>
-                      </td>
-                    </tr>
-                  ) : data.pending_requests.map((item) => (
+                  {data.pending_requests.map((item) => (
                     <tr key={item.id}>
                       <td><strong>{item.request_number}</strong></td>
                       <td>{item.requester?.email || item.requested_by || '-'}</td>

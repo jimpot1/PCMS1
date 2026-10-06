@@ -398,7 +398,7 @@ class NotificationController
             'request_submitted', 'pending_approval' => match ($user?->role) {
                 'Department Head' => '/department-head/pending-approvals',
                 'Recommending Approver' => '/recommending-approver/review-queue',
-                'President', 'CEO' => '/president/approvals',
+                'President / CEO', 'President', 'CEO' => '/president/approvals',
                 'Property Custodian', 'OIC' => '/oic/approvals',
                 'PPMO Staff' => '/ppmo/approved-release-queue',
                 default => '/requester',

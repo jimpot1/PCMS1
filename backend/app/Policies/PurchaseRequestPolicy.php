@@ -11,7 +11,7 @@ class PurchaseRequestPolicy
     public function viewAny(User $user): bool
     {
         return $this->isSystemAdministrator($user)
-            || in_array($user->role, ['Requester', 'Department Head', 'Recommending Approver', 'Property Custodian', 'OIC', 'PPMO Staff', 'President', 'CEO'], true);
+            || in_array($user->role, ['Requester', 'Department Head', 'Recommending Approver', 'Property Custodian', 'OIC', 'PPMO Staff', 'President / CEO', 'President', 'CEO'], true);
     }
 
     public function view(User $user, PurchaseRequest $purchaseRequest): bool
@@ -30,7 +30,7 @@ class PurchaseRequestPolicy
 
         return match ($user->role) {
             'Recommending Approver' => $purchaseRequest->current_stage === 'recommending_approver' && $purchaseRequest->status === 'pending',
-            'President', 'CEO' => $purchaseRequest->current_stage === 'president' && $purchaseRequest->status === 'pending',
+            'President / CEO', 'President', 'CEO' => $purchaseRequest->current_stage === 'president' && $purchaseRequest->status === 'pending',
             'Property Custodian', 'OIC' => $purchaseRequest->current_stage === 'property_custodian' && $purchaseRequest->status === 'approved',
             'PPMO Staff' => $purchaseRequest->status === 'approved'
                 && ($purchaseRequest->workflow_destination === 'purchase_workflow'
@@ -73,11 +73,11 @@ class PurchaseRequestPolicy
                 && $this->sameDepartment($user, $purchaseRequest->department_id);
         }
 
-        return in_array($user->role, ['Recommending Approver', 'President', 'CEO'], true)
+        return in_array($user->role, ['Recommending Approver', 'President / CEO', 'President', 'CEO'], true)
             && $purchaseRequest->status === 'pending'
             && $purchaseRequest->current_stage === match ($user->role) {
                 'Recommending Approver' => 'recommending_approver',
-                'President', 'CEO' => 'president',
+                'President / CEO', 'President', 'CEO' => 'president',
             };
     }
 
@@ -99,7 +99,7 @@ class PurchaseRequestPolicy
             'Department Head' => $purchaseRequest->current_stage === 'department_head' && $this->sameDepartment($user, $purchaseRequest->department_id),
             'Recommending Approver' => $purchaseRequest->current_stage === 'recommending_approver',
             'Property Custodian', 'OIC' => $purchaseRequest->current_stage === 'property_custodian',
-            'President', 'CEO' => $purchaseRequest->current_stage === 'president',
+            'President / CEO', 'President', 'CEO' => $purchaseRequest->current_stage === 'president',
             default => false,
         };
     }

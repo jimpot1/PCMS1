@@ -1,12 +1,18 @@
 import React, { useEffect, useState } from 'react';
 import { Loader2, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { pcmsApi } from '../../services/api.js';
+import useLiveSync from '../../hooks/useLiveSync.js';
 
 export default function ApprovalQueue() {
   const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [filterStatus, setFilterStatus] = useState('all');
+
+  useLiveSync(async () => {
+    const data = await pcmsApi.departmentHeadApprovalQueue();
+    setRequests(data?.purchaseRequests || []);
+  });
 
   useEffect(() => {
     const loadQueue = async () => {

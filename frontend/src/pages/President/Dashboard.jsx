@@ -5,6 +5,7 @@ import ExecutiveStatCard from '../../components/ExecutiveStatCard.jsx';
 import ExecutiveAnalytics from '../../components/ExecutiveAnalytics.jsx';
 import ExecutiveApprovalQueue from '../../components/ExecutiveApprovalQueue.jsx';
 import { pcmsApi } from '../../services/api.js';
+import useLiveSync from '../../hooks/useLiveSync.js';
 
 export default function PresidentDashboard() {
   const navigate = useNavigate();
@@ -55,6 +56,24 @@ export default function PresidentDashboard() {
 
     loadStats();
   }, []);
+
+  useLiveSync(async () => {
+    const [pending, allRequests] = await Promise.all([
+      pcmsApi.pendingApprovals(),
+      pcmsApi.purchaseRequests({ limit: 200 }),
+    ]);
+    const pendingCount = Array.isArray(pending) ? pending.length : pending?.data?.length || 0;
+    const requests = Array.isArray(allRequests) ? allRequests : allRequests?.data || [];
+    setStats({
+      pending: pendingCount,
+      approved: requests.filter((request) => ['approved', 'released'].includes(request.status)).length,
+      modified: requests.filter((request) => request.status === 'pending' && request.current_stage === 'recommending_approver').length,
+      rejected: requests.filter((request) => request.status === 'rejected').length,
+      waiting_release: requests.filter((request) => request.current_stage === 'property_custodian' && request.status === 'pending').length,
+      completed: requests.filter((request) => request.status === 'released' || request.current_stage === 'released').length,
+    });
+    setError(null);
+  });
 
   if (loading) {
     return (

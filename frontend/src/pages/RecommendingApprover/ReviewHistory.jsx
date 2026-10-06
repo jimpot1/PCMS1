@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Loader2, AlertTriangle } from 'lucide-react';
 import { pcmsApi } from '../../services/api.js';
+import useLiveSync from '../../hooks/useLiveSync.js';
 
 export default function ReviewHistory() {
   const [historyItems, setHistoryItems] = useState([]);
@@ -31,6 +32,13 @@ export default function ReviewHistory() {
     loadHistory();
     return () => { mounted = false; };
   }, []);
+
+  useLiveSync(async () => {
+    const allRequests = await pcmsApi.recommendingApproverHistory();
+    const requests = Array.isArray(allRequests) ? allRequests : [];
+    setHistoryItems(requests.sort((a, b) => new Date(b.updated_at || b.created_at).getTime() - new Date(a.updated_at || a.created_at).getTime()));
+    setError(null);
+  });
 
   return (
     <section className="recommending-panel-card">

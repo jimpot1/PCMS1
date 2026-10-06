@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { PackageOpen, Loader2, AlertTriangle, CheckCircle2, PackageCheck } from 'lucide-react';
 import { pcmsApi } from '../../services/api.js';
+import useLiveSync from '../../hooks/useLiveSync.js';
 
 export default function ReceiveDeliveries() {
   const [gatePasses, setGatePasses] = useState([]);
@@ -27,6 +28,11 @@ export default function ReceiveDeliveries() {
 
     loadDeliveries();
   }, []);
+
+  useLiveSync(async () => {
+    const data = await pcmsApi.requesterGatePasses({ deliverable: true });
+    setGatePasses(data?.data || []);
+  }, { enabled: !selectedPass });
 
   const handleReceiveDelivery = async (id) => {
     try {

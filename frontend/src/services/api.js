@@ -64,6 +64,7 @@ async function request(path, options = {}) {
     `${API_BASE_URL}${path}`,
     {
       ...options,
+      cache: options.cache || "no-store",
       headers,
       credentials: "include",
     },
@@ -125,10 +126,6 @@ async function request(path, options = {}) {
     throw new Error(message);
   }
 
-  if (response.status === 204) {
-    return null;
-  }
-
   if (
     ["POST", "PUT", "PATCH", "DELETE"].includes(method) &&
     typeof window !== "undefined"
@@ -136,6 +133,10 @@ async function request(path, options = {}) {
     window.dispatchEvent(
       new CustomEvent("pcms:dataChanged", { detail: { path, method } }),
     );
+  }
+
+  if (response.status === 204) {
+    return null;
   }
 
   return payload;

@@ -90,7 +90,7 @@ Route::middleware(['web', 'auth:sanctum', 'delete.admin'])->group(function () {
     Route::get('/purchase-requests/walk-in/item-search', [PurchaseRequestController::class, 'itemSearch'])->middleware('role:System Administrator,PPMO Staff');
     Route::post('/purchase-requests/walk-in', [PurchaseRequestController::class, 'storeWalkIn'])->middleware('role:System Administrator,PPMO Staff');
     Route::patch('/purchase-requests/{purchaseRequest}/resubmit', [PurchaseRequestController::class, 'resubmit'])->middleware('role:Requester');
-    Route::patch('/purchase-requests/{purchaseRequest}/revision', [PurchaseRequestController::class, 'requestRevision'])->middleware('role:Department Head,Recommending Approver,President,CEO');
+    Route::patch('/purchase-requests/{purchaseRequest}/revision', [PurchaseRequestController::class, 'requestRevision'])->middleware('role:Department Head,Recommending Approver,President / CEO,President,CEO');
     Route::get('/purchase-requests/pending/approvals', [PurchaseRequestController::class, 'pendingApprovals']);
     Route::post('/purchase-requests/{purchaseRequest}/walk-in-approval-document', [PurchaseRequestController::class, 'uploadWalkInApprovalDocument'])->middleware('role:System Administrator,PPMO Staff,Property Custodian,OIC');
     Route::patch('/purchase-requests/{purchaseRequest}/walk-in-details', [PurchaseRequestController::class, 'updateWalkInDetails'])->middleware('role:System Administrator,PPMO Staff,Property Custodian,OIC');
@@ -98,8 +98,8 @@ Route::middleware(['web', 'auth:sanctum', 'delete.admin'])->group(function () {
     // Recommending Approver role-specific dashboard
     Route::get('/recommending-approver/dashboard', [PurchaseRequestController::class, 'recommendingDashboard'])->middleware('role:Recommending Approver');
     Route::get('/recommending-approver/history', [PurchaseRequestController::class, 'recommendingHistory'])->middleware('role:Recommending Approver');
-    Route::patch('/purchase-requests/{purchaseRequest}/advance', [PurchaseRequestController::class, 'advance'])->middleware('role:Department Head,Recommending Approver,President,Property Custodian,OIC,CEO');
-    Route::patch('/purchase-requests/{purchaseRequest}/reject', [PurchaseRequestController::class, 'reject'])->middleware('role:Department Head,Recommending Approver,President,Property Custodian,OIC,CEO');
+    Route::patch('/purchase-requests/{purchaseRequest}/advance', [PurchaseRequestController::class, 'advance'])->middleware('role:Department Head,Recommending Approver,President / CEO,President,Property Custodian,OIC,CEO');
+    Route::patch('/purchase-requests/{purchaseRequest}/reject', [PurchaseRequestController::class, 'reject'])->middleware('role:Department Head,Recommending Approver,President / CEO,President,Property Custodian,OIC,CEO');
     Route::patch('/purchase-requests/{purchaseRequest}/release', [PurchaseRequestController::class, 'release'])->middleware('role:System Administrator,PPMO Staff,Property Custodian,OIC');
     Route::patch('/purchase-requests/{purchaseRequest}/supply-release', [PurchaseRequestController::class, 'supplyRelease'])->middleware('role:System Administrator,PPMO Staff,Property Custodian,OIC');
     Route::get('/purchase-requests/{purchaseRequest}/receipt', [PurchaseRequestController::class, 'receipt'])->middleware('role:System Administrator,PPMO Staff,Property Custodian,OIC');

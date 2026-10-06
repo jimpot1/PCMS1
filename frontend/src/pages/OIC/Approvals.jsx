@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Loader2 } from 'lucide-react';
 import { pcmsApi } from '../../services/api.js';
+import useLiveSync from '../../hooks/useLiveSync.js';
 
 export default function OicApprovals() {
   const [items, setItems] = useState([]);
@@ -13,6 +14,12 @@ export default function OicApprovals() {
       .catch((err) => setError(err.message || 'Unable to load release history.'))
       .finally(() => setLoading(false));
   }, []);
+
+  useLiveSync(async () => {
+    const response = await pcmsApi.fetchReleasedRequests({ limit: 200 });
+    setItems(response || []);
+    setError(null);
+  });
 
   return (
     <div className="oic-page-shell">

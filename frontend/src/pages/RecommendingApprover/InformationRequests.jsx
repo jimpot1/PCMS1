@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { AlertTriangle, Loader2 } from 'lucide-react';
 import ReviewQueue from '../../components/ReviewQueue.jsx';
 import { pcmsApi } from '../../services/api.js';
+import useLiveSync from '../../hooks/useLiveSync.js';
 
 export default function InformationRequests() {
   const [requests, setRequests] = useState([]);
@@ -42,6 +43,20 @@ export default function InformationRequests() {
     loadInformationRequests();
     return () => { mounted = false; };
   }, []);
+
+  useLiveSync(async () => {
+    const source = await pcmsApi.purchaseRequests({ current_stage: 'recommending_approver', limit: 200 });
+    setRequests((Array.isArray(source) ? source : []).filter((request) => {
+      const status = String(request.status || '').toLowerCase();
+      return status === 'information_required'
+        || status === 'needs_information'
+        || status === 'more_info_requested'
+        || Boolean(request.information_requested)
+        || Boolean(request.more_information_requested)
+        || Boolean(request.request_information)
+        || Boolean(request.request_information_reason);
+    }));
+  });
 
   const handleView = (request) => {
     navigate(`/recommending-approver/review/${request.id}`);

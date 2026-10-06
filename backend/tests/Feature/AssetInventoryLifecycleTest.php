@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Http\Controllers\AssetAssignmentController;
 use App\Models\Asset;
 use App\Models\AssetAssignment;
+use App\Models\Department;
 use App\Models\User;
 use App\Http\Controllers\PurchaseRequestController;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -43,6 +44,75 @@ class AssetInventoryLifecycleTest extends TestCase
     public function test_low_stock_auto_requisition_is_disabled_by_default(): void
     {
         $this->assertFalse(\App\Http\Controllers\SystemSettingController::bool('low_stock_auto_requisition_enabled', false));
+    }
+
+    public function test_manual_out_stock_movement_is_saved_and_deducts_stock(): void
+    {
+        $staff = $this->makeUser('PPMO Staff', 'Stock Staff');
+        $department = Department::create([
+            'code' => 'D-' . Str::upper(Str::random(6)),
+            'name' => 'Stock Department',
+            'is_active' => true,
+        ]);
+        $supply = \App\Models\Supply::create([
+            'name' => 'Printer Paper',
+            'sku' => 'PAPER-' . Str::upper(Str::random(5)),
+            'category' => 'Office Supplies',
+            'stock' => 10,
+            'minimum_stock' => 2,
+            'unit_price' => 1,
+            'department_id' => $department->id,
+        ]);
+
+        $this->actingAs($staff)
+            ->postJson('/api/stock-movements', [
+                'supply_id' => $supply->id,
+                'movement_type' => 'out',
+                'quantity' => 3,
+                'department_id' => $department->id,
+            ])
+            ->assertCreated();
+
+        $this->assertSame(7, (int) $supply->fresh()->stock);
+        $this->assertDatabaseHas('stock_movements', [
+            'supply_id' => $supply->id,
+            'movement_type' => 'out',
+            'quantity' => 3,
+        ]);
+    }
+
+    public function test_manual_out_stock_movement_cannot_make_stock_negative(): void
+    {
+        $staff = $this->makeUser('PPMO Staff', 'Stock Staff');
+        $department = Department::create([
+            'code' => 'D-' . Str::upper(Str::random(6)),
+            'name' => 'Stock Department',
+            'is_active' => true,
+        ]);
+        $supply = \App\Models\Supply::create([
+            'name' => 'Printer Paper',
+            'sku' => 'PAPER-' . Str::upper(Str::random(5)),
+            'category' => 'Office Supplies',
+            'stock' => 2,
+            'minimum_stock' => 1,
+            'unit_price' => 1,
+            'department_id' => $department->id,
+        ]);
+
+        $this->actingAs($staff)
+            ->postJson('/api/stock-movements', [
+                'supply_id' => $supply->id,
+                'movement_type' => 'out',
+                'quantity' => 3,
+                'department_id' => $department->id,
+            ])
+            ->assertUnprocessable();
+
+        $this->assertSame(2, (int) $supply->fresh()->stock);
+        $this->assertDatabaseMissing('stock_movements', [
+            'supply_id' => $supply->id,
+            'movement_type' => 'out',
+        ]);
     }
 
     public function test_duplicate_property_number_returns_field_specific_validation_message(): void

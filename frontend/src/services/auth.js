@@ -224,14 +224,19 @@ export async function getCurrentSession() {
   const response = await fetch(`${API_BASE_URL}/auth/me`, {
     method: 'GET',
     credentials: 'include',
+    cache: 'no-store',
     headers: {
       Accept: 'application/json'
     }
   });
 
-  if (!response.ok) {
+  if (response.status === 401 || response.status === 419) {
     persistCurrentUser(null);
     return null;
+  }
+
+  if (!response.ok) {
+    throw new Error('Unable to verify your session.');
   }
 
   const payload = await response.json().catch(() => null);

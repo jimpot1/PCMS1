@@ -3,6 +3,7 @@ import { FileText, Loader2, AlertTriangle, Printer, Download, X, Eye } from 'luc
 import { pcmsApi } from '../../services/api.js';
 import { exportElementToPdf } from '../../utils/pdfExport.js';
 import { TableSkeleton } from '../../components/TableSkeleton.jsx';
+import useLiveSync from '../../hooks/useLiveSync.js';
 
 function formatCurrency(value) {
   const amount = Number(value || 0);
@@ -50,6 +51,11 @@ export default function PurchaseOrderDocuments() {
       mounted = false;
     };
   }, []);
+
+  useLiveSync(async () => {
+    const data = await pcmsApi.fetchPurchaseRequests({ limit: 200 });
+    setRequests(Array.isArray(data) ? data : []);
+  }, { enabled: !selected && !downloading });
 
   const purchaseOrders = useMemo(
     () => requests.filter((item) => (item.request_type || 'purchase_order') === 'purchase_order'),
