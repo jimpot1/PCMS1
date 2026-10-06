@@ -13,7 +13,7 @@ All endpoints are under `/api` and require a Supabase bearer token.
 | GET/POST | `/supplies` | Supplies inventory and stock control |
 | GET/POST | `/purchase-requests` | PR approval workflow |
 | GET/POST | `/gate-passes` | Digital gate pass and QR workflow |
-| GET/POST | `/audits` | Physical audit schedules/results |
+| GET/POST | `/audits` | Physical audit schedules/results; GET supports `department_id`, `status`, `date_from`, `date_to`, `page`, and `per_page` filters |
 | GET | `/inventory-monitoring/anomalies` | Existing anomaly alerts |
 | POST | `/inventory-monitoring/analyze` | Run anomaly detection |
 | GET | `/reports/{type}` | Export report metadata/download |

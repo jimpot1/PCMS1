@@ -118,13 +118,15 @@ Use this guide to familiarize yourself with the PCMS, test the implemented proce
 **DFD flow:** create audit session → scan/verify expected asset → resolve missing or mismatch exceptions.
 
 1. As **PPMO Staff** or **OIC**, open **Procurement & Audit → Audit Dashboard**.
-2. Create an audit session for a specific department/location. Confirm the system loads the expected registered-asset dataset.
+2. Create an audit session for a specific department/location. Confirm the system saves that department's expected asset list and quantities as the session baseline.
 3. Scan or enter the QR/tag of an asset that belongs in the session. Confirm it is marked verified and audit progress changes.
 4. Scan an asset assigned to another department/custodian. Confirm a mismatch/anomaly is created instead of marking it verified for the wrong place.
 5. Leave one expected asset unverified, then complete the audit. Confirm the missing/unverified result becomes an exception for P6 investigation.
-6. Review the completed audit summary and **Activity & Transaction Logs**. Verify the session, scans, mismatches, and final result are visible.
+6. Reassign or rename an asset after the audit starts, then reopen the session. Confirm its saved baseline and expected quantity have not changed.
+7. Review the completed audit summary and **Activity & Transaction Logs**. Verify the session, scans, mismatches, and final result are visible.
+8. Filter the audit list by department, status, and scheduled-date range. Open and print a completed session to review its saved asset checklist and results.
 
-**Expected:** audit results distinguish verified, missing, and wrong-location/custodian assets. Missing items lead to P6 follow-up; mismatches lead to P4 review.
+**Expected:** audit results distinguish verified, missing, and wrong-location/custodian assets. Completed sessions retain their saved asset baselines and can be found by department, status, and date. Legacy sessions created before asset snapshots were introduced cannot recover an original baseline that was never recorded; completed legacy sessions show only recorded scans and counts. Missing items lead to P6 follow-up; mismatches lead to P4 review.
 
 ## P8 — Procurement, Approvals, Fulfillment, and Release
 

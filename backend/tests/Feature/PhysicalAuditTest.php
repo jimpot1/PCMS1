@@ -26,11 +26,11 @@ class PhysicalAuditTest extends TestCase
     {
         return User::create([
             'id' => (string) Str::uuid(),
-            'employee_id' => 'EMP-' . Str::upper(Str::random(6)),
+            'employee_id' => 'EMP-'.Str::upper(Str::random(6)),
             'first_name' => $role,
             'last_name' => 'Tester',
-            'full_name' => $role . ' Tester',
-            'email' => Str::lower(Str::random(10)) . '@example.test',
+            'full_name' => $role.' Tester',
+            'email' => Str::lower(Str::random(10)).'@example.test',
             'password_hash' => bcrypt('secret'),
             'role' => $role,
             'status' => 'active',
@@ -40,8 +40,8 @@ class PhysicalAuditTest extends TestCase
     protected function makeDepartment(string $suffix): Department
     {
         return Department::create([
-            'code' => 'D-' . $suffix,
-            'name' => 'Department ' . $suffix,
+            'code' => 'D-'.$suffix,
+            'name' => 'Department '.$suffix,
             'is_active' => true,
         ]);
     }
@@ -49,9 +49,9 @@ class PhysicalAuditTest extends TestCase
     protected function makeAsset(Department $department, string $suffix): Asset
     {
         return Asset::create([
-            'asset_id' => 'AST-' . $suffix,
-            'property_number' => 'PROP-' . $suffix,
-            'name' => 'Audit Asset ' . $suffix,
+            'asset_id' => 'AST-'.$suffix,
+            'property_number' => 'PROP-'.$suffix,
+            'name' => 'Audit Asset '.$suffix,
             'department_id' => $department->id,
             'quantity' => 1,
             'available_quantity' => 1,
@@ -64,6 +64,7 @@ class PhysicalAuditTest extends TestCase
     {
         $request = Request::create('/api/audits', 'POST', $input);
         $request->setUserResolver(fn () => $user);
+
         return $request;
     }
 
@@ -94,6 +95,151 @@ class PhysicalAuditTest extends TestCase
         $this->getJson('/api/audits')->assertOk()->assertJsonPath('data.0.area', 'Custodian Storage');
     }
 
+    public function test_scheduled_asset_audit_saves_department_asset_snapshot(): void
+    {
+        $custodian = $this->makeUser('Property Custodian');
+        $department = $this->makeDepartment('AUD-SNAPSHOT');
+        $otherDepartment = $this->makeDepartment('AUD-SNAPSHOT-OTHER');
+        $asset = $this->makeAsset($department, 'AUD-SNAPSHOT');
+        $this->makeAsset($otherDepartment, 'AUD-SNAPSHOT-OTHER');
+        $this->actingAs($custodian);
+
+        $auditResponse = $this->postJson('/api/audits', [
+            'area' => 'Logistics',
+            'department_id' => $department->id,
+            'scheduled_at' => now()->toDateString(),
+        ])->assertCreated();
+
+        $auditId = $auditResponse->json('id');
+        $this->assertDatabaseHas('audit_asset_counts', [
+            'audit_id' => $auditId,
+            'asset_id' => $asset->id,
+            'expected_quantity' => 1,
+            'asset_name_snapshot' => $asset->name,
+            'property_number_snapshot' => $asset->property_number,
+            'department_name_snapshot' => $department->name,
+        ]);
+        $this->assertDatabaseMissing('audit_asset_counts', [
+            'audit_id' => $auditId,
+            'asset_id' => Asset::where('department_id', $otherDepartment->id)->value('id'),
+        ]);
+
+        $asset->update([
+            'name' => 'Renamed after audit',
+            'quantity' => 5,
+            'department_id' => $otherDepartment->id,
+        ]);
+
+        $this->postJson('/api/audits/'.$auditId.'/scan', [
+            'asset_id' => $asset->id,
+            'found_department_id' => $department->id,
+        ])->assertCreated()->assertJsonPath('result', 'verified');
+
+        $this->postJson('/api/audits/'.$auditId.'/asset-count', [
+            'asset_id' => $asset->id,
+            'counted_quantity' => 1,
+        ])->assertCreated()->assertJsonPath('expected_quantity', 1);
+
+        $this->getJson('/api/audits/'.$auditId)
+            ->assertOk()
+            ->assertJsonPath('summary.expected', 1)
+            ->assertJsonPath('summary.verified', 1)
+            ->assertJsonPath('expected_assets.0.name', 'Audit Asset AUD-SNAPSHOT')
+            ->assertJsonPath('expected_assets.0.property_number', 'PROP-AUD-SNAPSHOT')
+            ->assertJsonPath('expected_assets.0.department_name', $department->name)
+            ->assertJsonPath('expected_assets.0.system_quantity', 1)
+            ->assertJsonPath('expected_assets.0.physical_quantity', 1);
+    }
+
+    public function test_completing_audit_uses_snapshotted_assets_after_reallocation(): void
+    {
+        $staff = $this->makeUser('PPMO Staff');
+        $department = $this->makeDepartment('AUD-SNAPSHOT-COMPLETE');
+        $newDepartment = $this->makeDepartment('AUD-SNAPSHOT-REASSIGNED');
+        $asset = $this->makeAsset($department, 'AUD-SNAPSHOT-COMPLETE');
+        $this->actingAs($staff);
+
+        $audit = $this->postJson('/api/audits', [
+            'area' => 'Logistics',
+            'department_id' => $department->id,
+            'scheduled_at' => now()->toDateString(),
+        ])->assertCreated()->json();
+
+        $asset->update(['department_id' => $newDepartment->id]);
+
+        $this->patchJson('/api/audits/'.$audit['id'].'/complete')
+            ->assertOk()
+            ->assertJsonPath('summary.missing', 1);
+
+        $this->assertDatabaseHas('audit_scans', [
+            'audit_id' => $audit['id'],
+            'asset_id' => $asset->id,
+            'result' => 'missing',
+        ]);
+    }
+
+    public function test_asset_added_after_audit_snapshot_is_reported_as_unexpected(): void
+    {
+        $staff = $this->makeUser('PPMO Staff');
+        $department = $this->makeDepartment('AUD-UNEXPECTED');
+        $this->actingAs($staff);
+
+        $audit = $this->postJson('/api/audits', [
+            'area' => 'Logistics',
+            'department_id' => $department->id,
+            'scheduled_at' => now()->toDateString(),
+        ])->assertCreated()->json();
+        $asset = $this->makeAsset($department, 'AUD-UNEXPECTED');
+
+        $this->postJson('/api/audits/'.$audit['id'].'/scan', [
+            'asset_id' => $asset->id,
+            'found_department_id' => $department->id,
+        ])->assertCreated()->assertJsonPath('result', 'unexpected');
+
+        $this->getJson('/api/audits/'.$audit['id'])
+            ->assertOk()
+            ->assertJsonPath('summary.expected', 0)
+            ->assertJsonPath('summary.unexpected_assets', 1)
+            ->assertJsonCount(0, 'expected_assets');
+    }
+
+    public function test_audit_department_can_only_change_before_activity_and_refreshes_snapshot(): void
+    {
+        $custodian = $this->makeUser('Property Custodian');
+        $department = $this->makeDepartment('AUD-SCOPE-OLD');
+        $newDepartment = $this->makeDepartment('AUD-SCOPE-NEW');
+        $oldAsset = $this->makeAsset($department, 'AUD-SCOPE-OLD');
+        $newAsset = $this->makeAsset($newDepartment, 'AUD-SCOPE-NEW');
+        $this->actingAs($custodian);
+
+        $audit = $this->postJson('/api/audits', [
+            'area' => 'Logistics',
+            'department_id' => $department->id,
+            'scheduled_at' => now()->toDateString(),
+        ])->assertCreated()->json();
+
+        $this->patchJson('/api/audits/'.$audit['id'], [
+            'department_id' => $newDepartment->id,
+        ])->assertOk();
+        $this->assertDatabaseMissing('audit_asset_counts', [
+            'audit_id' => $audit['id'],
+            'asset_id' => $oldAsset->id,
+        ]);
+        $this->assertDatabaseHas('audit_asset_counts', [
+            'audit_id' => $audit['id'],
+            'asset_id' => $newAsset->id,
+        ]);
+
+        $this->postJson('/api/audits/'.$audit['id'].'/scan', [
+            'asset_id' => $newAsset->id,
+            'found_department_id' => $newDepartment->id,
+        ])->assertCreated();
+
+        $this->patchJson('/api/audits/'.$audit['id'], [
+            'department_id' => $department->id,
+        ])->assertUnprocessable();
+    }
+
     public function test_verified_ocr_scan_is_recorded(): void
     {
         $staff = $this->makeUser('PPMO Staff');
@@ -115,7 +261,7 @@ class PhysicalAuditTest extends TestCase
             'updated_at' => now(),
         ]);
 
-        $response = (new AuditController())->scan($this->request($staff, [
+        $response = (new AuditController)->scan($this->request($staff, [
             'asset_id' => $asset->id,
             'found_department_id' => $department->id,
             'ocr_scan_id' => $ocrScanId,
@@ -146,7 +292,7 @@ class PhysicalAuditTest extends TestCase
             'status' => 'scheduled',
         ]);
 
-        (new AuditController())->scan($this->request($staff, [
+        (new AuditController)->scan($this->request($staff, [
             'asset_id' => $asset->id,
             'found_department_id' => $foundDepartment->id,
         ]), $audit);
@@ -177,7 +323,7 @@ class PhysicalAuditTest extends TestCase
             'status' => 'scheduled',
         ]);
 
-        $response = (new AuditController())->complete($this->request($staff), $audit);
+        $response = (new AuditController)->complete($this->request($staff), $audit);
 
         $this->assertSame(200, $response->getStatusCode());
         $this->assertDatabaseHas('audit_scans', [
@@ -215,7 +361,7 @@ class PhysicalAuditTest extends TestCase
             'status' => 'scheduled',
         ]);
 
-        $response = (new AuditController())->countSupply($this->request($staff, [
+        $response = (new AuditController)->countSupply($this->request($staff, [
             'supply_id' => $supply->id,
             'counted_quantity' => 7,
         ]), $audit);
@@ -253,9 +399,8 @@ class PhysicalAuditTest extends TestCase
             'result' => 'verified',
         ]);
 
-        $update = (new AuditController())->update($this->request($staff, [
+        $update = (new AuditController)->update($this->request($staff, [
             'area' => 'Updated Area',
-            'department_id' => $newDepartment->id,
             'scheduled_at' => now()->addDay()->toDateString(),
         ]), $audit);
 
@@ -263,10 +408,15 @@ class PhysicalAuditTest extends TestCase
         $this->assertDatabaseHas('physical_audits', [
             'id' => $audit->id,
             'area' => 'Updated Area',
-            'department_id' => $newDepartment->id,
+            'department_id' => $oldDepartment->id,
         ]);
 
-        $delete = (new AuditController())->destroy($this->request($staff), $audit->fresh());
+        $scopeUpdate = (new AuditController)->update($this->request($staff, [
+            'department_id' => $newDepartment->id,
+        ]), $audit->fresh());
+        $this->assertSame(422, $scopeUpdate->getStatusCode());
+
+        $delete = (new AuditController)->destroy($this->request($staff), $audit->fresh());
 
         $this->assertSame(200, $delete->getStatusCode());
         $this->assertDatabaseMissing('physical_audits', ['id' => $audit->id]);
@@ -311,7 +461,7 @@ class PhysicalAuditTest extends TestCase
             'reason' => 'Physical audit correction',
         ]);
 
-        $response = (new TransferController())->execute($this->request($staff, [
+        $response = (new TransferController)->execute($this->request($staff, [
             'receiving_signature' => 'Clinic Receiver',
             'releasing_signature' => 'Logistics Staff',
         ]), $transfer);

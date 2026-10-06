@@ -3,8 +3,8 @@
 namespace App\Http\Controllers;
 
 use App\Models\Asset;
-use App\Models\AuditAssetCount;
 use App\Models\AssetTransfer;
+use App\Models\AuditAssetCount;
 use App\Models\AuditScan;
 use App\Models\AuditSupplyCount;
 use App\Models\DamageReport;
@@ -24,11 +24,21 @@ class AuditController extends Controller
 
     public function index(Request $request): JsonResponse
     {
+        $filters = $request->validate([
+            'status' => ['sometimes', 'nullable', 'string', 'max:40'],
+            'department_id' => ['sometimes', 'nullable', 'integer', 'exists:departments,id'],
+            'date_from' => ['sometimes', 'nullable', 'date'],
+            'date_to' => ['sometimes', 'nullable', 'date'],
+            'area' => ['sometimes', 'nullable', 'string', 'max:180'],
+        ]);
         $searchOperator = DB::connection()->getDriverName() === 'pgsql' ? 'ilike' : 'like';
         $audits = PhysicalAudit::query()
             ->with('auditScans')
-            ->when($request->status, fn ($query, $value) => $query->where('status', $value))
-            ->when($request->area, fn ($query, $value) => $query->where('area', $searchOperator, "%{$value}%"))
+            ->when($filters['status'] ?? null, fn ($query, $value) => $query->where('status', $value))
+            ->when($filters['department_id'] ?? null, fn ($query, $value) => $query->where('department_id', $value))
+            ->when($filters['date_from'] ?? null, fn ($query, $value) => $query->whereDate('scheduled_at', '>=', $value))
+            ->when($filters['date_to'] ?? null, fn ($query, $value) => $query->whereDate('scheduled_at', '<=', $value))
+            ->when($filters['area'] ?? null, fn ($query, $value) => $query->where('area', $searchOperator, "%{$value}%"))
             ->orderBy('scheduled_at', 'desc')
             ->paginate($request->integer('per_page', 15));
 
@@ -44,15 +54,26 @@ class AuditController extends Controller
             'scheduled_at' => ['required', 'date', 'after_or_equal:today'],
         ]);
 
-        $audit = PhysicalAudit::create([
-            'audit_number' => $this->generateAuditNumber(),
-            'area' => $validated['area'],
-            'audit_type' => $validated['audit_type'] ?? 'assets',
-            'department_id' => $validated['department_id'] ?? null,
-            'auditor_id' => $request->user()?->id,
-            'scheduled_at' => $validated['scheduled_at'],
-            'status' => 'scheduled',
-        ]);
+        $audit = DB::transaction(function () use ($request, $validated): PhysicalAudit {
+            $auditType = $validated['audit_type'] ?? 'assets';
+            $includesAssets = in_array($auditType, ['assets', 'combined'], true);
+            $audit = PhysicalAudit::create([
+                'audit_number' => $this->generateAuditNumber(),
+                'area' => $validated['area'],
+                'audit_type' => $auditType,
+                'department_id' => $validated['department_id'] ?? null,
+                'auditor_id' => $request->user()?->id,
+                'scheduled_at' => $validated['scheduled_at'],
+                'status' => 'scheduled',
+                'asset_snapshot_created_at' => $includesAssets ? now() : null,
+            ]);
+
+            if ($includesAssets) {
+                $this->snapshotAssets($audit);
+            }
+
+            return $audit;
+        });
 
         $this->logActivity('audit_scheduled', $audit, $request);
 
@@ -61,36 +82,63 @@ class AuditController extends Controller
 
     public function show(PhysicalAudit $audit): JsonResponse
     {
-        $audit->load('auditScans.asset', 'supplyCounts.supply', 'assetCounts');
+        $audit->load('auditScans.asset', 'supplyCounts.supply', 'assetCounts.asset');
         $scans = $audit->auditScans;
         $includesAssets = in_array($audit->audit_type ?? 'assets', ['assets', 'combined'], true);
         $includesSupplies = in_array($audit->audit_type ?? 'assets', ['supplies', 'combined'], true);
         $scansByAsset = $scans->keyBy('asset_id');
         $assetCountsByAsset = $audit->assetCounts->keyBy('asset_id');
-        $expectedAssets = $includesAssets
-            ? Asset::query()
-                ->when($audit->department_id, fn ($query, $departmentId) => $query->where('department_id', $departmentId))
-                ->when(! $audit->department_id, fn ($query) => $query->whereNull('department_id'))
+        $assetSnapshot = $audit->assetCounts;
+        if ($includesAssets && ! $audit->asset_snapshot_created_at && $audit->status !== 'completed') {
+            $assetSnapshot = Asset::query()
+                ->with('department')
+                ->when(
+                    $audit->department_id,
+                    fn ($query, $departmentId) => $query->where('department_id', $departmentId),
+                    fn ($query) => $query->whereNull('department_id'),
+                )
                 ->orderBy('name')
                 ->get()
-                ->map(function (Asset $asset) use ($scansByAsset, $assetCountsByAsset) {
-                    $scan = $scansByAsset->get($asset->id);
-                    $count = $assetCountsByAsset->get($asset->id);
+                ->map(fn (Asset $asset) => $assetCountsByAsset->get($asset->id) ?? $asset);
+        } elseif ($includesAssets && ! $audit->asset_snapshot_created_at && $audit->status === 'completed') {
+            $legacyAssets = $scans->pluck('asset')->filter()->keyBy('id');
+            $assetSnapshot = $audit->assetCounts->keyBy('asset_id')->map(
+                fn (AuditAssetCount $count) => $count->asset ?? $legacyAssets->get($count->asset_id) ?? $count,
+            )->union($legacyAssets);
+        }
 
-                    return [
-                        'id' => $asset->id,
-                        'name' => $asset->name,
-                        'property_number' => $asset->property_number,
-                        'result' => $scan?->result ?? 'unverified',
-                        'scan_id' => $scan?->id,
-                        'found_department_id' => $scan?->found_department_id,
-                        'system_quantity' => (int) ($asset->quantity ?? 0),
-                        'physical_quantity' => $count?->counted_quantity,
-                        'variance' => $count?->variance,
-                        'quantity_status' => $count?->status ?? 'uncounted',
-                    ];
-                })
-                ->values()
+        $expectedAssets = $includesAssets
+            ? $assetSnapshot->map(function ($item) use ($scansByAsset, $assetCountsByAsset) {
+                $assetId = $item instanceof AuditAssetCount ? $item->asset_id : $item->id;
+                $scan = $scansByAsset->get($assetId);
+                $count = $assetCountsByAsset->get($assetId);
+                $asset = $item instanceof AuditAssetCount ? $item->asset : $item;
+
+                return [
+                    'id' => $assetId,
+                    'name' => $item instanceof AuditAssetCount
+                        ? ($item->asset_name_snapshot ?? $asset?->name ?? 'Deleted asset')
+                        : ($item->name ?? 'Deleted asset'),
+                    'property_number' => $item instanceof AuditAssetCount
+                        ? ($item->property_number_snapshot ?? $asset?->property_number)
+                        : $asset?->property_number,
+                    'department_id' => $item instanceof AuditAssetCount
+                        ? ($item->department_id_snapshot ?? $asset?->department_id)
+                        : $asset?->department_id,
+                    'department_name' => $item instanceof AuditAssetCount
+                        ? ($item->department_name_snapshot ?? $asset?->department?->name)
+                        : $asset?->department?->name,
+                    'result' => $scan?->result ?? 'unverified',
+                    'scan_id' => $scan?->id,
+                    'found_department_id' => $scan?->found_department_id,
+                    'system_quantity' => $item instanceof AuditAssetCount
+                        ? (int) $item->expected_quantity
+                        : (int) ($asset?->quantity ?? 0),
+                    'physical_quantity' => $count?->counted_quantity,
+                    'variance' => $count?->variance,
+                    'quantity_status' => $count?->status ?? 'uncounted',
+                ];
+            })->values()
             : collect();
 
         $countedAssets = $expectedAssets->where('quantity_status', '!=', 'uncounted')->count();
@@ -99,6 +147,7 @@ class AuditController extends Controller
             'verified' => $scans->where('result', 'verified')->count(),
             'missing' => $scans->where('result', 'missing')->count(),
             'wrong_department' => $scans->where('result', 'wrong_department')->count(),
+            'unexpected_assets' => $scans->where('result', 'unexpected')->count(),
             'total' => $scans->count(),
             'expected' => $expectedAssets->count(),
             'unverified' => $expectedAssets->where('result', 'unverified')->count(),
@@ -160,14 +209,32 @@ class AuditController extends Controller
         ]);
 
         $asset = Asset::findOrFail($validated['asset_id']);
-        if ($audit->department_id && (int) $asset->department_id !== (int) $audit->department_id) {
-            return response()->json(['message' => 'The selected asset does not belong to this audit department.'], 422);
-        }
-        if (! $audit->department_id && $asset->department_id !== null) {
-            return response()->json(['message' => 'The selected asset is assigned to a department and is not PPMO unassigned stock.'], 422);
+        $snapshot = $audit->assetCounts()->where('asset_id', $asset->id)->first();
+        if ($audit->asset_snapshot_created_at && ! $snapshot) {
+            return response()->json(['message' => 'This asset was not part of the audit snapshot.'], 422);
         }
 
-        $expectedQuantity = (int) ($asset->quantity ?? 0);
+        if (! $snapshot) {
+            if ($audit->department_id && (int) $asset->department_id !== (int) $audit->department_id) {
+                return response()->json(['message' => 'The selected asset does not belong to this audit department.'], 422);
+            }
+            if (! $audit->department_id && $asset->department_id !== null) {
+                return response()->json(['message' => 'The selected asset is assigned to a department and is not PPMO unassigned stock.'], 422);
+            }
+
+            $snapshot = AuditAssetCount::create([
+                'audit_id' => $audit->id,
+                'asset_id' => $asset->id,
+                'expected_quantity' => (int) ($asset->quantity ?? 0),
+                'status' => 'uncounted',
+                'asset_name_snapshot' => $asset->name,
+                'property_number_snapshot' => $asset->property_number,
+                'department_id_snapshot' => $asset->department_id,
+                'department_name_snapshot' => $asset->department?->name,
+            ]);
+        }
+
+        $expectedQuantity = (int) $snapshot->expected_quantity;
         $countedQuantity = (int) $validated['counted_quantity'];
         $variance = $countedQuantity - $expectedQuantity;
         $status = $variance === 0 ? 'matched' : ($countedQuantity === 0 ? 'missing' : 'variance');
@@ -240,7 +307,36 @@ class AuditController extends Controller
             'scheduled_at' => ['sometimes', 'date', 'after_or_equal:today'],
         ]);
 
-        $audit->update($validated);
+        $scopeChanged = (
+            array_key_exists('department_id', $validated)
+            && (string) $audit->department_id !== (string) ($validated['department_id'] ?? null)
+        ) || (
+            array_key_exists('audit_type', $validated)
+            && $audit->audit_type !== $validated['audit_type']
+        );
+        if ($scopeChanged && (
+            $audit->auditScans()->exists()
+            || $audit->assetCounts()->whereNotNull('counted_quantity')->exists()
+            || $audit->supplyCounts()->whereNotNull('counted_quantity')->exists()
+        )) {
+            return response()->json([
+                'message' => 'The department or audit type cannot be changed after audit activity has been recorded.',
+            ], 422);
+        }
+
+        DB::transaction(function () use ($audit, $validated, $scopeChanged): void {
+            $audit->update($validated);
+            if ($scopeChanged) {
+                $includesAssets = in_array($audit->audit_type ?? 'assets', ['assets', 'combined'], true);
+                if ($includesAssets) {
+                    $audit->assetCounts()->delete();
+                    $this->snapshotAssets($audit);
+                } else {
+                    $audit->assetCounts()->delete();
+                    $audit->update(['asset_snapshot_created_at' => null]);
+                }
+            }
+        });
         $this->logActivity('audit_updated', $audit, $request);
 
         return response()->json($audit->fresh());
@@ -278,7 +374,11 @@ class AuditController extends Controller
 
         $asset = Asset::findOrFail($validated['asset_id']);
         $foundDepartmentId = $validated['found_department_id'];
-        $auditDepartmentId = $audit->department_id ?? $asset->department_id;
+        $snapshot = $audit->assetCounts()->where('asset_id', $asset->id)->first();
+        $expectedDepartmentId = $snapshot && $audit->asset_snapshot_created_at
+            ? $snapshot->department_id_snapshot
+            : $asset->department_id;
+        $auditDepartmentId = $audit->department_id ?? $expectedDepartmentId;
 
         $existingScan = AuditScan::query()
             ->where('audit_id', $audit->id)
@@ -292,8 +392,8 @@ class AuditController extends Controller
         }
 
         // Determine result
-        $result = 'verified';
-        if ($asset->department_id != $foundDepartmentId) {
+        $result = $audit->asset_snapshot_created_at && ! $snapshot ? 'unexpected' : 'verified';
+        if ($expectedDepartmentId != $foundDepartmentId) {
             $result = 'wrong_department';
             // Detect untracked transfer
             AnomalyDetectionService::detectUntrackedTransfer($asset->id, $foundDepartmentId);
@@ -346,10 +446,15 @@ class AuditController extends Controller
             DB::beginTransaction();
 
             if (in_array($audit->audit_type ?? 'assets', ['assets', 'combined'], true)) {
-                $expectedAssetIds = Asset::query()
-                    ->when($audit->department_id, fn ($query, $departmentId) => $query->where('department_id', $departmentId))
-                    ->when(! $audit->department_id, fn ($query) => $query->whereNull('department_id'))
-                    ->pluck('id');
+                $expectedAssetIds = $audit->asset_snapshot_created_at
+                    ? $audit->assetCounts()->pluck('asset_id')
+                    : Asset::query()
+                        ->when(
+                            $audit->department_id,
+                            fn ($query, $departmentId) => $query->where('department_id', $departmentId),
+                            fn ($query) => $query->whereNull('department_id'),
+                        )
+                        ->pluck('id');
                 $scannedAssetIds = $audit->auditScans->pluck('asset_id');
                 $countedAssetIds = $audit->assetCounts()->whereNotNull('counted_quantity')->pluck('asset_id');
                 $missingIds = $expectedAssetIds->diff($scannedAssetIds)->diff($countedAssetIds);
@@ -409,11 +514,36 @@ class AuditController extends Controller
         }
     }
 
-
     protected function generateAuditNumber(): string
     {
         $sequence = PhysicalAudit::count() + 1;
+
         return sprintf('AUD-%s-%06d', now()->format('Y'), $sequence);
+    }
+
+    private function snapshotAssets(PhysicalAudit $audit): void
+    {
+        Asset::query()
+            ->with('department')
+            ->when(
+                $audit->department_id,
+                fn ($query, $departmentId) => $query->where('department_id', $departmentId),
+                fn ($query) => $query->whereNull('department_id'),
+            )
+            ->orderBy('id')
+            ->get()
+            ->each(fn (Asset $asset) => AuditAssetCount::create([
+                'audit_id' => $audit->id,
+                'asset_id' => $asset->id,
+                'expected_quantity' => (int) ($asset->quantity ?? 0),
+                'status' => 'uncounted',
+                'asset_name_snapshot' => $asset->name,
+                'property_number_snapshot' => $asset->property_number,
+                'department_id_snapshot' => $asset->department_id,
+                'department_name_snapshot' => $asset->department?->name,
+            ]));
+
+        $audit->update(['asset_snapshot_created_at' => now()]);
     }
 
     protected function generateTransferNumber(): string

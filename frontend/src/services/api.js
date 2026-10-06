@@ -722,8 +722,16 @@ export async function updateDamageReport(id, payload) {
 }
 
 export async function fetchAudits({ limit = 200 } = {}) {
-  const response = await request(`/audits?per_page=${limit}`);
-  return response?.data || [];
+  const firstPage = await request(`/audits?per_page=${limit}`);
+  const lastPage = Number(firstPage?.last_page || 1);
+  if (lastPage <= 1) return firstPage?.data || [];
+
+  const remainingPages = await Promise.all(
+    Array.from({ length: lastPage - 1 }, (_, index) =>
+      request(`/audits?per_page=${limit}&page=${index + 2}`),
+    ),
+  );
+  return [firstPage, ...remainingPages].flatMap((page) => page?.data || []);
 }
 
 export async function fetchAudit(id) {

@@ -17,6 +17,10 @@ class AuditAssetCount extends Model
         'variance',
         'status',
         'notes',
+        'asset_name_snapshot',
+        'property_number_snapshot',
+        'department_id_snapshot',
+        'department_name_snapshot',
     ];
 
     public function audit(): BelongsTo

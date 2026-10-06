@@ -4844,7 +4844,7 @@ function EnhancedAssignmentsPage() {
 
   useLiveSync(async () => {
     await Promise.all([loadAssignments(filters), loadAssets()]);
-  }, { enabled: !showForm && !selectedAssignment && !verificationAssignment });
+  }, { enabled: !showCreateDialog && !selectedAssignment && !verificationAssignment });
 
   useEffect(() => {
     async function load() {
@@ -8355,6 +8355,11 @@ function TransferPage() {
   const [showAssetSuggestions, setShowAssetSuggestions] = useState(false);
   const [recommendations, setRecommendations] = useState([]);
   const [selectedTransfer, setSelectedTransfer] = useState(null);
+  const [transferScannerOpen, setTransferScannerOpen] = useState(false);
+  const [transferScannerError, setTransferScannerError] = useState(null);
+  const transferScannerVideoRef = useRef(null);
+  const transferScannerCanvasRef = useRef(null);
+  const transferScannerFrameRef = useRef(null);
   const [executeDialog, setExecuteDialog] = useState({
     open: false,
     transfer: null,
@@ -8387,11 +8392,6 @@ function TransferPage() {
       .catch(() => {});
   }, []);
 
-  useLiveSync(async () => {
-    const history = await pcmsApi.ocrHistory({ limit: 6 });
-    setOcrHistory(history || []);
-  }, { enabled: !isScanning });
-
   const loadTransfers = async (nextFilters = filters) => {
     try {
       if (transfers.length === 0) setLoading(true);
@@ -8422,6 +8422,69 @@ function TransferPage() {
   );
 
   useEffect(() => {
+    if (!transferScannerOpen) return undefined;
+
+    let cancelled = false;
+    let stream;
+
+    const scanFrame = () => {
+      const video = transferScannerVideoRef.current;
+      const canvas = transferScannerCanvasRef.current;
+      if (!video || !canvas || video.readyState < video.HAVE_ENOUGH_DATA) {
+        transferScannerFrameRef.current = requestAnimationFrame(scanFrame);
+        return;
+      }
+
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const context = canvas.getContext("2d", { willReadFrequently: true });
+      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const decoded = jsQR(
+        context.getImageData(0, 0, canvas.width, canvas.height).data,
+        canvas.width,
+        canvas.height,
+      );
+
+      if (decoded?.data) {
+        resolveTransferScan(decoded.data);
+        return;
+      }
+
+      transferScannerFrameRef.current = requestAnimationFrame(scanFrame);
+    };
+
+    const startScanner = async () => {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: "environment" } },
+          audio: false,
+        });
+        if (cancelled) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+        transferScannerVideoRef.current.srcObject = stream;
+        await transferScannerVideoRef.current.play();
+        transferScannerFrameRef.current = requestAnimationFrame(scanFrame);
+      } catch (error) {
+        setTransferScannerError(error?.message || "Camera access is unavailable.");
+      }
+    };
+
+    startScanner();
+    return () => {
+      cancelled = true;
+      if (transferScannerFrameRef.current) {
+        cancelAnimationFrame(transferScannerFrameRef.current);
+      }
+      stream?.getTracks().forEach((track) => track.stop());
+      if (transferScannerVideoRef.current) {
+        transferScannerVideoRef.current.srcObject = null;
+      }
+    };
+  }, [transferScannerOpen]);
+
+  useEffect(() => {
     let ignore = false;
     if (!formData.asset_id) {
       setAssetUnits([]);
@@ -8434,6 +8497,36 @@ function TransferPage() {
     });
     return () => { ignore = true; };
   }, [formData.asset_id]);
+
+  const selectTransferAsset = (asset) => {
+    setFormData((current) => ({ ...current, asset_id: asset.id, asset_unit_id: "" }));
+    setAssetQuery(`${asset.name} · ${asset.property_number || asset.asset_id}`);
+    setShowAssetSuggestions(false);
+    pcmsApi.assetUnits(asset.id).then(setAssetUnits).catch(() => setAssetUnits([]));
+  };
+
+  const resolveTransferScan = async (decodedValue) => {
+    setTransferScannerError(null);
+    try {
+      const scannedValue = String(decodedValue || "").trim();
+      const matches = assetsList.filter((asset) =>
+        [asset.property_number, asset.asset_id, asset.serial_number, asset.name]
+          .filter(Boolean)
+          .some((value) => String(value).toLowerCase() === scannedValue.toLowerCase()),
+      );
+      const searchResults = matches.length ? matches : await pcmsApi.assets({ search: scannedValue, limit: 5 });
+      const asset = searchResults?.[0];
+      if (!asset) {
+        setTransferScannerError(`No asset matches the scanned tag: ${scannedValue}`);
+        return;
+      }
+      selectTransferAsset(asset);
+      setTransferScannerOpen(false);
+    } catch (error) {
+      setTransferScannerError(error?.message || "Unable to resolve the scanned asset.");
+    }
+  };
+
   const selectedDestinationDepartment = departmentsList.find(
     (department) => String(department.id) === String(formData.to_department_id),
   );
@@ -8742,8 +8835,8 @@ function TransferPage() {
                     className="secondary-button maintenance-scan-button"
                     type="button"
                     onClick={() => {
-                      setMaintenanceScannerError(null);
-                      setMaintenanceScannerOpen(true);
+                      setTransferScannerError(null);
+                      setTransferScannerOpen(true);
                     }}
                   >
                     <QrCode size={16} /> Scan tag
@@ -8789,7 +8882,7 @@ function TransferPage() {
                           }}
                           onMouseDown={(ev) => {
                             ev.preventDefault();
-                            selectMaintenanceAsset(a);
+                            selectTransferAsset(a);
                           }}
                         >
                           <strong style={{ display: "block" }}>{a.name}</strong>
@@ -8986,6 +9079,32 @@ function TransferPage() {
               </button>
             </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {transferScannerOpen && (
+        <div className="modal-overlay maintenance-scanner-overlay" role="dialog" aria-modal="true" aria-labelledby="transfer-scanner-title">
+          <div className="modal-card maintenance-scanner-modal">
+            <div className="modal-header">
+              <div>
+                <p className="modal-eyebrow">Asset lookup</p>
+                <h3 id="transfer-scanner-title">Scan asset tag</h3>
+                <p className="modal-subtitle">Center the QR code inside the camera frame.</p>
+              </div>
+              <button className="icon-button" type="button" onClick={() => setTransferScannerOpen(false)} aria-label="Close asset scanner">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="maintenance-scanner-body">
+              <div className="damage-scanner-camera-frame">
+                <video ref={transferScannerVideoRef} muted playsInline aria-label="Asset tag camera" />
+                <canvas ref={transferScannerCanvasRef} hidden />
+                <span className="damage-scanner-guide" aria-hidden="true" />
+              </div>
+              {transferScannerError && <div className="form-message error">{transferScannerError}</div>}
+              <button className="secondary-button" type="button" onClick={() => setTransferScannerOpen(false)}>Cancel</button>
+            </div>
           </div>
         </div>
       )}
@@ -13449,6 +13568,12 @@ function AuditPage({ currentUser }) {
   const [assetsList, setAssetsList] = useState([]);
   const [assetQuery, setAssetQuery] = useState("");
   const [showAssetSuggestions, setShowAssetSuggestions] = useState(false);
+  const [historyFilters, setHistoryFilters] = useState({
+    department_id: "",
+    status: "",
+    year: "",
+    session: "",
+  });
 
   useEffect(() => {
     loadAudits();
@@ -13607,6 +13732,37 @@ function AuditPage({ currentUser }) {
   };
 
   const canEditDelete = currentUser?.role === ROLES.SYSTEM_ADMIN;
+  const firstAuditYear = 2024;
+  const lastAuditYear = Math.max(firstAuditYear, new Date().getFullYear() + 5);
+  const auditYears = Array.from(
+    { length: lastAuditYear - firstAuditYear + 1 },
+    (_, index) => String(lastAuditYear - index),
+  );
+  const auditSessionById = new Map();
+  const orderedAudits = [...audits].sort((first, second) => {
+    const firstDate = String(first.scheduled_at || "").slice(0, 10);
+    const secondDate = String(second.scheduled_at || "").slice(0, 10);
+    return firstDate.localeCompare(secondDate) || Number(first.id) - Number(second.id);
+  });
+  const auditSessionsByScope = new Map();
+  orderedAudits.forEach((audit) => {
+    const year = String(audit.scheduled_at || "").slice(0, 4);
+    const scope = `${year}:${audit.department_id ?? "unassigned"}`;
+    const session = (auditSessionsByScope.get(scope) || 0) + 1;
+    auditSessionsByScope.set(scope, session);
+    auditSessionById.set(audit.id, session);
+  });
+  const filteredAudits = audits.filter((audit) => {
+    const scheduledYear = String(audit.scheduled_at || "").slice(0, 4);
+    return (
+      (!historyFilters.department_id ||
+        String(audit.department_id || "") === historyFilters.department_id) &&
+      (!historyFilters.status || audit.status === historyFilters.status) &&
+      (!historyFilters.year || scheduledYear === historyFilters.year) &&
+      (!historyFilters.session ||
+        String(auditSessionById.get(audit.id) || "") === historyFilters.session)
+    );
+  });
 
   const handleViewAudit = async (audit) => {
     setError(null);
@@ -13647,14 +13803,70 @@ function AuditPage({ currentUser }) {
     }
   };
 
-  const printAudit = (audit, details = {}) => {
-    const printWindow = window.open("", "_blank", "width=900,height=760");
+  const printAudit = (
+    audit,
+    details = {},
+    printWindow = window.open("", "_blank", "width=900,height=760"),
+  ) => {
     if (!printWindow) return;
     const scans = details.audit?.audit_scans || audit.audit_scans || audit.auditScans || [];
     const summary = details.summary || {};
-    const rows = scans.map((scan) => `<tr><td>${scan.asset?.property_number || scan.asset_id || "-"}</td><td>${scan.asset?.name || "-"}</td><td>${scan.found_department?.name || scan.foundDepartment?.name || scan.found_department_id || "-"}</td><td>${scan.result || "-"}</td></tr>`).join("");
-    printWindow.document.write(`<!doctype html><html><head><title>${audit.audit_number || "Audit"}</title><style>body{font:14px Arial,sans-serif;color:#172033;margin:36px}h1{margin:0}p{margin:6px 0 20px;color:#64748b}.meta{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin:20px 0}.meta b{display:block;color:#64748b;font-size:11px;text-transform:uppercase}table{width:100%;border-collapse:collapse}th,td{border:1px solid #d8dee9;padding:8px;text-align:left}th{background:#f1f5f9;font-size:11px;text-transform:uppercase}</style></head><body><h1>Physical Audit</h1><p>${audit.audit_number || "-"}</p><div class="meta"><div><b>Area</b>${audit.area || "-"}</div><div><b>Department</b>${audit.department?.name || audit.department_name || audit.department_id || "-"}</div><div><b>Scheduled</b>${audit.scheduled_at ? new Date(audit.scheduled_at).toLocaleDateString() : "-"}</div><div><b>Status</b>${audit.status || "-"}</div><div><b>Verified</b>${summary.verified ?? scans.filter((scan) => scan.result === "verified").length}</div><div><b>Wrong Department</b>${summary.wrong_department ?? scans.filter((scan) => scan.result === "wrong_department").length}</div></div><table><thead><tr><th>Property No.</th><th>Asset</th><th>Found Department</th><th>Result</th></tr></thead><tbody>${rows || '<tr><td colspan="4">No scans recorded.</td></tr>'}</tbody></table><script>window.print();</script></body></html>`);
+    const escapeHtml = (value) => String(value ?? "-").replace(/[&<>"']/g, (character) => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;",
+    })[character]);
+    const expectedRows = (details.expected_assets || []).map((asset) => `
+      <tr>
+        <td>${escapeHtml(asset.property_number)}</td>
+        <td>${escapeHtml(asset.name)}</td>
+        <td>${escapeHtml(asset.system_quantity)}</td>
+        <td>${escapeHtml(asset.physical_quantity)}</td>
+        <td>${escapeHtml(asset.variance)}</td>
+        <td>${escapeHtml(asset.result)}</td>
+      </tr>`).join("");
+    const scanRows = scans.map((scan) => `
+      <tr>
+        <td>${escapeHtml(scan.asset?.property_number || scan.asset_id)}</td>
+        <td>${escapeHtml(scan.asset?.name)}</td>
+        <td>${escapeHtml(scan.found_department?.name || scan.foundDepartment?.name || scan.found_department_id)}</td>
+        <td>${escapeHtml(scan.result)}</td>
+      </tr>`).join("");
+    printWindow.document.write(`<!doctype html>
+      <html><head><title>${escapeHtml(audit.audit_number || "Audit")}</title>
+      <style>body{font:14px Arial,sans-serif;color:#172033;margin:36px}h1{margin:0}h2{margin:28px 0 10px}p{margin:6px 0 20px;color:#64748b}.meta{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin:20px 0}.meta b{display:block;color:#64748b;font-size:11px;text-transform:uppercase}table{width:100%;border-collapse:collapse}th,td{border:1px solid #d8dee9;padding:8px;text-align:left}th{background:#f1f5f9;font-size:11px;text-transform:uppercase}</style>
+      </head><body><h1>Physical Audit</h1><p>${escapeHtml(audit.audit_number)}</p>
+      <div class="meta"><div><b>Area</b>${escapeHtml(audit.area)}</div>
+      <div><b>Department</b>${escapeHtml(audit.department?.name || audit.department_name || audit.department_id)}</div>
+      <div><b>Scheduled</b>${escapeHtml(audit.scheduled_at ? new Date(audit.scheduled_at).toLocaleDateString() : "-")}</div>
+      <div><b>Status</b>${escapeHtml(audit.status)}</div>
+      <div><b>Verified</b>${summary.verified ?? scans.filter((scan) => scan.result === "verified").length}</div>
+      <div><b>Unexpected Assets</b>${summary.unexpected_assets ?? scans.filter((scan) => scan.result === "unexpected").length}</div>
+      <div><b>Wrong Department</b>${summary.wrong_department ?? scans.filter((scan) => scan.result === "wrong_department").length}</div></div>
+      <h2>Expected asset checklist</h2><table><thead><tr><th>Property No.</th><th>Asset</th><th>Expected Qty</th><th>Physical Qty</th><th>Variance</th><th>Verification</th></tr></thead>
+      <tbody>${expectedRows || '<tr><td colspan="6">No expected assets recorded.</td></tr>'}</tbody></table>
+      <h2>Scan results</h2><table><thead><tr><th>Property No.</th><th>Asset</th><th>Found Department</th><th>Result</th></tr></thead>
+      <tbody>${scanRows || '<tr><td colspan="4">No scans recorded.</td></tr>'}</tbody></table>
+      <script>window.print();</script></body></html>`);
     printWindow.document.close();
+  };
+
+  const handlePrintAudit = async (audit) => {
+    const printWindow = window.open("", "_blank", "width=900,height=760");
+    if (!printWindow) return;
+
+    try {
+      const details = await pcmsApi.fetchAudit(audit.id);
+      const departmentName = departments.find(
+        (department) => String(department.id) === String(audit.department_id),
+      )?.name;
+      printAudit({ ...audit, department_name: departmentName }, details, printWindow);
+    } catch (err) {
+      printWindow.close();
+      setError(err.message);
+    }
   };
 
   return (
@@ -13894,6 +14106,89 @@ function AuditPage({ currentUser }) {
         />
       )}
 
+      <div className="data-toolbar audit-history-filters" aria-label="Filter audit history">
+        <label>
+          Department
+          <select
+            value={historyFilters.department_id}
+            onChange={(event) =>
+              setHistoryFilters({ ...historyFilters, department_id: event.target.value })
+            }
+          >
+            <option value="">All departments</option>
+            {departments.map((department) => (
+              <option key={department.id} value={department.id}>
+                {department.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Status
+          <select
+            value={historyFilters.status}
+            onChange={(event) =>
+              setHistoryFilters({ ...historyFilters, status: event.target.value })
+            }
+          >
+            <option value="">All statuses</option>
+            <option value="scheduled">Scheduled</option>
+            <option value="completed">Completed</option>
+          </select>
+        </label>
+        <label>
+          From
+          <select
+            value={historyFilters.year}
+            onChange={(event) => setHistoryFilters({
+              ...historyFilters,
+              year: event.target.value,
+              session: event.target.value ? historyFilters.session : "",
+            })}
+          >
+            <option value="">All years</option>
+            {auditYears.map((year) => (
+              <option key={year} value={year}>{year}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Sessions
+          <select
+            value={historyFilters.session}
+            disabled={!historyFilters.year}
+            onChange={(event) =>
+              setHistoryFilters({ ...historyFilters, session: event.target.value })
+            }
+          >
+            <option value="">
+              {historyFilters.year ? "All sessions" : "Select a year first"}
+            </option>
+            <option value="1">1st audit session</option>
+            <option value="2">2nd audit session</option>
+          </select>
+        </label>
+        {(historyFilters.department_id ||
+          historyFilters.status ||
+          historyFilters.year ||
+          historyFilters.session) && (
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={() =>
+              setHistoryFilters({
+                department_id: "",
+                status: "",
+                year: "",
+                session: "",
+              })
+            }
+          >
+            Clear filters
+          </button>
+        )}
+      </div>
+
       {loading ? (
         <div className="loading-card">Loading audits...</div>
       ) : (
@@ -13911,12 +14206,16 @@ function AuditPage({ currentUser }) {
               </tr>
             </thead>
             <tbody>
-              {audits.length === 0 ? (
+              {filteredAudits.length === 0 ? (
                 <tr>
-                  <td colSpan="7">No audits scheduled yet</td>
+                  <td colSpan="7">
+                    {audits.length === 0
+                      ? "No audit sessions yet."
+                      : "No audit sessions match these filters."}
+                  </td>
                 </tr>
               ) : (
-                audits.map((item) => (
+                filteredAudits.map((item) => (
                   <tr key={item.id}>
                     <td>
                       <strong>{item.area}</strong>
@@ -13958,7 +14257,7 @@ function AuditPage({ currentUser }) {
                           type="button"
                           title="Print audit"
                           aria-label={`Print ${item.audit_number}`}
-                          onClick={() => printAudit(item)}
+                          onClick={() => handlePrintAudit(item)}
                         >
                           <Printer size={14} />
                         </button>
@@ -14104,7 +14403,16 @@ function AuditVerificationModal({ details, onClose, onPrint, onCountAsset, onCou
     <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="audit-verification-title">
       <div className="modal-card wide-modal audit-verification-modal">
         <div className="modal-header"><h3 id="audit-verification-title">Audit Verification</h3><button className="icon-button" type="button" onClick={onClose} aria-label="Close"><X size={18} /></button></div>
-        <div className="asset-detail-grid"><div><span className="asset-detail-label">Audit No.</span><strong>{audit.audit_number || "-"}</strong></div><div><span className="asset-detail-label">Area</span><strong>{audit.area || "-"}</strong></div><div><span className="asset-detail-label">Type</span><strong>{audit.audit_type || "assets"}</strong></div><div><span className="asset-detail-label">Status</span><strong>{audit.status || "-"}</strong></div>{includesAssets && <><div><span className="asset-detail-label">Expected Assets</span><strong>{summary.expected ?? 0}</strong></div><div><span className="asset-detail-label">Verified</span><strong>{summary.verified ?? 0}</strong></div><div><span className="asset-detail-label">Unverified</span><strong>{summary.unverified ?? 0}</strong></div><div><span className="asset-detail-label">Wrong Department</span><strong>{summary.wrong_department ?? 0}</strong></div><div><span className="asset-detail-label">Missing</span><strong>{summary.missing ?? 0}</strong></div></>}{includesSupplies && <><div><span className="asset-detail-label">Expected Supplies</span><strong>{summary.expected_supplies ?? 0}</strong></div><div><span className="asset-detail-label">Counted Supplies</span><strong>{summary.counted_supplies ?? 0}</strong></div></>}</div>
+        <div className="asset-detail-grid"><div><span className="asset-detail-label">Audit No.</span><strong>{audit.audit_number || "-"}</strong></div><div><span className="asset-detail-label">Area</span><strong>{audit.area || "-"}</strong></div><div><span className="asset-detail-label">Department</span><strong>{audit.department?.name || audit.department_name || audit.department_id || "-"}</strong></div><div><span className="asset-detail-label">Type</span><strong>{audit.audit_type || "assets"}</strong></div><div><span className="asset-detail-label">Status</span><strong>{audit.status || "-"}</strong></div>{includesAssets && <><div><span className="asset-detail-label">Expected Assets</span><strong>{summary.expected ?? 0}</strong></div><div><span className="asset-detail-label">Verified</span><strong>{summary.verified ?? 0}</strong></div><div><span className="asset-detail-label">Unverified</span><strong>{summary.unverified ?? 0}</strong></div><div><span className="asset-detail-label">Unexpected Assets</span><strong>{summary.unexpected_assets ?? 0}</strong></div><div><span className="asset-detail-label">Wrong Department</span><strong>{summary.wrong_department ?? 0}</strong></div><div><span className="asset-detail-label">Missing</span><strong>{summary.missing ?? 0}</strong></div></>}{includesSupplies && <><div><span className="asset-detail-label">Expected Supplies</span><strong>{summary.expected_supplies ?? 0}</strong></div><div><span className="asset-detail-label">Counted Supplies</span><strong>{summary.counted_supplies ?? 0}</strong></div></>}</div>
+        {includesAssets && (
+          <p className="modal-subtitle" style={{ marginTop: 10 }}>
+            {audit.asset_snapshot_created_at
+              ? `Expected assets were saved for this session on ${new Date(audit.asset_snapshot_created_at).toLocaleString()}.`
+              : audit.status === "completed"
+                ? "Legacy audit: the original asset baseline was not saved; only recorded scans and counts are available."
+                : "Legacy audit: no fixed asset baseline was saved; the open checklist uses current allocations."}
+          </p>
+        )}
         <div style={{ display: "grid", gap: 6, marginTop: 16 }}>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 13, color: "#526175" }}>
             <strong>Audit progress</strong>
@@ -14115,7 +14423,7 @@ function AuditVerificationModal({ details, onClose, onPrint, onCountAsset, onCou
           </div>
         </div>
         {expectedSupplies.length > 0 && <div className="table-card audit-supply-counts" style={{ marginTop: 16, overflow: "auto" }}><table><thead><tr><th>SKU</th><th>Supply</th><th>Expected</th><th>Counted</th><th>Variance</th><th>Status</th><th>Action</th></tr></thead><tbody>{expectedSupplies.map((supply) => <tr key={supply.id}><td>{supply.sku || "-"}</td><td>{supply.name || "-"}</td><td>{supply.expected_quantity ?? 0}</td><td>{supply.counted_quantity ?? "-"}</td><td>{supply.variance ?? "-"}</td><td><span className={`status ${supply.status === "matched" ? "success" : supply.status === "variance" ? "danger" : "warning"}`}>{supply.status}</span></td><td>{audit.status !== "completed" && <button className="small-button" type="button" onClick={() => onCountSupply?.(audit.id, supply)}>{supply.status === "uncounted" ? "Count" : "Recount"}</button>}</td></tr>)}</tbody></table></div>}
-        {includesAssets && <><div className="table-card" style={{ marginTop: 16, maxHeight: 280, overflow: "auto" }}><table><thead><tr><th>Property No.</th><th>Asset</th><th>System Qty</th><th>Physical Qty</th><th>Variance</th><th>Status</th><th>Action</th></tr></thead><tbody>{expectedAssets.length === 0 ? <tr><td colSpan="7">No expected assets found for this department.</td></tr> : expectedAssets.map((asset) => <tr key={asset.id}><td>{asset.property_number || "-"}</td><td>{asset.name || "-"}</td><td>{asset.system_quantity ?? 0}</td><td>{asset.physical_quantity ?? "-"}</td><td>{asset.variance ?? "-"}</td><td><span className={`status ${asset.quantity_status === "matched" ? "success" : asset.quantity_status === "uncounted" ? "warning" : "danger"}`}>{asset.quantity_status}</span></td><td>{audit.status !== "completed" && <button className="small-button" type="button" onClick={() => onCountAsset?.(audit.id, asset)}>{asset.quantity_status === "uncounted" ? "Count" : "Recount"}</button>}</td></tr>)}</tbody></table></div>
+        {includesAssets && <><div className="table-card" style={{ marginTop: 16, maxHeight: 280, overflow: "auto" }}><table><thead><tr><th>Property No.</th><th>Asset</th><th>Expected Qty</th><th>Physical Qty</th><th>Variance</th><th>Verification</th><th>Count Status</th><th>Action</th></tr></thead><tbody>{expectedAssets.length === 0 ? <tr><td colSpan="8">No expected assets were recorded for this audit session.</td></tr> : expectedAssets.map((asset) => <tr key={asset.id}><td>{asset.property_number || "-"}</td><td>{asset.name || "-"}</td><td>{asset.system_quantity ?? 0}</td><td>{asset.physical_quantity ?? "-"}</td><td>{asset.variance ?? "-"}</td><td><span className={`status ${asset.result === "verified" ? "success" : asset.result === "missing" || asset.result === "wrong_department" ? "danger" : "warning"}`}>{String(asset.result || "unverified").replaceAll("_", " ")}</span></td><td><span className={`status ${asset.quantity_status === "matched" ? "success" : asset.quantity_status === "uncounted" ? "warning" : "danger"}`}>{asset.quantity_status}</span></td><td>{audit.status !== "completed" && <button className="small-button" type="button" onClick={() => onCountAsset?.(audit.id, asset)}>{asset.quantity_status === "uncounted" ? "Count" : "Recount"}</button>}</td></tr>)}</tbody></table></div>
         <div className="table-card" style={{ marginTop: 16, maxHeight: 320, overflow: "auto" }}><table><thead><tr><th>Property No.</th><th>Asset</th><th>Found Department</th><th>Result</th></tr></thead><tbody>{scans.length === 0 ? <tr><td colSpan="4">No scans recorded.</td></tr> : scans.map((scan) => <tr key={scan.id}><td>{scan.asset?.property_number || scan.asset_id || "-"}</td><td>{scan.asset?.name || "-"}</td><td>{scan.found_department?.name || scan.foundDepartment?.name || scan.found_department_id || "-"}</td><td><span className={`status ${scan.result === "verified" ? "success" : "warning"}`}>{scan.result || "-"}</span></td></tr>)}</tbody></table></div></>}
         <div className="modal-actions"><button className="secondary-button" type="button" onClick={onClose}>Close</button><button className="primary-button" type="button" onClick={onPrint}><Printer size={15} /> Print Verification</button></div>
       </div>

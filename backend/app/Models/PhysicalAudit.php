@@ -18,10 +18,12 @@ class PhysicalAudit extends Model
         'auditor_id',
         'scheduled_at',
         'status',
+        'asset_snapshot_created_at',
     ];
 
     protected $casts = [
         'scheduled_at' => 'datetime',
+        'asset_snapshot_created_at' => 'datetime',
     ];
 
     public function auditScans(): HasMany
