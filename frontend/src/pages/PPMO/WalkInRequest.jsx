@@ -10,12 +10,28 @@ const documentTypes = [
   { value: 'gate_pass', label: 'Gate Pass', icon: PackageCheck },
 ];
 
+const unitOptions = [
+  'piece', 'pcs', 'unit', 'set', 'pair', 'box', 'pack', 'ream', 'sheet',
+  'bottle', 'can', 'tube', 'roll', 'bag', 'carton', 'bundle', 'dozen',
+  'kg', 'g', 'liter', 'ml', 'meter', 'cm', 'lot',
+];
+
+function normalizeUnit(value) {
+  const label = String(value || '').trim();
+  const standardUnit = unitOptions.find((unit) => unit.toLowerCase() === label.toLowerCase());
+  return {
+    unit: standardUnit || (label ? 'other' : ''),
+    customUnit: standardUnit || !label ? '' : label,
+  };
+}
+
 const emptyLineItem = () => ({
   item: '',
   particular: '',
   description: '',
   qty: 1,
   unit: '',
+  customUnit: '',
   remarks: '',
   unitPrice: '',
   amount: '',
@@ -30,6 +46,15 @@ const emptyLineItem = () => ({
 
 function formatCurrency(value) {
   return new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP' }).format(Number(value || 0));
+}
+
+function getErrorMessage(error, fallback) {
+  try {
+    const details = JSON.parse(error?.message || '');
+    return details.userMessage || details.payload?.message || fallback;
+  } catch {
+    return error?.message || fallback;
+  }
 }
 
 export default function WalkInRequest() {
@@ -47,6 +72,9 @@ export default function WalkInRequest() {
   const [assetSearch, setAssetSearch] = useState('');
   const [assetOptions, setAssetOptions] = useState([]);
   const [selectedGateAsset, setSelectedGateAsset] = useState(null);
+  const [gateAssetUnits, setGateAssetUnits] = useState([]);
+  const [selectedGateUnitId, setSelectedGateUnitId] = useState('');
+  const [loadingGateAssetUnits, setLoadingGateAssetUnits] = useState(false);
   const [alreadyApproved, setAlreadyApproved] = useState(false);
   const [approvalDocument, setApprovalDocument] = useState(null);
   const [approvalPreviewUrl, setApprovalPreviewUrl] = useState(null);
@@ -58,6 +86,7 @@ export default function WalkInRequest() {
     walk_in_notes: '',
     department_id: '',
     unit: '',
+    unit_custom: '',
     branch: '',
     priority: 'normal',
     date_needed: '',
@@ -83,10 +112,12 @@ export default function WalkInRequest() {
         setSelectedRequester(request?.requester || null);
         setAlreadyApproved(false);
         updateField('request_type', 'purchase_order');
+        const normalizedUnit = normalizeUnit(request?.unit);
         setForm((current) => ({
           ...current,
           department_id: request?.department_id || current.department_id,
-          unit: request?.unit || current.unit,
+          unit: normalizedUnit.unit || current.unit,
+          unit_custom: normalizedUnit.customUnit || current.unit_custom,
           branch: request?.branch || current.branch,
           priority: request?.priority || current.priority,
           date_needed: request?.date_needed || current.date_needed,
@@ -96,7 +127,7 @@ export default function WalkInRequest() {
           setLineItems(request.line_items.map((line) => ({
             ...emptyLineItem(),
             qty: line.qty || line.quantity || 1,
-            unit: line.unit || '',
+            ...normalizeUnit(line.unit),
             item: line.item || line.particular || line.description || '',
             particular: line.particular || line.item || line.description || '',
             description: line.description || '',
@@ -105,7 +136,7 @@ export default function WalkInRequest() {
           })));
         }
       })
-      .catch((err) => setError(err.message || 'Unable to load the original request for procurement.'));
+      .catch((err) => setError(getErrorMessage(err, 'Unable to load the original request for procurement.')));
   }, [procurementForId]);
 
   const subtotal = useMemo(() => lineItems.reduce((sum, line) => {
@@ -207,12 +238,13 @@ export default function WalkInRequest() {
   const selectLineItem = (index, catalogItem) => {
     const qty = Number(lineItems[index]?.qty || 1);
     const unitPrice = Number(catalogItem.unit_cost ?? catalogItem.unit_price ?? 0);
+    const normalizedUnit = normalizeUnit(catalogItem.unit || lineItems[index]?.unit || 'unit');
     setLineItems((current) => current.map((line, i) => i === index ? {
       ...line,
       item: catalogItem.name,
       particular: catalogItem.name,
       description: catalogItem.description || line.description,
-      unit: catalogItem.unit || line.unit || 'unit',
+      ...normalizedUnit,
       unitPrice,
       amount: qty * unitPrice,
       type: catalogItem.item_type,
@@ -224,10 +256,27 @@ export default function WalkInRequest() {
     } : line));
   };
 
-  const selectGateAsset = (asset) => {
+  const selectedGateUnit = gateAssetUnits.find(
+    (unit) => String(unit.id) === String(selectedGateUnitId),
+  );
+  const selectedGateUnitCanMove = selectedGateUnit?.status === 'assigned'
+    && Boolean(selectedGateUnit?.custodian_id);
+
+  const selectGateAsset = async (asset) => {
     setSelectedGateAsset(asset);
+    setSelectedGateUnitId('');
+    setGateAssetUnits([]);
     setAssetSearch(asset.name || asset.property_number || '');
     setAssetOptions([]);
+    setLoadingGateAssetUnits(true);
+    try {
+      const units = await pcmsApi.assetUnits(asset.id);
+      setGateAssetUnits(Array.isArray(units) ? units : []);
+    } catch (loadError) {
+      setError(getErrorMessage(loadError, 'Unable to load physical units for this asset.'));
+    } finally {
+      setLoadingGateAssetUnits(false);
+    }
     if (asset.department_id && !form.department_id) {
       updateField('department_id', asset.department_id);
     }
@@ -250,6 +299,8 @@ export default function WalkInRequest() {
     setAssetSearch('');
     setAssetOptions([]);
     setSelectedGateAsset(null);
+    setGateAssetUnits([]);
+    setSelectedGateUnitId('');
     setAlreadyApproved(false);
     setApprovalDocument(null);
     setLineItems([emptyLineItem()]);
@@ -259,6 +310,7 @@ export default function WalkInRequest() {
       walk_in_notes: '',
       department_id: '',
       unit: '',
+      unit_custom: '',
       branch: '',
       priority: 'normal',
       date_needed: '',
@@ -289,8 +341,13 @@ export default function WalkInRequest() {
       setError('Date needed is required for Request Form submissions.');
       return;
     }
-    if (form.request_type === 'gate_pass' && (!selectedGateAsset || !form.valid_until || !form.purpose.trim())) {
-      setError('Select an asset, purpose, and expected return date for the Gate Pass.');
+    if (form.request_type === 'gate_pass' && (
+      !selectedGateAsset ||
+      !selectedGateUnitCanMove ||
+      !form.valid_until ||
+      !form.purpose.trim()
+    )) {
+      setError('Select an assigned physical unit with a current holder, purpose, and expected return date for the Gate Pass.');
       return;
     }
     if (alreadyApproved && form.request_type === 'gate_pass') {
@@ -328,6 +385,7 @@ export default function WalkInRequest() {
         response = await pcmsApi.createWalkInGatePass({
           ...common,
           asset_id: selectedGateAsset.id,
+          asset_unit_id: selectedGateUnit.id,
           valid_until: form.valid_until,
           destination: form.destination || undefined,
           vehicle: form.vehicle || undefined,
@@ -338,7 +396,9 @@ export default function WalkInRequest() {
       } else {
         response = await pcmsApi.createWalkInPurchaseRequest({
           ...common,
-          unit: form.unit || undefined,
+          unit: form.unit === 'other'
+            ? form.unit_custom.trim() || undefined
+            : form.unit || undefined,
           branch: form.branch || undefined,
           priority: form.priority,
           date_needed: form.date_needed || undefined,
@@ -354,7 +414,7 @@ export default function WalkInRequest() {
             description: line.description || undefined,
             quantity: Number(line.qty) || 1,
             qty: Number(line.qty) || 1,
-            unit: line.unit,
+            unit: line.unit === 'other' ? line.customUnit.trim() : line.unit,
             remarks: line.remarks,
             unit_price: Number(line.unitPrice || 0),
             unitPrice: Number(line.unitPrice || 0),
@@ -368,7 +428,7 @@ export default function WalkInRequest() {
       setSuccess(`Walk-in ${documentTypes.find((type) => type.value === form.request_type)?.label || 'document'} ${reference} submitted.`);
       resetForm();
     } catch (err) {
-      setError(err.message || 'Failed to submit walk-in document.');
+      setError(getErrorMessage(err, 'Failed to submit walk-in document.'));
     } finally {
       setSubmitting(false);
     }
@@ -451,6 +511,7 @@ export default function WalkInRequest() {
                           onClick={() => {
                             setSelectedRequester(option);
                             setRequesterSearch('');
+                            updateField('department_id', option.department_id ? String(option.department_id) : '');
                           }}
                         >
                           <strong>{option.full_name || `${option.first_name || ''} ${option.last_name || ''}`.trim()}</strong>
@@ -499,6 +560,8 @@ export default function WalkInRequest() {
                       value={selectedGateAsset ? `${selectedGateAsset.name} (${selectedGateAsset.property_number || selectedGateAsset.asset_id || 'Asset'})` : assetSearch}
                       onChange={(e) => {
                         setSelectedGateAsset(null);
+                        setGateAssetUnits([]);
+                        setSelectedGateUnitId('');
                         setAssetSearch(e.target.value);
                       }}
                       placeholder="Search asset by name, property no., serial no."
@@ -515,6 +578,77 @@ export default function WalkInRequest() {
                     )}
                   </div>
                 </div>
+                {selectedGateAsset && (
+                  <>
+                    <div className="walkin-field-group">
+                      <label htmlFor="walkin-physical-unit">Physical Unit</label>
+                      <select
+                        id="walkin-physical-unit"
+                        value={selectedGateUnitId}
+                        onChange={(event) => setSelectedGateUnitId(event.target.value)}
+                        required
+                        disabled={loadingGateAssetUnits || gateAssetUnits.length === 0}
+                      >
+                        <option value="">
+                          {loadingGateAssetUnits
+                            ? 'Loading physical units...'
+                            : gateAssetUnits.length === 0
+                              ? 'No physical units registered'
+                              : 'Select an assigned unit'}
+                        </option>
+                        {gateAssetUnits.map((unit) => {
+                          const holder = unit.custodian;
+                          const holderName = holder
+                            ? holder.full_name ||
+                              [holder.first_name, holder.last_name].filter(Boolean).join(' ') ||
+                              holder.email
+                            : 'No assigned holder';
+                          return (
+                            <option
+                              key={unit.id}
+                              value={unit.id}
+                              disabled={unit.status !== 'assigned' || !unit.custodian_id}
+                            >
+                              {unit.unit_code || `Unit ${unit.id}`}
+                              {unit.serial_number ? ` · S/N ${unit.serial_number}` : ''}
+                              {` · ${unit.status || 'unknown'} · ${holderName}`}
+                            </option>
+                          );
+                        })}
+                      </select>
+                      {gateAssetUnits.length === 0 && !loadingGateAssetUnits && (
+                        <small className="gate-pass-holder-warning">
+                          Register physical units for this asset before generating a pass.
+                        </small>
+                      )}
+                    </div>
+                    <div className="walkin-field-group">
+                      <label htmlFor="walkin-physical-holder">Current Holder</label>
+                      <input
+                        id="walkin-physical-holder"
+                        value={
+                          selectedGateUnit?.custodian?.full_name ||
+                          [
+                            selectedGateUnit?.custodian?.first_name,
+                            selectedGateUnit?.custodian?.last_name,
+                          ].filter(Boolean).join(' ') ||
+                          selectedGateUnit?.custodian?.email ||
+                          (selectedGateUnit?.custodian_id
+                            ? `Holder record unavailable (${selectedGateUnit.custodian_id})`
+                            : '') ||
+                          ''
+                        }
+                        placeholder="Select a physical unit to view its holder"
+                        readOnly
+                      />
+                      {selectedGateUnit && !selectedGateUnitCanMove && (
+                        <small className="gate-pass-holder-warning">
+                          Only assigned physical units with a current holder can have a gate pass.
+                        </small>
+                      )}
+                    </div>
+                  </>
+                )}
                 <div className="walkin-field-row">
                   <div className="walkin-field-group">
                     <label htmlFor="walkin-destination">Destination</label>
@@ -565,7 +699,28 @@ export default function WalkInRequest() {
                 </div>
                 <div className="walkin-field-group">
                   <label htmlFor="walkin-unit">Unit</label>
-                  <input id="walkin-unit" type="text" value={form.unit} onChange={(e) => updateField('unit', e.target.value)} />
+                  <select
+                    id="walkin-unit"
+                    value={unitOptions.includes(form.unit) ? form.unit : form.unit ? 'other' : ''}
+                    onChange={(event) => {
+                      updateField('unit', event.target.value);
+                      updateField('unit_custom', '');
+                    }}
+                  >
+                    <option value="">Select unit</option>
+                    {unitOptions.map((unit) => <option key={unit} value={unit}>{unit}</option>)}
+                    <option value="other">Other...</option>
+                  </select>
+                  {form.unit === 'other' && (
+                    <input
+                      id="walkin-unit-custom"
+                      type="text"
+                      value={form.unit_custom}
+                      onChange={(event) => updateField('unit_custom', event.target.value)}
+                      placeholder="Enter unit"
+                      required
+                    />
+                  )}
                 </div>
               </>
             )}
@@ -646,7 +801,7 @@ export default function WalkInRequest() {
                   <tr>
                     <th>Item / Particular</th>
                     <th style={{ width: 82 }}>Qty</th>
-                    <th style={{ width: 90 }}>Unit</th>
+                    <th style={{ width: 150 }}>Unit</th>
                     <th style={{ width: 120 }}>Unit Price</th>
                     <th style={{ width: 130 }}>Amount</th>
                     <th>Remarks</th>
@@ -679,7 +834,33 @@ export default function WalkInRequest() {
                         </div>
                       </td>
                       <td><input type="number" min="1" value={line.qty} onChange={(e) => updateLineItem(index, 'qty', e.target.value)} /></td>
-                      <td><input type="text" value={line.unit} onChange={(e) => updateLineItem(index, 'unit', e.target.value)} placeholder="pcs" /></td>
+                      <td>
+                        <div className="walkin-unit-field">
+                          <select
+                            aria-label={`Unit for item ${index + 1}`}
+                            value={unitOptions.includes(line.unit) ? line.unit : line.unit ? 'other' : ''}
+                            onChange={(event) => {
+                              const value = event.target.value;
+                              setLineItems((current) => current.map((item, i) => i === index
+                                ? { ...item, unit: value, customUnit: '' }
+                                : item));
+                            }}
+                          >
+                            <option value="">Select unit</option>
+                            {unitOptions.map((unit) => <option key={unit} value={unit}>{unit}</option>)}
+                            <option value="other">Other...</option>
+                          </select>
+                          {line.unit === 'other' && (
+                            <input
+                              type="text"
+                              aria-label={`Custom unit for item ${index + 1}`}
+                              value={line.customUnit}
+                              onChange={(event) => updateLineItem(index, 'customUnit', event.target.value)}
+                              placeholder="Enter unit"
+                            />
+                          )}
+                        </div>
+                      </td>
                       <td><input type="number" min="0" step="0.01" value={line.unitPrice} onChange={(e) => updateLineItem(index, 'unitPrice', e.target.value)} /></td>
                       <td><input type="text" value={formatCurrency(line.amount)} readOnly /></td>
                       <td><input type="text" value={line.remarks} onChange={(e) => updateLineItem(index, 'remarks', e.target.value)} /></td>

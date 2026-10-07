@@ -997,6 +997,7 @@ export async function fetchGatePasses({ limit = 200 } = {}) {
 export async function createGatePass(payload) {
   const record = {
     asset_id: payload.asset_id,
+    asset_unit_id: payload.asset_unit_id,
     purpose: payload.purpose,
     valid_until: payload.valid_until,
   };
@@ -1307,6 +1308,17 @@ export async function createSupabaseDepartment(payload) {
   });
 }
 
+export async function updateDepartment(id, payload) {
+  return request(`/departments/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteDepartment(id) {
+  return request(`/departments/${id}`, { method: "DELETE" });
+}
+
 export async function fetchNotifications() {
   return request("/notifications");
 }
@@ -1350,6 +1362,13 @@ export async function createUser(payload) {
   });
 }
 
+export async function verifyUserActionPassword(password) {
+  return request("/users/verify-action-password", {
+    method: "POST",
+    body: JSON.stringify({ password }),
+  });
+}
+
 export async function updateUser(id, payload) {
   return request(`/users/${id}`, {
     method: "PATCH",
@@ -1370,6 +1389,8 @@ export const pcmsApi = {
   assets: (opts) => fetchBackendAssets(opts),
   departments: () => fetchSupabaseDepartments(),
   createDepartment: (payload) => createSupabaseDepartment(payload),
+  updateDepartment: (id, payload) => updateDepartment(id, payload),
+  deleteDepartment: (id) => deleteDepartment(id),
   markAllNotificationsRead: () => markAllNotificationsRead(),
   markNotificationRead: (source, id) => markNotificationRead(source, id),
   asset: (id) => fetchBackendAsset(id),
@@ -1515,6 +1536,7 @@ export const pcmsApi = {
   fetchUsers: (opts) => fetchUsers(opts),
   users: (opts) => fetchUsers(opts),
   createUser: (payload) => createUser(payload),
+  verifyUserActionPassword: (password) => verifyUserActionPassword(password),
   updateUser: (id, payload) => updateUser(id, payload),
   deactivateUser: (id) => deactivateUser(id),
   systemSettings: () => fetchSystemSettings(),

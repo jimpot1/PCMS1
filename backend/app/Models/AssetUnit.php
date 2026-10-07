@@ -41,4 +41,9 @@ class AssetUnit extends Model
     {
         return $this->hasMany(AssetUnitMovement::class);
     }
+
+    public function assignments(): HasMany
+    {
+        return $this->hasMany(AssetAssignment::class);
+    }
 }

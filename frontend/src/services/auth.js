@@ -235,6 +235,19 @@ export async function getCurrentSession() {
     return null;
   }
 
+  if (response.status === 403) {
+    const payload = await response.json().catch(() => ({}));
+    if (payload.account_deactivated) {
+      persistCurrentUser(null);
+      window.dispatchEvent(
+        new CustomEvent("pcms:account-deactivated", {
+          detail: { message: payload.message },
+        }),
+      );
+      return null;
+    }
+  }
+
   if (!response.ok) {
     throw new Error('Unable to verify your session.');
   }

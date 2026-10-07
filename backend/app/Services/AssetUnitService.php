@@ -11,10 +11,31 @@ class AssetUnitService
 {
     public function createForAsset(Asset $asset): void
     {
-        $count = AssetUnit::where('asset_id', $asset->id)->count();
+        $units = AssetUnit::where('asset_id', $asset->id)->get(['id', 'status', 'unit_code']);
+        $activeCount = $units->where('status', '!=', 'removed')->count();
         $target = max(1, (int) ($asset->quantity ?? 1));
+        $lastSequence = $units->reduce(function (int $highest, AssetUnit $unit): int {
+            if (preg_match('/-(\d+)$/', (string) $unit->unit_code, $matches) !== 1) {
+                return $highest;
+            }
 
-        for ($sequence = $count + 1; $sequence <= $target; $sequence++) {
+            return max($highest, (int) $matches[1]);
+        }, 0);
+
+        if ($activeCount < $target) {
+            $removedUnitIds = $units
+                ->where('status', 'removed')
+                ->sortBy('id')
+                ->take($target - $activeCount)
+                ->pluck('id');
+
+            if ($removedUnitIds->isNotEmpty()) {
+                AssetUnit::whereKey($removedUnitIds)->update(['status' => 'available']);
+                $activeCount += $removedUnitIds->count();
+            }
+        }
+
+        for ($sequence = $lastSequence + 1; $activeCount < $target; $sequence++, $activeCount++) {
             $unit = AssetUnit::create([
                 'asset_id' => $asset->id,
                 'unit_code' => sprintf('%s-%03d', $asset->asset_id, $sequence),

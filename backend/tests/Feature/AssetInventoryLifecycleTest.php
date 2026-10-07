@@ -41,6 +41,61 @@ class AssetInventoryLifecycleTest extends TestCase
         ]);
     }
 
+    public function test_walk_in_requester_options_include_department_id_for_autofill(): void
+    {
+        $staff = $this->makeUser('PPMO Staff', 'Walk In Staff');
+        $department = Department::create([
+            'code' => 'WALKIN-' . Str::upper(Str::random(6)),
+            'name' => 'Information Technology',
+            'is_active' => true,
+        ]);
+        $requester = $this->makeUser('Requester', 'Walk In Requester');
+        $requester->update(['department' => ' information technology ']);
+
+        $this->actingAs($staff)
+            ->getJson('/api/purchase-requests/walk-in/requesters?search=Walk%20In%20Requester')
+            ->assertOk()
+            ->assertJsonPath('data.0.id', $requester->id)
+            ->assertJsonPath('data.0.department_id', $department->id);
+    }
+
+    public function test_physical_unit_list_includes_the_current_holder_for_gate_pass_selection(): void
+    {
+        $staff = $this->makeUser('PPMO Staff', 'Gate Pass Staff');
+        $holder = $this->makeUser('Requester', 'Current Holder');
+        $asset = Asset::create([
+            'asset_id' => 'AST-' . Str::upper(Str::random(8)),
+            'property_number' => 'PN-' . Str::upper(Str::random(8)),
+            'name' => 'Assigned Chair',
+            'quantity' => 1,
+            'available_quantity' => 0,
+            'condition' => 'good',
+            'status' => 'assigned',
+        ]);
+        $unit = \App\Models\AssetUnit::create([
+            'asset_id' => $asset->id,
+            'unit_code' => 'UNIT-' . Str::upper(Str::random(8)),
+            'status' => 'assigned',
+            'custodian_id' => $holder->id,
+            'condition' => 'good',
+        ]);
+        AssetAssignment::create([
+            'asset_id' => $asset->id,
+            'asset_unit_id' => $unit->id,
+            'assigned_to' => $holder->id,
+            'assigned_by' => $staff->id,
+            'assignment_type' => 'permanent',
+            'quantity' => 1,
+            'assigned_at' => now(),
+            'status' => 'active',
+        ]);
+
+        $this->actingAs($staff)
+            ->getJson("/api/assets/{$asset->id}/units")
+            ->assertOk()
+            ->assertJsonPath('data.0.custodian.full_name', $holder->full_name);
+    }
+
     public function test_low_stock_auto_requisition_is_disabled_by_default(): void
     {
         $this->assertFalse(\App\Http\Controllers\SystemSettingController::bool('low_stock_auto_requisition_enabled', false));

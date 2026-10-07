@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Asset;
+use App\Models\AssetUnit;
 use App\Services\AssetQrCodeService;
 use App\Services\AssetUnitService;
 use Illuminate\Http\JsonResponse;
@@ -11,6 +12,7 @@ use Illuminate\Http\Response;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class AssetController extends Controller
@@ -168,9 +170,79 @@ class AssetController extends Controller
             'property_number.unique' => 'This property number already exists. Please review the existing asset record or choose a different number.',
         ]);
 
-        $asset->update($validated);
+        $propertyNumberChanged = false;
+        $asset = DB::transaction(function () use ($asset, &$validated, &$propertyNumberChanged): Asset {
+            $asset = Asset::query()->lockForUpdate()->findOrFail($asset->id);
+            $quantityChanged = array_key_exists('quantity', $validated);
 
-        if ($asset->wasChanged('property_number')) {
+            if ($quantityChanged) {
+                $previousQuantity = (int) ($asset->quantity ?? 1);
+                $newQuantity = (int) $validated['quantity'];
+                $units = AssetUnit::query()
+                    ->where('asset_id', $asset->id)
+                    ->lockForUpdate();
+                $hasTrackedUnits = (clone $units)->exists();
+
+                if ($hasTrackedUnits) {
+                    $retainedUnits = (clone $units)->where('status', '!=', 'removed')->count();
+                    $unavailableUnits = (clone $units)
+                        ->whereNotIn('status', ['available', 'removed'])
+                        ->count();
+
+                    if ($newQuantity < $unavailableUnits) {
+                        throw ValidationException::withMessages([
+                            'quantity' => 'Quantity cannot be lower than the number of assigned or unavailable units.',
+                        ]);
+                    }
+
+                    $unitsToRemove = max(0, $retainedUnits - $newQuantity);
+                    if ($unitsToRemove > 0) {
+                        $availableUnits = (clone $units)
+                            ->where('status', 'available')
+                            ->orderByDesc('id')
+                            ->limit($unitsToRemove)
+                            ->get();
+
+                        if ($availableUnits->count() < $unitsToRemove) {
+                            throw ValidationException::withMessages([
+                                'quantity' => 'Quantity cannot be lower than the number of assigned or unavailable units.',
+                            ]);
+                        }
+
+                        AssetUnit::query()
+                            ->whereKey($availableUnits->modelKeys())
+                            ->update(['status' => 'removed']);
+                    }
+                } else {
+                    $availableQuantity = (int) ($asset->available_quantity ?? $previousQuantity);
+                    $newAvailableQuantity = $availableQuantity + $newQuantity - $previousQuantity;
+
+                    if ($newAvailableQuantity < 0) {
+                        throw ValidationException::withMessages([
+                            'quantity' => 'Quantity cannot be lower than the number of assigned units.',
+                        ]);
+                    }
+
+                    $validated['available_quantity'] = $newAvailableQuantity;
+                }
+            }
+
+            $asset->update($validated);
+            $propertyNumberChanged = $asset->wasChanged('property_number');
+
+            if ($quantityChanged && AssetUnit::where('asset_id', $asset->id)->exists()) {
+                app(AssetUnitService::class)->createForAsset($asset);
+                $asset->update([
+                    'available_quantity' => AssetUnit::where('asset_id', $asset->id)
+                        ->where('status', 'available')
+                        ->count(),
+                ]);
+            }
+
+            return $asset;
+        });
+
+        if ($propertyNumberChanged) {
             $asset->update(['qr_code_path' => AssetQrCodeService::generate($asset)]);
         }
 
@@ -178,7 +250,7 @@ class AssetController extends Controller
 
         return response()->json([
             'success' => true,
-            'asset' => $asset->fresh(['category', 'department']),
+            'asset' => $this->withUnitAvailability($asset->fresh(['category', 'department'])),
         ]);
     }
 

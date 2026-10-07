@@ -12,6 +12,30 @@ class UserPasswordUpdateTest extends TestCase
 {
     use RefreshDatabase;
 
+    public function test_user_management_action_password_verification_accepts_the_authenticated_users_password(): void
+    {
+        $admin = $this->createUser('admin@example.com', 'System Administrator', 'AdminPass123!');
+
+        $this->actingAs($admin, 'web')
+            ->postJson('/api/users/verify-action-password', [
+                'password' => 'AdminPass123!',
+            ])
+            ->assertOk()
+            ->assertJsonPath('verified', true);
+    }
+
+    public function test_user_management_action_password_verification_rejects_an_incorrect_password(): void
+    {
+        $admin = $this->createUser('admin@example.com', 'System Administrator', 'AdminPass123!');
+
+        $this->actingAs($admin, 'web')
+            ->postJson('/api/users/verify-action-password', [
+                'password' => 'WrongPass123!',
+            ])
+            ->assertUnprocessable()
+            ->assertJsonPath('message', 'The password you entered is incorrect.');
+    }
+
     public function test_user_update_hashes_a_new_password(): void
     {
         $admin = $this->createUser('admin@example.com', 'System Administrator', 'AdminPass123!');

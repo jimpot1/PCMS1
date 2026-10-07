@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\OtpVerification;
 use App\Models\User;
+use App\Http\Middleware\EnsureActiveAccount;
 use App\Services\OtpVerificationService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
@@ -58,7 +59,10 @@ class AuthController extends Controller
         }
 
         if ($user->status !== 'active') {
-            return response()->json(['message' => 'Account is not active.'], 403);
+            return response()->json([
+                'message' => EnsureActiveAccount::INACTIVE_ACCOUNT_MESSAGE,
+                'account_deactivated' => true,
+            ], 403);
         }
 
         if (! Hash::check($request->input('password'), $user->password_hash)) {
@@ -127,6 +131,13 @@ class AuthController extends Controller
             return response()->json(['message' => 'Invalid or expired verification code.'], 422);
         }
 
+        if ($user->status !== 'active') {
+            return response()->json([
+                'message' => EnsureActiveAccount::INACTIVE_ACCOUNT_MESSAGE,
+                'account_deactivated' => true,
+            ], 403);
+        }
+
         try {
             $this->otpVerificationService->verifyOtp($user, $request->input('otp'));
         } catch (\Throwable $throwable) {
@@ -186,6 +197,13 @@ class AuthController extends Controller
             return response()->json(['message' => 'Invalid user session.'], 404);
         }
 
+        if ($user->status !== 'active') {
+            return response()->json([
+                'message' => EnsureActiveAccount::INACTIVE_ACCOUNT_MESSAGE,
+                'account_deactivated' => true,
+            ], 403);
+        }
+
         try {
             $otpData = $this->otpVerificationService->createForUser($user);
         } catch (\Throwable $throwable) {
@@ -222,6 +240,21 @@ class AuthController extends Controller
             ]);
         }
 
+        if ($guardUser->status !== 'active') {
+            Auth::guard('web')->logout();
+            if ($request->hasSession()) {
+                $request->session()->invalidate();
+                $request->session()->regenerateToken();
+            }
+
+            return response()->json([
+                'authenticated' => false,
+                'user' => null,
+                'message' => EnsureActiveAccount::INACTIVE_ACCOUNT_MESSAGE,
+                'account_deactivated' => true,
+            ], 403);
+        }
+
         return response()->json([
             'authenticated' => true,
             'user' => $guardUser,
@@ -253,4 +286,3 @@ class AuthController extends Controller
         return response()->json(['message' => 'Password changed successfully.']);
     }
 }
-

@@ -22,6 +22,7 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'role' => \App\Http\Middleware\EnsureRole::class,
             'delete.admin' => \App\Http\Middleware\EnsureDeleteIsAdmin::class,
+            'active.account' => \App\Http\Middleware\EnsureActiveAccount::class,
         ]);
 
         $middleware->redirectGuestsTo(

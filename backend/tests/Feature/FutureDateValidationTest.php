@@ -7,6 +7,7 @@ use App\Http\Controllers\GatePassController;
 use App\Http\Controllers\MaintenanceController;
 use App\Models\Asset;
 use App\Models\AssetAssignment;
+use App\Models\AssetUnit;
 use App\Models\Department;
 use App\Models\MaintenanceRecord;
 use App\Models\PhysicalAudit;
@@ -59,6 +60,33 @@ class FutureDateValidationTest extends TestCase
         ]);
     }
 
+    protected function makeAssignedUnit(Asset $asset, User $holder, string $suffix): AssetUnit
+    {
+        $unit = AssetUnit::create([
+            'asset_id' => $asset->id,
+            'unit_code' => 'UNIT-' . $suffix,
+            'status' => 'assigned',
+            'custodian_id' => $holder->id,
+            'condition' => 'good',
+        ]);
+
+        AssetAssignment::create([
+            'asset_id' => $asset->id,
+            'asset_unit_id' => $unit->id,
+            'assigned_to' => $holder->id,
+            'assigned_by' => $holder->id,
+            'department_id' => $asset->department_id,
+            'quantity' => 1,
+            'purpose' => 'Testing',
+            'condition_before' => 'good',
+            'assigned_at' => now()->subDay(),
+            'status' => 'active',
+            'approval_status' => 'approved',
+        ]);
+
+        return $unit;
+    }
+
     protected function request(User $user, array $input = []): Request
     {
         $request = Request::create('/api/test', 'POST', $input);
@@ -72,23 +100,11 @@ class FutureDateValidationTest extends TestCase
         $user = $this->makeUser('PPMO Staff');
         $department = $this->makeDepartment('GATE');
         $asset = $this->makeAsset($department, 'GATE1');
-
-        AssetAssignment::create([
-            'asset_id' => $asset->id,
-            'assigned_to' => $user->id,
-            'assigned_by' => $user->id,
-            'department_id' => $department->id,
-            'quantity' => 1,
-            'purpose' => 'Testing',
-            'condition_before' => 'good',
-            'assigned_at' => now()->subDay(),
-            'approved_at' => now()->subDay(),
-            'status' => 'active',
-            'approval_status' => 'approved',
-        ]);
+        $unit = $this->makeAssignedUnit($asset, $user, 'GATE1-001');
 
         $request = $this->request($user, [
             'asset_id' => $asset->id,
+            'asset_unit_id' => $unit->id,
             'purpose' => 'For testing',
             'valid_until' => now()->subDay()->toDateString(),
             'destination' => 'Office',
@@ -109,23 +125,11 @@ class FutureDateValidationTest extends TestCase
         $user = $this->makeUser('PPMO Staff');
         $department = $this->makeDepartment('GATE');
         $asset = $this->makeAsset($department, 'GATE2');
-
-        AssetAssignment::create([
-            'asset_id' => $asset->id,
-            'assigned_to' => $user->id,
-            'assigned_by' => $user->id,
-            'department_id' => $department->id,
-            'quantity' => 1,
-            'purpose' => 'Testing',
-            'condition_before' => 'good',
-            'assigned_at' => now()->subDay(),
-            'approved_at' => now()->subDay(),
-            'status' => 'active',
-            'approval_status' => 'approved',
-        ]);
+        $unit = $this->makeAssignedUnit($asset, $user, 'GATE2-001');
 
         $request = $this->request($user, [
             'asset_id' => $asset->id,
+            'asset_unit_id' => $unit->id,
             'purpose' => 'For testing',
             'valid_until' => now()->addDay()->toDateString(),
             'destination' => 'Office',
@@ -136,6 +140,60 @@ class FutureDateValidationTest extends TestCase
         $response = (new GatePassController())->store($request);
 
         $this->assertSame(201, $response->getStatusCode());
+        $this->assertSame($unit->id, $response->getData(true)['data']['asset_unit_id']);
+        $this->assertSame($user->id, $response->getData(true)['data']['holder_id']);
+    }
+
+    public function test_gate_passes_are_tracked_per_physical_unit(): void
+    {
+        $user = $this->makeUser('PPMO Staff');
+        $department = $this->makeDepartment('GATEUNITS');
+        $asset = $this->makeAsset($department, 'GATEUNITS');
+        $firstUnit = $this->makeAssignedUnit($asset, $user, 'GATEUNITS-001');
+        $secondUnit = $this->makeAssignedUnit($asset, $user, 'GATEUNITS-002');
+
+        $createPass = fn (AssetUnit $unit) => (new GatePassController())->store($this->request($user, [
+            'asset_id' => $asset->id,
+            'asset_unit_id' => $unit->id,
+            'purpose' => 'For testing',
+            'valid_until' => now()->addDay()->toDateString(),
+        ]));
+
+        $this->assertSame(201, $createPass($firstUnit)->getStatusCode());
+        $this->assertSame(201, $createPass($secondUnit)->getStatusCode());
+
+        $duplicate = $createPass($firstUnit);
+        $this->assertSame(422, $duplicate->getStatusCode());
+        $this->assertSame(
+            'This physical unit already has an active or pending gate pass.',
+            $duplicate->getData(true)['message'],
+        );
+    }
+
+    public function test_gate_pass_rejects_an_unassigned_physical_unit(): void
+    {
+        $user = $this->makeUser('PPMO Staff');
+        $department = $this->makeDepartment('GATEUNASSIGNED');
+        $asset = $this->makeAsset($department, 'GATEUNASSIGNED');
+        $unit = AssetUnit::create([
+            'asset_id' => $asset->id,
+            'unit_code' => 'UNIT-GATEUNASSIGNED-001',
+            'status' => 'available',
+            'condition' => 'good',
+        ]);
+
+        $response = (new GatePassController())->store($this->request($user, [
+            'asset_id' => $asset->id,
+            'asset_unit_id' => $unit->id,
+            'purpose' => 'For testing',
+            'valid_until' => now()->addDay()->toDateString(),
+        ]));
+
+        $this->assertSame(422, $response->getStatusCode());
+        $this->assertSame(
+            'Select a physical unit with an active assigned holder before requesting a gate pass.',
+            $response->getData(true)['message'],
+        );
     }
 
     public function test_audit_rejects_past_scheduled_date(): void

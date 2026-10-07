@@ -108,6 +108,13 @@ class PpmoDashboardMetricsTest extends TestCase
                 'status' => 'completed',
             ]);
         }
+        foreach (['asset_returned', 'po_stock_received', 'po_qc_completed'] as $action) {
+            ActivityLog::create([
+                'action' => $action,
+                'payload' => ['request_number' => 'PR-RECEIVED-1'],
+                'status' => 'completed',
+            ]);
+        }
         ActivityLog::create([
             'action' => 'asset_registered',
             'payload' => ['asset_name' => 'Unrelated asset'],
@@ -123,7 +130,9 @@ class PpmoDashboardMetricsTest extends TestCase
             ->assertJsonPath('receiving_actions.0.request_number', 'PR-PO-DASHBOARD-1')
             ->assertJsonPath('open_anomaly_alerts', 1)
             ->assertJsonPath('release_activity.6.releases', 3)
-            ->assertJsonCount(3, 'recent_operations');
+            ->assertJsonPath('release_activity.6.returns', 1)
+            ->assertJsonPath('release_activity.6.receiving_qc', 2)
+            ->assertJsonCount(6, 'recent_operations');
     }
 
     private function makePpmoUser(): User

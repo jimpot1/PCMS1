@@ -12,6 +12,63 @@ class OtpLoginFlowTest extends TestCase
 {
     use RefreshDatabase;
 
+    public function test_deactivated_account_is_blocked_at_login_with_a_clear_message(): void
+    {
+        $user = User::create([
+            'id' => Str::uuid()->toString(),
+            'employee_id' => 'EMP-DEACTIVATED',
+            'full_name' => 'Deactivated User',
+            'email' => 'deactivated@example.test',
+            'password_hash' => Hash::make('SecretPass123!'),
+            'role' => 'Requester',
+            'status' => 'inactive',
+        ]);
+
+        $this->postJson('/api/auth/login', [
+            'email' => $user->email,
+            'password' => 'SecretPass123!',
+        ])
+            ->assertForbidden()
+            ->assertJsonPath('account_deactivated', true)
+            ->assertJsonPath(
+                'message',
+                'This account has been deactivated by an administrator. Please contact your system administrator if you believe this is a mistake.',
+            );
+
+        $this->assertGuest();
+        $this->assertDatabaseMissing('otp_verifications', ['user_id' => $user->id]);
+    }
+
+    public function test_deactivated_account_cannot_complete_a_pending_otp_login(): void
+    {
+        $user = User::create([
+            'id' => Str::uuid()->toString(),
+            'employee_id' => 'EMP-DEACTIVATED-OTP',
+            'full_name' => 'Deactivated OTP User',
+            'email' => 'deactivated-otp@example.test',
+            'password_hash' => Hash::make('SecretPass123!'),
+            'role' => 'Requester',
+            'status' => 'inactive',
+        ]);
+        $user->otpVerifications()->create([
+            'otp_hash' => Hash::make('123456'),
+            'expires_at' => now()->addMinutes(5),
+            'attempts' => 0,
+            'is_used' => false,
+            'last_sent_at' => now(),
+        ]);
+
+        $this->postJson('/api/auth/otp/verify', [
+            'user_id' => $user->id,
+            'otp' => '123456',
+        ])
+            ->assertForbidden()
+            ->assertJsonPath('account_deactivated', true);
+
+        $this->assertGuest();
+        $this->assertDatabaseMissing('activity_logs', ['action' => 'user_logged_in']);
+    }
+
     public function test_valid_credentials_require_otp_before_authentication(): void
     {
         $user = User::create([

@@ -438,22 +438,35 @@ class PurchaseRequestController extends Controller
     public function walkInRequesterOptions(Request $request): JsonResponse
     {
         $search = trim((string) $request->input('search', ''));
+        $searchPattern = '%' . strtolower($search) . '%';
+
+        $departmentIdsByName = Department::query()
+            ->get(['id', 'name'])
+            ->keyBy(fn (Department $department) => strtolower(trim($department->name)));
 
         $requesters = User::query()
             ->where('role', 'Requester')
             ->where('status', 'active')
-            ->when($search !== '', function ($query) use ($search) {
-                $query->where(function ($query) use ($search) {
-                    $query->where('full_name', 'ilike', "%{$search}%")
-                        ->orWhere('first_name', 'ilike', "%{$search}%")
-                        ->orWhere('last_name', 'ilike', "%{$search}%")
-                        ->orWhere('email', 'ilike', "%{$search}%")
-                        ->orWhere('employee_id', 'ilike', "%{$search}%");
+            ->when($search !== '', function ($query) use ($searchPattern) {
+                $query->where(function ($query) use ($searchPattern) {
+                    $query->whereRaw('LOWER(full_name) LIKE ?', [$searchPattern])
+                        ->orWhereRaw('LOWER(first_name) LIKE ?', [$searchPattern])
+                        ->orWhereRaw('LOWER(last_name) LIKE ?', [$searchPattern])
+                        ->orWhereRaw('LOWER(email) LIKE ?', [$searchPattern])
+                        ->orWhereRaw('LOWER(employee_id) LIKE ?', [$searchPattern]);
                 });
             })
             ->orderBy('full_name')
             ->limit(50)
-            ->get(['id', 'full_name', 'first_name', 'last_name', 'email', 'department', 'employee_id']);
+            ->get(['id', 'full_name', 'first_name', 'last_name', 'email', 'department', 'employee_id'])
+            ->map(function (User $user) use ($departmentIdsByName) {
+                $user->setAttribute(
+                    'department_id',
+                    $departmentIdsByName->get(strtolower(trim((string) $user->department)))?->id,
+                );
+
+                return $user;
+            });
 
         return response()->json(['data' => $requesters]);
     }

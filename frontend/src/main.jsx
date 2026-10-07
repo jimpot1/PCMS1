@@ -386,6 +386,23 @@ function App() {
   }, []);
 
   useEffect(() => {
+    const handleDeactivatedAccount = (event) => {
+      setAuthError(
+        event.detail?.message ||
+          "Your account has been deactivated. Please contact your system administrator.",
+      );
+      setIsAuthenticated(false);
+      setCurrentUser(null);
+    };
+    window.addEventListener("pcms:account-deactivated", handleDeactivatedAccount);
+    return () =>
+      window.removeEventListener(
+        "pcms:account-deactivated",
+        handleDeactivatedAccount,
+      );
+  }, []);
+
+  useEffect(() => {
     applyAuthenticatedTheme(isAuthenticated ? theme : 'light');
   }, [isAuthenticated, theme]);
   const [activePage, setActivePage] = useState(() => {
@@ -806,7 +823,13 @@ function App() {
   if (isLoadingAuth) {
     return (
       <div className="login-wrapper">
-        <div className="loading-card">Loading authentication…</div>
+        <div className="auth-loading-card" role="status" aria-live="polite">
+          <span className="auth-loading-spinner" aria-hidden="true" />
+          <span className="auth-loading-copy">
+            <strong>Loading authentication</strong>
+            <small>Checking your session securely…</small>
+          </span>
+        </div>
       </div>
     );
   }
@@ -936,7 +959,6 @@ function App() {
             </button>
             <div>
               <strong>{current.label}</strong>
-              <span className="breadcrumb">System Administrator</span>
             </div>
           </div>
           <div className="topbar-actions">
@@ -1271,7 +1293,10 @@ function App() {
               <Route path="transfers" element={<TransferPage />} />
               <Route path="returns" element={<AssetReturnPage />} />
               <Route path="supplies" element={<SuppliesPage currentUser={currentUser} />} />
-              <Route path="departments" element={<DepartmentsPage />} />
+              <Route
+                path="departments"
+                element={<DepartmentsPage currentUser={currentUser} />}
+              />
               <Route
                 path="monitoring"
                 element={<MonitoringPage currentUser={currentUser} />}
@@ -1524,13 +1549,12 @@ function App() {
 function LoginPage({ onLogin, authError, isSigningIn }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [remember, setRemember] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [forgotPasswordMessage, setForgotPasswordMessage] = useState("");
 
   const handleSubmit = (event) => {
     event.preventDefault();
-    onLogin({ email, password, remember });
+    onLogin({ email, password, remember: false });
   };
 
   return (
@@ -1612,14 +1636,6 @@ function LoginPage({ onLogin, authError, isSigningIn }) {
               </div>
 
               <div className="login-options">
-                <label className="remember-option">
-                  <input
-                    type="checkbox"
-                    checked={remember}
-                    onChange={(event) => setRemember(event.target.checked)}
-                  />
-                  <span>Remember me</span>
-                </label>
                 <button
                   type="button"
                   className="forgot-password"
@@ -2809,7 +2825,7 @@ function renderPage(page, onNavigate, currentUser) {
   const pages = {
     dashboard: <Dashboard onNavigate={onNavigate} />,
     assets: <AssetRegistry currentUser={currentUser} />,
-    departments: <DepartmentsPage />,
+    departments: <DepartmentsPage currentUser={currentUser} />,
     assignments: <EnhancedAssignmentsPage />,
     transfers: <TransferPage />,
     returns: <AssetReturnPage />,
@@ -3281,6 +3297,8 @@ function AssetRegistry({ currentUser }) {
   const [isLoadingAssets, setIsLoadingAssets] = useState(true);
   const [isRefreshingAssets, setIsRefreshingAssets] = useState(false);
   const [assetError, setAssetError] = useState(null);
+  const [qrActionError, setQrActionError] = useState(null);
+  const [qrActionLoading, setQrActionLoading] = useState(null);
   const [searchText, setSearchText] = useState("");
   const [activityFilter, setActivityFilter] = useState("all");
   const [departments, setDepartments] = useState([]);
@@ -3296,7 +3314,7 @@ function AssetRegistry({ currentUser }) {
   const [actionError, setActionError] = useState(null);
   const [actionSuccess, setActionSuccess] = useState(null);
   const [editValues, setEditValues] = useState(null);
-  const [unitQrModal, setUnitQrModal] = useState({ asset: null, units: [], loading: false, error: null });
+  const [unitQrModal, setUnitQrModal] = useState({ asset: null, units: [], loading: false, error: null, action: "print" });
   const canManageAssets = hasPermission(currentUser?.role, "canManageAssets");
   const canDeleteRecords = currentUser?.role === ROLES.SYSTEM_ADMIN;
   const [registerValues, setRegisterValues] = useState({
@@ -3441,18 +3459,43 @@ function AssetRegistry({ currentUser }) {
     setActionLoading(false);
   };
 
-  const openUnitQrModal = async (asset) => {
-    setUnitQrModal({ asset, units: [], loading: true, error: null });
+  const openUnitQrModal = async (asset, action = "print") => {
+    setUnitQrModal({ asset, units: [], loading: true, error: null, action });
     try {
       const units = await pcmsApi.assetUnits(asset.id);
-      setUnitQrModal({ asset, units, loading: false, error: null });
+      setUnitQrModal({ asset, units, loading: false, error: null, action });
     } catch (error) {
       setUnitQrModal({
         asset,
         units: [],
         loading: false,
         error: error?.message || "Unable to load physical units.",
+        action,
       });
+    }
+  };
+
+  const printAllUnitLabels = async (asset) => {
+    setQrActionError(null);
+    const printWindow = window.open("", "_blank", "width=900,height=760");
+    if (!printWindow) {
+      setQrActionError("Allow pop-ups to print physical unit QR labels.");
+      return;
+    }
+
+    setQrActionLoading({ assetId: asset.id, action: "print" });
+    printWindow.document.write("<title>Preparing physical unit labels…</title><p>Loading physical unit labels…</p>");
+    try {
+      const units = await pcmsApi.assetUnits(asset.id);
+      if (!units.length) {
+        throw new Error("No physical units are registered for this asset.");
+      }
+      printPhysicalUnitQrLabels(asset, units, printWindow);
+    } catch (error) {
+      printWindow.close();
+      setQrActionError(error?.message || "Unable to print physical unit QR labels.");
+    } finally {
+      setQrActionLoading(null);
     }
   };
 
@@ -3608,6 +3651,21 @@ function AssetRegistry({ currentUser }) {
 
       const created = await pcmsApi.createAsset(payload);
       setAssetsData((current) => [created, ...current]);
+      setIsRefreshingAssets(true);
+      try {
+        const refreshedAssets = await pcmsApi.assets({
+          limit: 200,
+          search: searchText || "",
+        });
+        setAssetsData(refreshedAssets || []);
+        assetsHaveLoadedRef.current = true;
+      } catch (refreshError) {
+        setAssetError(
+          `Asset registered, but the list could not be refreshed: ${refreshError?.message || "Please refresh the page."}`,
+        );
+      } finally {
+        setIsRefreshingAssets(false);
+      }
       setRegisterSuccess("Asset registered successfully.");
       setRegisterValues({
         property_number: "",
@@ -3670,6 +3728,7 @@ function AssetRegistry({ currentUser }) {
           <RefreshCw size={14} className="spin" /> Updating assets…
         </div>
       )}
+      {qrActionError && <div className="alert danger" role="alert">{qrActionError}</div>}
       <SuccessModal message={actionSuccess} />
       <AssetTable
         assets={filteredAssets}
@@ -3681,6 +3740,9 @@ function AssetRegistry({ currentUser }) {
         onEdit={openEditAsset}
         onDelete={openDeleteAsset}
         onPrintUnits={openUnitQrModal}
+        onPrintAllUnits={printAllUnitLabels}
+        onDownloadAllUnits={(asset) => openUnitQrModal(asset, "download")}
+        qrActionLoading={qrActionLoading}
         disabled={actionSubmitting || actionLoading}
       />
 
@@ -3690,7 +3752,9 @@ function AssetRegistry({ currentUser }) {
           units={unitQrModal.units}
           loading={unitQrModal.loading}
           error={unitQrModal.error}
-          onClose={() => setUnitQrModal({ asset: null, units: [], loading: false, error: null })}
+          action={unitQrModal.action}
+          onDownloadSelected={(units) => downloadPhysicalUnitQrLabels(unitQrModal.asset, units)}
+          onClose={() => setUnitQrModal({ asset: null, units: [], loading: false, error: null, action: "print" })}
         />
       )}
 
@@ -3887,7 +3951,13 @@ function AssetRegistry({ currentUser }) {
                   className="primary-button"
                   disabled={registerLoading}
                 >
-                  {registerLoading ? "Saving…" : "Register Asset"}
+                  {registerLoading ? (
+                    <>
+                      <RefreshCw size={16} className="spin" /> Registering…
+                    </>
+                  ) : (
+                    "Register Asset"
+                  )}
                 </button>
               </div>
             </form>
@@ -3934,7 +4004,7 @@ function AssetRegistry({ currentUser }) {
 
       {actionModal.type === "edit" && (
         <div className="modal-overlay" role="dialog" aria-modal="true">
-          <div className="modal-card asset-detail-modal">
+          <div className="modal-card asset-detail-modal asset-register-modal">
             <div className="modal-header">
               <h3>Edit Asset</h3>
               <button
@@ -4033,7 +4103,8 @@ function AssetRegistry({ currentUser }) {
   );
 }
 
-function DepartmentsPage() {
+function DepartmentsPage({ currentUser }) {
+  const canDeleteDepartment = currentUser?.role === ROLES.SYSTEM_ADMIN;
   const [departmentRows, setDepartmentRows] = useState([]);
   const [isLoadingDepartmentsPage, setIsLoadingDepartmentsPage] =
     useState(true);
@@ -4046,6 +4117,10 @@ function DepartmentsPage() {
   const [showDepartmentForm, setShowDepartmentForm] = useState(false);
   const [isSavingDepartment, setIsSavingDepartment] = useState(false);
   const [departmentSuccess, setDepartmentSuccess] = useState(null);
+  const [departmentFormMode, setDepartmentFormMode] = useState("add");
+  const [editingDepartment, setEditingDepartment] = useState(null);
+  const [departmentToDelete, setDepartmentToDelete] = useState(null);
+  const [isDeletingDepartment, setIsDeletingDepartment] = useState(false);
 
   useEffect(() => {
     async function loadDepartments() {
@@ -4077,6 +4152,29 @@ function DepartmentsPage() {
     if (isSavingDepartment) return;
     setShowDepartmentForm(false);
     setDepartmentError(null);
+    setEditingDepartment(null);
+    setDepartmentFormMode("add");
+    setNewDepartment({ code: "", name: "", location: "" });
+  };
+
+  const openAddDepartment = () => {
+    setDepartmentError(null);
+    setEditingDepartment(null);
+    setDepartmentFormMode("add");
+    setNewDepartment({ code: "", name: "", location: "" });
+    setShowDepartmentForm(true);
+  };
+
+  const openEditDepartment = (department) => {
+    setDepartmentError(null);
+    setEditingDepartment(department);
+    setDepartmentFormMode("edit");
+    setNewDepartment({
+      code: department.code || "",
+      name: department.name || "",
+      location: department.location || "",
+    });
+    setShowDepartmentForm(true);
   };
 
   const handleAddDepartment = async (event) => {
@@ -4086,15 +4184,52 @@ function DepartmentsPage() {
     setIsSavingDepartment(true);
 
     try {
-      const created = await pcmsApi.createDepartment(newDepartment);
-      setDepartmentRows((current) => [created, ...current]);
-      setDepartmentSuccess("Department added successfully.");
-      setNewDepartment({ code: "", name: "", location: "" });
+      if (departmentFormMode === "edit" && editingDepartment) {
+        const updated = await pcmsApi.updateDepartment(
+          editingDepartment.id,
+          newDepartment,
+        );
+        setDepartmentRows((current) =>
+          current.map((department) =>
+            department.id === updated.id ? updated : department,
+          ),
+        );
+        setDepartmentSuccess("Department updated successfully.");
+      } else {
+        const created = await pcmsApi.createDepartment(newDepartment);
+        setDepartmentRows((current) => [created, ...current]);
+        setDepartmentSuccess("Department added successfully.");
+      }
       setShowDepartmentForm(false);
+      setEditingDepartment(null);
+      setDepartmentFormMode("add");
     } catch (error) {
-      setDepartmentError(error?.message || "Failed to add department.");
+      setDepartmentError(error?.message || "Failed to save department.");
     } finally {
       setIsSavingDepartment(false);
+    }
+  };
+
+  const handleDeleteDepartment = async () => {
+    if (!departmentToDelete) return;
+    setDepartmentError(null);
+    setIsDeletingDepartment(true);
+
+    try {
+      await pcmsApi.deleteDepartment(departmentToDelete.id);
+      setDepartmentRows((current) =>
+        current.map((department) =>
+          department.id === departmentToDelete.id
+            ? { ...department, is_active: false }
+            : department,
+        ),
+      );
+      setDepartmentSuccess("Department deactivated successfully.");
+      setDepartmentToDelete(null);
+    } catch (error) {
+      setDepartmentError(error?.message || "Failed to deactivate department.");
+    } finally {
+      setIsDeletingDepartment(false);
     }
   };
 
@@ -4105,11 +4240,55 @@ function DepartmentsPage() {
       primary="Add Department"
       icon={Building2}
       onPrimary={() => {
-        setDepartmentError(null);
-        setShowDepartmentForm(true);
+        openAddDepartment();
       }}
     >
       <SuccessModal message={departmentSuccess} />
+      {departmentToDelete && (
+        <div className="modal-overlay" role="dialog" aria-modal="true">
+          <div className="modal-card confirm-dialog">
+            <div className="modal-header">
+              <h3>Delete Department</h3>
+              <button
+                className="icon-button"
+                type="button"
+                onClick={() => setDepartmentToDelete(null)}
+                aria-label="Close delete confirmation"
+                disabled={isDeletingDepartment}
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="confirm-dialog-body">
+              <p>
+                Deactivate <strong>{departmentToDelete.name}</strong>? It will
+                remain in records but will no longer be active.
+              </p>
+              {departmentError && (
+                <div className="alert danger">{departmentError}</div>
+              )}
+              <div className="modal-actions">
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => setDepartmentToDelete(null)}
+                  disabled={isDeletingDepartment}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="primary-button danger"
+                  onClick={handleDeleteDepartment}
+                  disabled={isDeletingDepartment}
+                >
+                  {isDeletingDepartment ? "Deleting…" : "Delete Department"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
       {showDepartmentForm && (
         <div
           className="modal-overlay"
@@ -4123,7 +4302,11 @@ function DepartmentsPage() {
             onClick={(event) => event.stopPropagation()}
           >
             <div className="modal-header">
-              <h3 id="new-department-title">New Department</h3>
+              <h3 id="new-department-title">
+                {departmentFormMode === "edit"
+                  ? "Edit Department"
+                  : "New Department"}
+              </h3>
               <button
                 className="icon-button"
                 type="button"
@@ -4183,7 +4366,11 @@ function DepartmentsPage() {
                   className="primary-button"
                   disabled={isSavingDepartment}
                 >
-                  {isSavingDepartment ? "Saving…" : "Add Department"}
+                  {isSavingDepartment
+                    ? "Saving…"
+                    : departmentFormMode === "edit"
+                      ? "Save Changes"
+                      : "Add Department"}
                 </button>
               </div>
             </form>
@@ -4204,6 +4391,7 @@ function DepartmentsPage() {
                 <th>Code</th>
                 <th>Location</th>
                 <th>Active</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -4221,6 +4409,33 @@ function DepartmentsPage() {
                     >
                       {item.is_active ? "Active" : "Inactive"}
                     </span>
+                  </td>
+                  <td>
+                    <div className="inline-actions">
+                      <button
+                        type="button"
+                        className="icon-button"
+                        onClick={() => openEditDepartment(item)}
+                        aria-label={`Edit ${item.name}`}
+                        title="Edit department"
+                      >
+                        <Pencil size={16} />
+                      </button>
+                      {canDeleteDepartment && (
+                        <button
+                          type="button"
+                          className="icon-button danger-action"
+                          onClick={() => {
+                            setDepartmentError(null);
+                            setDepartmentToDelete(item);
+                          }}
+                          aria-label={`Delete ${item.name}`}
+                          title="Delete department"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -5716,6 +5931,10 @@ function EnhancedAssignmentsPage() {
             <option value="borrowed">Borrowed</option>
           </select>
         </div>
+        <PanelHeader
+          title="Assignment History"
+          subtitle="Current and past asset assignments."
+        />
         <div className="table-card">
           <table>
             <thead>
@@ -13169,6 +13388,15 @@ function PurchasePage({ currentUser }) {
   );
 }
 
+function getGatePassErrorMessage(error) {
+  try {
+    const details = JSON.parse(error?.message || "");
+    return details.userMessage || details.payload?.message || error.message;
+  } catch {
+    return error?.message || "Unable to complete the gate pass request.";
+  }
+}
+
 function GatePassPage() {
   const [passes, setPasses] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -13179,6 +13407,7 @@ function GatePassPage() {
   const [success, setSuccess] = useState(null);
   const [formData, setFormData] = useState({
     asset_id: "",
+    asset_unit_id: "",
     purpose: "",
     receiver_name: "",
     valid_until: "",
@@ -13186,14 +13415,52 @@ function GatePassPage() {
   });
   const [scanId, setScanId] = useState("");
   const [assetsList, setAssetsList] = useState([]);
+  const [assetUnits, setAssetUnits] = useState([]);
+  const [loadingAssetUnits, setLoadingAssetUnits] = useState(false);
   const [assetQuery, setAssetQuery] = useState("");
   const [showAssetSuggestions, setShowAssetSuggestions] = useState(false);
+  const selectedAsset = assetsList.find(
+    (asset) => String(asset.id) === String(formData.asset_id),
+  );
+  const selectedUnit = assetUnits.find(
+    (unit) => String(unit.id) === String(formData.asset_unit_id),
+  );
+  const assignedUser = selectedUnit?.custodian;
+  const assignedUserName = assignedUser
+    ? assignedUser.full_name ||
+      [assignedUser.first_name, assignedUser.last_name].filter(Boolean).join(" ") ||
+      assignedUser.email
+    : selectedUnit?.custodian_id
+      ? `Holder record unavailable (${selectedUnit.custodian_id})`
+      : null;
+  const selectedUnitCanMove = selectedUnit?.status === "assigned" && Boolean(selectedUnit?.custodian_id);
+
+  const selectAsset = async (asset) => {
+    setFormData((current) => ({
+      ...current,
+      asset_id: asset.id,
+      asset_unit_id: "",
+    }));
+    setAssetQuery(`${asset.name} · ${asset.property_number || asset.asset_id || asset.id}`);
+    setAssetUnits([]);
+    setShowAssetSuggestions(false);
+    setError(null);
+    setLoadingAssetUnits(true);
+    try {
+      const units = await pcmsApi.assetUnits(asset.id);
+      setAssetUnits(Array.isArray(units) ? units : []);
+    } catch (err) {
+      setError(getGatePassErrorMessage(err));
+    } finally {
+      setLoadingAssetUnits(false);
+    }
+  };
 
   useEffect(() => {
     loadPasses();
     pcmsApi.assets({ limit: 200 })
       .then(setAssetsList)
-      .catch((err) => setError(err.message));
+      .catch((err) => setError(getGatePassErrorMessage(err)));
   }, []);
 
   const loadPasses = async () => {
@@ -13202,7 +13469,7 @@ function GatePassPage() {
       const response = await pcmsApi.fetchGatePasses();
       setPasses(response?.data || []);
     } catch (err) {
-      setError(err.message);
+      setError(getGatePassErrorMessage(err));
     } finally {
       setLoading(false);
     }
@@ -13219,8 +13486,13 @@ function GatePassPage() {
 
   const handleCreatePass = async (e) => {
     e.preventDefault();
+    setError(null);
     if (!formData.asset_id) {
       setError("Select an asset from the search results.");
+      return;
+    }
+    if (!formData.asset_unit_id || !selectedUnitCanMove) {
+      setError("Select an assigned physical unit with a current holder before requesting a gate pass.");
       return;
     }
     try {
@@ -13228,17 +13500,19 @@ function GatePassPage() {
       setSuccess("Gate pass created successfully");
       setFormData({
         asset_id: "",
+        asset_unit_id: "",
         purpose: "",
         receiver_name: "",
         valid_until: "",
         status: "pending",
       });
       setAssetQuery("");
+      setAssetUnits([]);
       setShowAssetSuggestions(false);
       setShowForm(false);
       loadPasses();
     } catch (err) {
-      setError(err.message);
+      setError(getGatePassErrorMessage(err));
     }
   };
 
@@ -13248,7 +13522,7 @@ function GatePassPage() {
       setSuccess("Gate pass approved");
       loadPasses();
     } catch (err) {
-      setError(err.message);
+      setError(getGatePassErrorMessage(err));
     }
   };
 
@@ -13258,7 +13532,7 @@ function GatePassPage() {
       setSuccess("Asset marked as returned");
       loadPasses();
     } catch (err) {
-      setError(err.message);
+      setError(getGatePassErrorMessage(err));
     }
   };
 
@@ -13271,7 +13545,7 @@ function GatePassPage() {
       setShowScanner(false);
       loadPasses();
     } catch (err) {
-      setError(err.message);
+      setError(getGatePassErrorMessage(err));
     }
   };
 
@@ -13312,7 +13586,8 @@ function GatePassPage() {
                       onChange={(e) => {
                         setAssetQuery(e.target.value);
                         setShowAssetSuggestions(true);
-                        setFormData({ ...formData, asset_id: "" });
+                        setFormData({ ...formData, asset_id: "", asset_unit_id: "" });
+                        setAssetUnits([]);
                       }}
                       onFocus={() => setShowAssetSuggestions(true)}
                       onBlur={() => setTimeout(() => setShowAssetSuggestions(false), 150)}
@@ -13334,13 +13609,13 @@ function GatePassPage() {
                               key={asset.id}
                               onMouseDown={(event) => {
                                 event.preventDefault();
-                                setFormData({ ...formData, asset_id: asset.id });
-                                setAssetQuery(`${asset.name} · ${asset.property_number || asset.asset_id || asset.id}`);
-                                setShowAssetSuggestions(false);
+                                selectAsset(asset);
                               }}
                             >
                               <strong>{asset.name}</strong>
-                              <span>{asset.property_number || asset.asset_id || `Asset #${asset.id}`}</span>
+                              <span>
+                                {asset.property_number || asset.asset_id || `Asset #${asset.id}`}
+                              </span>
                             </li>
                           ))}
                         {assetsList.length === 0 && (
@@ -13349,6 +13624,78 @@ function GatePassPage() {
                       </ul>
                     )}
                   </div>
+                </div>
+                <div className="field-row gate-pass-field">
+                  <label htmlFor="gate-pass-physical-unit">Physical unit</label>
+                  <select
+                    id="gate-pass-physical-unit"
+                    value={formData.asset_unit_id}
+                    onChange={(event) =>
+                      setFormData((current) => ({
+                        ...current,
+                        asset_unit_id: event.target.value,
+                      }))
+                    }
+                    required
+                    disabled={!selectedAsset || loadingAssetUnits || assetUnits.length === 0}
+                  >
+                    <option value="">
+                      {loadingAssetUnits
+                        ? "Loading physical units..."
+                        : !selectedAsset
+                          ? "Select an asset first"
+                          : assetUnits.length === 0
+                            ? "No physical units registered"
+                            : "Select a physical unit"}
+                    </option>
+                    {assetUnits.map((unit) => {
+                      const holder = unit.custodian;
+                      const holderName = holder
+                        ? holder.full_name ||
+                          [holder.first_name, holder.last_name].filter(Boolean).join(" ") ||
+                          holder.email
+                        : "No assigned holder";
+                      const unitLabel = unit.unit_code || `Unit ${unit.id}`;
+                      return (
+                        <option
+                          key={unit.id}
+                          value={unit.id}
+                          disabled={unit.status !== "assigned" || !unit.custodian_id}
+                        >
+                          {unitLabel}
+                          {unit.serial_number ? ` · S/N ${unit.serial_number}` : ""}
+                          {` · ${unit.status || "unknown"} · ${holderName}`}
+                        </option>
+                      );
+                    })}
+                  </select>
+                  {selectedAsset && !loadingAssetUnits && assetUnits.length === 0 && (
+                    <small className="gate-pass-holder-warning">
+                      Register physical units for this asset before generating a pass.
+                    </small>
+                  )}
+                </div>
+                <div className="field-row gate-pass-field">
+                  <label htmlFor="gate-pass-current-holder">Current holder / assigned person</label>
+                  <input
+                    id="gate-pass-current-holder"
+                    value={assignedUserName || ""}
+                    placeholder={
+                      selectedUnit
+                        ? "Holder unavailable"
+                        : "Select a physical unit to view its holder"
+                    }
+                    readOnly
+                    aria-describedby="gate-pass-holder-help"
+                  />
+                  <small
+                    id="gate-pass-holder-help"
+                    className={selectedAsset && !selectedAssetHasAssignment ? "gate-pass-holder-warning" : ""}
+                  >
+                    {selectedUnit && !selectedUnitCanMove
+                      ? "Only assigned physical units with a current holder can have a gate pass."
+                      : "A separate pass is required for each physical unit leaving the premises."}
+                  </small>
                 </div>
             <div className="field-row gate-pass-field">
               <label>Purpose</label>
@@ -13390,7 +13737,12 @@ function GatePassPage() {
             </div>
               </div>
             <div className="modal-actions gate-pass-modal-actions">
-              <button className="primary-button" type="submit">
+              <button
+                className="primary-button"
+                type="submit"
+                disabled={!selectedUnitCanMove}
+                title={!selectedUnitCanMove ? "Select an assigned physical unit before requesting a gate pass." : undefined}
+              >
                 Create Pass
               </button>
               <button
@@ -13467,6 +13819,7 @@ function GatePassPage() {
                 <tr>
                   <th>Gate Pass ID</th>
                   <th>Asset ID</th>
+                  <th>Physical Unit / Serial</th>
                   <th>Purpose</th>
                   <th>Receiver</th>
                   <th>Valid Until</th>
@@ -13477,7 +13830,7 @@ function GatePassPage() {
               <tbody>
                 {passes.length === 0 ? (
                   <tr>
-                    <td colSpan="7">No gate passes yet</td>
+                    <td colSpan="8">No gate passes yet</td>
                   </tr>
                 ) : (
                   passes.map((pass) => (
@@ -13485,13 +13838,29 @@ function GatePassPage() {
                       <td>
                         <strong>GP-{pass.id}</strong>
                       </td>
-                      <td>{pass.asset_id}</td>
+                      <td>{pass.asset?.name || pass.asset_id}</td>
+                      <td>
+                        {pass.asset_unit ? (
+                          <>
+                            <strong>{pass.asset_unit.unit_code || `Unit ${pass.asset_unit.id}`}</strong>
+                            <span>{pass.asset_unit.serial_number || "Serial number not recorded"}</span>
+                            <span>
+                              Holder: {pass.holder?.full_name ||
+                                [pass.holder?.first_name, pass.holder?.last_name].filter(Boolean).join(" ") ||
+                                pass.holder?.email ||
+                                "Not recorded"}
+                            </span>
+                          </>
+                        ) : (
+                          "Legacy pass — unit not recorded"
+                        )}
+                      </td>
                       <td>{pass.purpose}</td>
                       <td>{pass.receiver_name}</td>
                       <td>{new Date(pass.valid_until).toLocaleDateString()}</td>
                       <td>
                         <span
-                          className={`status ${pass.status === "approved" ? "success" : pass.status === "returned" ? "info" : "warning"}`}
+                          className={`status ${["approved", "completed"].includes(pass.status) ? "success" : pass.status === "returned" ? "info" : "warning"}`}
                         >
                           {pass.status}
                         </span>
@@ -13506,7 +13875,7 @@ function GatePassPage() {
                               Approve
                             </button>
                           )}
-                          {pass.status === "approved" && (
+                          {["approved", "completed"].includes(pass.status) && (
                             <button
                               className="small-button success"
                               onClick={() => handleReturn(pass.id)}
@@ -14726,6 +15095,7 @@ function OcrPage() {
   const [fieldConfidence, setFieldConfidence] = useState({});
   const [fieldDetails, setFieldDetails] = useState({});
   const [isScanning, setIsScanning] = useState(false);
+  const [isRegistering, setIsRegistering] = useState(false);
   const [error, setError] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
   const [departmentsList, setDepartmentsList] = useState([]);
@@ -14748,6 +15118,13 @@ function OcrPage() {
     condition: "",
     status: "available",
   });
+
+  useEffect(
+    () => () => {
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+    },
+    [previewUrl],
+  );
 
   useEffect(() => {
     pcmsApi
@@ -14969,9 +15346,11 @@ function OcrPage() {
 
   const handleSubmit = async (event) => {
     event.preventDefault();
+    if (isScanning || isRegistering) return;
     setError("");
     setSuccessMessage("");
     setFieldErrors({});
+    setIsRegistering(true);
 
     try {
       const quantity = Number(formValues.quantity);
@@ -15046,6 +15425,8 @@ function OcrPage() {
         submitError?.message ||
         "Asset registration failed."
       );
+    } finally {
+      setIsRegistering(false);
     }
   };
 
@@ -15076,6 +15457,7 @@ function OcrPage() {
     lastOcrImageKeyRef.current = "";
     setError("");
     setSuccessMessage("");
+    setFieldErrors({});
     setFormValues({
       property_number: "",
       serial_number: "",
@@ -15358,17 +15740,23 @@ function OcrPage() {
               <button
                 className="primary-button"
                 type="submit"
-                disabled={isScanning}
+                disabled={isScanning || isRegistering}
               >
-                Register Asset
+                {isRegistering ? (
+                  <>
+                    <RefreshCw size={16} className="spin" /> Registering…
+                  </>
+                ) : (
+                  "Register Asset"
+                )}
               </button>
               <button
                 className="secondary-button"
                 type="button"
-                disabled={isScanning}
+                disabled={isScanning || isRegistering}
                 onClick={clearOcrSession}
               >
-                Clear OCR Fields
+                Clear OCR Fields / New Scan
               </button>
             </div>
           </form>
@@ -16179,11 +16567,15 @@ function parseLowStockSupplyName(reason = "") {
 }
 
 function ReportsPage() {
-  const [loading, setLoading] = useState(false);
+  const [generatingReportIds, setGeneratingReportIds] = useState(() => new Set());
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
   const [reportData, setReportData] = useState(null);
   const [selectedReport, setSelectedReport] = useState(null);
+  const [activeView, setActiveView] = useState("reports");
+  const [analyticsData, setAnalyticsData] = useState(null);
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  const [analyticsError, setAnalyticsError] = useState(null);
   const reportRef = useRef(null);
 
   useLiveSync(async () => {
@@ -16236,6 +16628,10 @@ function ReportsPage() {
   };
 
   const reportRows = () => flattenReportRows(reportData);
+  const selectedReportName = reports.find((report) => report.id === selectedReport)?.name
+    || String(selectedReport || reportData?.report_type || "Report")
+      .replaceAll("-", " ")
+      .replace(/\b\w/g, (character) => character.toUpperCase());
 
   const reportHeaders = () => {
     if (selectedReport === "damage-summary") {
@@ -16290,8 +16686,8 @@ function ReportsPage() {
   };
 
   const handleGenerateReport = async (reportType) => {
+    setGeneratingReportIds((current) => new Set(current).add(reportType));
     try {
-      if (!reportData) setLoading(true);
       setError(null);
       const response = await pcmsApi.generateReport(reportType);
       const payload = response?.data || response || {};
@@ -16301,8 +16697,30 @@ function ReportsPage() {
     } catch (err) {
       setError(err?.message || "Unable to generate the report.");
     } finally {
-      setLoading(false);
+      setGeneratingReportIds((current) => {
+        const next = new Set(current);
+        next.delete(reportType);
+        return next;
+      });
     }
+  };
+
+  const loadAnalytics = async () => {
+    setAnalyticsLoading(true);
+    setAnalyticsError(null);
+    try {
+      const response = await pcmsApi.dashboard();
+      setAnalyticsData(response?.data || response || {});
+    } catch (loadError) {
+      setAnalyticsError(loadError?.message || "Unable to load analytics.");
+    } finally {
+      setAnalyticsLoading(false);
+    }
+  };
+
+  const openAnalytics = () => {
+    setActiveView("analytics");
+    if (!analyticsData) loadAnalytics();
   };
 
   const handleDownload = async (format) => {
@@ -16342,13 +16760,137 @@ function ReportsPage() {
   return (
     <ModulePage
       title="Reports"
-      subtitle="Export PDF, Excel, and CSV reports for all property workflows."
+      subtitle="Generate and export reports for property workflows."
       icon={FileBarChart2}
     >
       {error && <div className="form-message error">{error}</div>}
       <SuccessModal message={success} />
 
-      {!reportData ? (
+      <div className="reports-view-switch" role="tablist" aria-label="Reports and analytics">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeView === "reports"}
+          className={activeView === "reports" ? "active" : ""}
+          onClick={() => setActiveView("reports")}
+        >
+          <FileBarChart2 size={16} /> Reports
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeView === "analytics"}
+          className={activeView === "analytics" ? "active" : ""}
+          onClick={openAnalytics}
+        >
+          <Activity size={16} /> Analytics
+        </button>
+      </div>
+
+      {activeView === "analytics" ? (
+        <section className="reports-analytics-view" role="tabpanel">
+          <div className="reports-analytics-heading">
+            <div>
+              <h3>Inventory &amp; Operations Analytics</h3>
+              <p>Live overview of asset distribution and recent operational trends.</p>
+            </div>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={loadAnalytics}
+              disabled={analyticsLoading}
+            >
+              <RefreshCw size={15} className={analyticsLoading ? "spin" : ""} />
+              {analyticsLoading ? "Refreshing..." : "Refresh"}
+            </button>
+          </div>
+          {analyticsError && <div className="form-message error" role="alert">{analyticsError}</div>}
+          {analyticsLoading && !analyticsData ? (
+            <div className="loading-card" role="status">Loading analytics...</div>
+          ) : analyticsData ? (
+            <>
+              <div className="reports-analytics-metrics">
+                {[
+                  ["Total assets", analyticsData.metrics?.total_assets ?? 0, Package],
+                  ["Available", analyticsData.metrics?.available_assets ?? 0, CheckCircle2],
+                  ["Assigned", analyticsData.metrics?.assigned_assets ?? 0, UserCheck],
+                  ["Pending requests", analyticsData.metrics?.pending_requests ?? 0, ClipboardList],
+                  ["Inventory alerts", analyticsData.metrics?.inventory_alerts ?? 0, AlertTriangle],
+                ].map(([label, value, MetricIcon]) => (
+                  <article className="reports-analytics-metric" key={label}>
+                    <span className="reports-analytics-metric-icon"><MetricIcon size={17} /></span>
+                    <span className="reports-analytics-metric-label">{label}</span>
+                    <strong>{Number(value).toLocaleString()}</strong>
+                  </article>
+                ))}
+              </div>
+              <div className="reports-analytics-charts">
+                <article className="panel reports-analytics-chart-card">
+                  <div className="reports-analytics-chart-heading">
+                    <h4>Monthly operations</h4>
+                    <p>Asset registrations, maintenance records, and anomaly alerts</p>
+                  </div>
+                  {analyticsData.monthly_analytics?.length ? (
+                    <ResponsiveContainer width="100%" height={290}>
+                      <AreaChart data={analyticsData.monthly_analytics} margin={{ top: 8, right: 12, left: -18, bottom: 0 }}>
+                        <defs>
+                          <linearGradient id="reportsAssetsGradient" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#2563eb" stopOpacity={0.22} />
+                            <stop offset="95%" stopColor="#2563eb" stopOpacity={0.02} />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid stroke="#e5eaf1" strokeDasharray="4 4" vertical={false} />
+                        <XAxis dataKey="month" tickLine={false} axisLine={false} />
+                        <YAxis tickLine={false} axisLine={false} allowDecimals={false} />
+                        <Tooltip />
+                        <Legend />
+                        <Area type="monotone" dataKey="assets" name="Assets" stroke="#2563eb" fill="url(#reportsAssetsGradient)" strokeWidth={2.5} />
+                        <Area type="monotone" dataKey="repairs" name="Maintenance" stroke="#f59e0b" fill="#fef3c7" strokeWidth={2} />
+                        <Area type="monotone" dataKey="anomalies" name="Anomalies" stroke="#ef4444" fill="#fee2e2" strokeWidth={2} />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  ) : <div className="reports-analytics-empty">No monthly activity is available yet.</div>}
+                </article>
+                <article className="panel reports-analytics-chart-card">
+                  <div className="reports-analytics-chart-heading">
+                    <h4>Asset status</h4>
+                    <p>Current distribution across the inventory</p>
+                  </div>
+                  {analyticsData.status_breakdown?.length ? (
+                    <>
+                      <ResponsiveContainer width="100%" height={250}>
+                        <PieChart>
+                          <Pie
+                            data={analyticsData.status_breakdown}
+                            dataKey="value"
+                            nameKey="name"
+                            innerRadius={58}
+                            outerRadius={88}
+                            paddingAngle={3}
+                          >
+                            {analyticsData.status_breakdown.map((entry) => (
+                              <Cell key={entry.name} fill={entry.color || "#94a3b8"} />
+                            ))}
+                          </Pie>
+                          <Tooltip />
+                        </PieChart>
+                      </ResponsiveContainer>
+                      <div className="reports-analytics-legend">
+                        {analyticsData.status_breakdown.map((entry) => (
+                          <span key={entry.name}>
+                            <i style={{ background: entry.color || "#94a3b8" }} />
+                            {entry.name}<strong>{Number(entry.value).toLocaleString()}</strong>
+                          </span>
+                        ))}
+                      </div>
+                    </>
+                  ) : <div className="reports-analytics-empty">No assets are available for distribution.</div>}
+                </article>
+              </div>
+            </>
+          ) : null}
+        </section>
+      ) : !reportData ? (
         <div className="card-grid">
           {reports.map((report) => (
             <div className="mini-card" key={report.id}>
@@ -16360,28 +16902,29 @@ function ReportsPage() {
               <div className="inline-actions small">
                 <button
                   onClick={() => handleGenerateReport(report.id)}
-                  disabled={loading}
+                  disabled={generatingReportIds.has(report.id)}
                 >
-                  {loading ? "Generating..." : "Generate"}
+                  {generatingReportIds.has(report.id) ? "Generating..." : "Generate"}
                 </button>
               </div>
             </div>
           ))}
         </div>
       ) : (
-        <div className="panel">
+        <div className="panel report-detail-panel" ref={reportRef}>
           <div className="report-header">
-            <h3>Report: {selectedReport}</h3>
+            <h3>{selectedReportName}</h3>
             <button
               className="secondary-button report-back-button"
               type="button"
               onClick={() => setReportData(null)}
+              data-html2canvas-ignore="true"
             >
               ← Back to Reports
             </button>
           </div>
 
-          <div className="inline-actions">
+          <div className="inline-actions report-export-actions" data-html2canvas-ignore="true">
             <button
               className="primary-button"
               onClick={() => handleDownload("csv")}
@@ -16396,9 +16939,10 @@ function ReportsPage() {
             </button>
           </div>
 
-          <div className="report-content" ref={reportRef}>
-            <h2>{selectedReport || reportData.report_type || "Report"}</h2>
-            <p>Generated: {reportData.generated_at ? new Date(reportData.generated_at).toLocaleString() : new Date().toLocaleString()}</p>
+          <div className="report-content">
+            <p className="report-generated-at">
+              Generated {reportData.generated_at ? new Date(reportData.generated_at).toLocaleString() : new Date().toLocaleString()}
+            </p>
             {reportRows().length > 0 ? (
               <div className={`table-card report-detail-table ${selectedReport === "damage-summary" ? "damage-summary-table" : ""}`} style={{ marginTop: 16 }}>
                 <table>
@@ -16600,6 +17144,10 @@ function UsersPage() {
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
   const [showInviteForm, setShowInviteForm] = useState(false);
+  const [userActionToVerify, setUserActionToVerify] = useState(null);
+  const [actionVerificationPassword, setActionVerificationPassword] = useState("");
+  const [actionVerificationError, setActionVerificationError] = useState(null);
+  const [isVerifyingUserAction, setIsVerifyingUserAction] = useState(false);
   const [saving, setSaving] = useState(false);
   const [temporaryPassword, setTemporaryPassword] = useState(null);
   const [showInvitePassword, setShowInvitePassword] = useState(false);
@@ -16765,19 +17313,151 @@ function UsersPage() {
     }
   };
 
+  const requestVerifiedUserAction = (action, user = null) => {
+    setError(null);
+    setActionVerificationError(null);
+    setActionVerificationPassword("");
+    setUserActionToVerify({ action, user });
+  };
+
+  const closeUserActionVerification = () => {
+    if (isVerifyingUserAction) return;
+    setUserActionToVerify(null);
+    setActionVerificationPassword("");
+    setActionVerificationError(null);
+  };
+
+  const handleVerifyUserAction = async (event) => {
+    event.preventDefault();
+    if (!userActionToVerify || isVerifyingUserAction) return;
+    setActionVerificationError(null);
+    setIsVerifyingUserAction(true);
+
+    try {
+      await pcmsApi.verifyUserActionPassword(actionVerificationPassword);
+      const { action, user } = userActionToVerify;
+      setUserActionToVerify(null);
+      setActionVerificationPassword("");
+
+      if (action === "invite") {
+        setShowInviteForm(true);
+      } else if (action === "edit" && user) {
+        openEditDialog(user);
+      } else if (action === "deactivate" && user) {
+        await handleDeactivate(user);
+      } else if (action === "reactivate" && user) {
+        await handleReactivate(user);
+      }
+    } catch (verificationError) {
+      let message = verificationError?.message || "Password verification failed.";
+      try {
+        const details = JSON.parse(message);
+        const validationMessage = details?.payload?.errors?.password?.[0]
+          || details?.payload?.message
+          || details?.userMessage;
+        if (details?.status === 422 || /password you entered is incorrect/i.test(validationMessage || "")) {
+          message = "Incorrect password. Please try again.";
+        } else if (validationMessage) {
+          message = validationMessage;
+        }
+      } catch {
+        if (/password you entered is incorrect/i.test(message)) {
+          message = "Incorrect password. Please try again.";
+        }
+      }
+      setActionVerificationError(message);
+    } finally {
+      setIsVerifyingUserAction(false);
+    }
+  };
+
   return (
     <ModulePage
       title="User Management"
       subtitle="PCMS accounts, roles, and protected route permissions."
       primary="Invite User"
       icon={Users}
-      onPrimary={() => setShowInviteForm((v) => !v)}
+      onPrimary={() => requestVerifiedUserAction("invite")}
     >
       {error && <div className="form-message error">{error}</div>}
       <SuccessModal message={success} />
       <SuccessModal
         message={temporaryPassword ? `Temporary password: ${temporaryPassword}. Share this with the user; they should change it after first login.` : null}
       />
+
+      {userActionToVerify && (
+        <div
+          className="modal-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="verify-user-action-title"
+          onClick={closeUserActionVerification}
+        >
+          <div
+            className="modal-card user-form-modal user-action-verification-modal"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="modal-header">
+              <div>
+                <h3 id="verify-user-action-title">Verify Your Password</h3>
+                <p className="modal-subtitle">
+                  Confirm your identity before managing user accounts.
+                </p>
+              </div>
+              <button
+                className="icon-button"
+                type="button"
+                onClick={closeUserActionVerification}
+                aria-label="Close password verification"
+                disabled={isVerifyingUserAction}
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <form className="register-form" onSubmit={handleVerifyUserAction}>
+              <p className="user-action-verification-copy">
+                Enter your account password to continue with this user
+                management action.
+              </p>
+              <div className="form-grid">
+                <label className="full-width">
+                  Password
+                  <input
+                    type="password"
+                    value={actionVerificationPassword}
+                    onChange={(event) =>
+                      setActionVerificationPassword(event.target.value)
+                    }
+                    autoComplete="current-password"
+                    required
+                    autoFocus
+                  />
+                </label>
+              </div>
+              {actionVerificationError && (
+                <div className="alert danger">{actionVerificationError}</div>
+              )}
+              <div className="modal-actions">
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={closeUserActionVerification}
+                  disabled={isVerifyingUserAction}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="primary-button"
+                  disabled={isVerifyingUserAction}
+                >
+                  {isVerifyingUserAction ? "Verifying…" : "Verify & Continue"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {showInviteForm && (
         <div
@@ -17208,21 +17888,25 @@ function UsersPage() {
                       <div className="inline-actions small">
                         <button
                           className="small-button"
-                          onClick={() => openEditDialog(user)}
+                          onClick={() => requestVerifiedUserAction("edit", user)}
                         >
                           <Pencil size={14} /> Edit
                         </button>
                         {user.status === "active" ? (
                           <button
                             className="small-button"
-                            onClick={() => handleDeactivate(user)}
+                            onClick={() =>
+                              requestVerifiedUserAction("deactivate", user)
+                            }
                           >
                             <UserX size={14} /> Deactivate
                           </button>
                         ) : (
                           <button
                             className="small-button"
-                            onClick={() => handleReactivate(user)}
+                            onClick={() =>
+                              requestVerifiedUserAction("reactivate", user)
+                            }
                           >
                             <UserCheck size={14} /> Reactivate
                           </button>
@@ -17534,67 +18218,40 @@ function DataToolbar({ searchText, onSearchChange }) {
   );
 }
 
-function printAssetQrCode(asset) {
-  const url = assetQrCodeUrl(asset.qr_code_path);
-  if (!url) return;
-
-  const printWindow = window.open("", "_blank", "width=420,height=520");
-  if (!printWindow) return;
-
-  printWindow.document.write(`
-    <html>
-      <head><title>QR Code · ${asset.property_number || asset.name}</title></head>
-      <body style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;margin:0;font-family:sans-serif;">
-        <img src="${url}" alt="QR code" style="width:280px;height:280px;" onload="window.print(); window.onafterprint = () => window.close();" />
-        <p style="margin-top:12px;font-size:14px;">${asset.name} · ${asset.property_number || ""}</p>
-      </body>
-    </html>
-  `);
-  printWindow.document.close();
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (character) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  })[character]);
 }
 
-async function downloadAssetQrCode(asset) {
-  const url = assetQrCodeUrl(asset.qr_code_path);
-  if (!url) return;
-
-  try {
-    const response = await fetch(url);
-    const blob = await response.blob();
-    const objectUrl = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = objectUrl;
-    link.download = `qr-${asset.property_number || asset.id}.png`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(objectUrl);
-  } catch (err) {
-    // ignore - user can retry
-  }
-}
-
-function printPhysicalUnitQrLabels(asset, units) {
-  const printableUnits = units.filter((unit) => unit.qr_code_path);
+function printPhysicalUnitQrLabels(asset, units, printWindow = null) {
+  const printableUnits = units;
   if (!printableUnits.length) return;
 
-  const printWindow = window.open("", "_blank", "width=900,height=760");
+  printWindow ||= window.open("", "_blank", "width=900,height=760");
   if (!printWindow) return;
 
   const labels = printableUnits.map((unit) => `
     <article class="unit-label">
       <div class="unit-label-heading">PCMS</div>
-      <strong>${asset.name || "Asset"}</strong>
-      <span>${asset.property_number || asset.asset_id || ""}</span>
-      <img src="${assetQrCodeUrl(unit.qr_code_path)}" alt="QR code for ${unit.unit_code || "physical unit"}" />
-      <strong>Unit ${unit.unit_code || unit.id}</strong>
-      <span>${unit.serial_number || "Physical unit"}</span>
+      <strong>${escapeHtml(asset.name || "Asset")}</strong>
+      <span>${escapeHtml(asset.property_number || asset.asset_id || "")}</span>
+      ${unit.qr_code_path
+    ? `<img src="${escapeHtml(assetQrCodeUrl(unit.qr_code_path))}" alt="QR code for ${escapeHtml(unit.unit_code || "physical unit")}" />`
+    : '<div class="qr-unavailable">QR code unavailable</div>'}
+      <strong>Unit ${escapeHtml(unit.unit_code || unit.id)}</strong>
+      <span>${escapeHtml(unit.serial_number || "Physical unit")}</span>
     </article>
   `).join("");
 
   printWindow.document.write(`
     <html>
       <head>
-        <title>Physical Unit QR Labels - ${asset.property_number || asset.name || "Asset"}</title>
+        <title>Physical Unit QR Labels - ${escapeHtml(asset.property_number || asset.name || "Asset")}</title>
         <style>
           @page { margin: 12mm; }
           * { box-sizing: border-box; }
@@ -17605,6 +18262,7 @@ function printPhysicalUnitQrLabels(asset, units) {
           .unit-label strong { max-width: 100%; font-size: 11pt; }
           .unit-label span { max-width: 100%; color: #475569; font-size: 8.5pt; overflow-wrap: anywhere; }
           .unit-label img { width: 42mm; height: 42mm; object-fit: contain; margin: 2mm 0; }
+          .qr-unavailable { width: 42mm; height: 42mm; display: grid; place-items: center; margin: 2mm 0; border: 1px dashed #94a3b8; color: #b91c1c; font-size: 9pt; }
           @media print { .unit-label { border-color: #94a3b8; } }
         </style>
       </head>
@@ -17619,11 +18277,90 @@ function printPhysicalUnitQrLabels(asset, units) {
   printWindow.document.close();
 }
 
-function PhysicalUnitQrModal({ asset, units, loading, error, onClose }) {
+function loadQrImageData(url) {
+  return fetch(url, { credentials: "include" }).then((response) => {
+    if (!response.ok) {
+      throw new Error(`Could not download a QR image (HTTP ${response.status}).`);
+    }
+    return response.blob();
+  }).then((blob) => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error("Could not prepare a physical unit QR image."));
+    reader.readAsDataURL(blob);
+  }));
+}
+
+async function downloadPhysicalUnitQrLabels(asset, units) {
+  if (!units.length) throw new Error("No physical units are registered for this asset.");
+  if (units.some((unit) => !unit.qr_code_path)) {
+    throw new Error("One or more physical units are missing QR codes. Refresh the unit labels and try again.");
+  }
+
+  const [{ jsPDF }, qrImages] = await Promise.all([
+    import("jspdf"),
+    Promise.all(units.map((unit) => loadQrImageData(assetQrCodeUrl(unit.qr_code_path)))),
+  ]);
+  const pdf = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
+  const pageWidth = pdf.internal.pageSize.getWidth();
+  const pageHeight = pdf.internal.pageSize.getHeight();
+  const margin = 28;
+  const gap = 16;
+  const columns = 2;
+  const rows = 3;
+  const labelWidth = (pageWidth - margin * 2 - gap) / columns;
+  const labelHeight = (pageHeight - margin * 2 - gap * (rows - 1)) / rows;
+  const qrSize = 112;
+  const assetTitle = String(asset.name || "Asset");
+  const assetReference = String(asset.property_number || asset.asset_id || "");
+
+  units.forEach((unit, index) => {
+    const withinPage = index % (columns * rows);
+    if (index > 0 && withinPage === 0) pdf.addPage();
+
+    const column = withinPage % columns;
+    const row = Math.floor(withinPage / columns);
+    const x = margin + column * (labelWidth + gap);
+    const y = margin + row * (labelHeight + gap);
+    const centerX = x + labelWidth / 2;
+    const labelCode = String(unit.unit_code || `Unit ${unit.id}`);
+    const serial = String(unit.serial_number || "Serial number not recorded");
+
+    pdf.setDrawColor(203, 213, 225);
+    pdf.roundedRect(x, y, labelWidth, labelHeight, 8, 8);
+    pdf.setTextColor(37, 99, 235);
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(10);
+    pdf.text("PCMS", centerX, y + 24, { align: "center" });
+    pdf.setTextColor(23, 32, 51);
+    pdf.setFontSize(11);
+    pdf.text(pdf.splitTextToSize(assetTitle, labelWidth - 24), centerX, y + 43, { align: "center" });
+    pdf.setTextColor(71, 85, 105);
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(8);
+    pdf.text(pdf.splitTextToSize(assetReference, labelWidth - 24), centerX, y + 62, { align: "center" });
+    pdf.addImage(qrImages[index], "PNG", centerX - qrSize / 2, y + 72, qrSize, qrSize);
+    pdf.setTextColor(23, 32, 51);
+    pdf.setFont("helvetica", "bold");
+    pdf.setFontSize(10);
+    pdf.text(pdf.splitTextToSize(labelCode, labelWidth - 24), centerX, y + 72 + qrSize + 18, { align: "center" });
+    pdf.setTextColor(71, 85, 105);
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(8);
+    pdf.text(pdf.splitTextToSize(serial, labelWidth - 24), centerX, y + 72 + qrSize + 34, { align: "center" });
+  });
+
+  pdf.save(`physical-unit-qr-labels-${asset.property_number || asset.id}.pdf`);
+}
+
+function PhysicalUnitQrModal({ asset, units, loading, error, action, onDownloadSelected, onClose }) {
   const [selectedIds, setSelectedIds] = useState([]);
+  const [downloadError, setDownloadError] = useState(null);
+  const [isDownloading, setIsDownloading] = useState(false);
 
   useEffect(() => {
     setSelectedIds(units.map((unit) => unit.id));
+    setDownloadError(null);
   }, [units]);
 
   const toggleUnit = (id) => {
@@ -17633,13 +18370,28 @@ function PhysicalUnitQrModal({ asset, units, loading, error, onClose }) {
   };
 
   const selectedUnits = units.filter((unit) => selectedIds.includes(unit.id));
+  const selectedUnitsHaveQrCodes = selectedUnits.length > 0 && selectedUnits.every((unit) => unit.qr_code_path);
+
+  const downloadSelectedLabels = async () => {
+    setDownloadError(null);
+    setIsDownloading(true);
+    try {
+      await onDownloadSelected(selectedUnits);
+    } catch (downloadFailure) {
+      setDownloadError(downloadFailure?.message || "Unable to download the selected physical unit labels.");
+    } finally {
+      setIsDownloading(false);
+    }
+  };
 
   return (
     <div className="modal-overlay physical-unit-qr-overlay" role="dialog" aria-modal="true" aria-labelledby="physical-unit-qr-title">
       <div className="modal-card physical-unit-qr-modal">
         <div className="modal-header">
           <div>
-            <h3 id="physical-unit-qr-title">Print Physical Unit QR Labels</h3>
+            <h3 id="physical-unit-qr-title">
+              {action === "download" ? "Download Physical Unit QR Labels" : "Print Physical Unit QR Labels"}
+            </h3>
             <p>{asset.name} · {asset.property_number || asset.asset_id || "Asset"}</p>
           </div>
           <button type="button" className="icon-button" onClick={onClose} aria-label="Close physical unit QR labels">
@@ -17649,6 +18401,7 @@ function PhysicalUnitQrModal({ asset, units, loading, error, onClose }) {
         <div className="physical-unit-qr-body">
           {loading && <div className="loading-card">Loading physical units...</div>}
           {error && <div className="alert danger">{error}</div>}
+          {downloadError && <div className="alert danger" role="alert">{downloadError}</div>}
           {!loading && !error && units.length === 0 && <div className="empty-state">No physical units found for this asset.</div>}
           {!loading && !error && units.length > 0 && (
             <>
@@ -17658,6 +18411,11 @@ function PhysicalUnitQrModal({ asset, units, loading, error, onClose }) {
                   {selectedIds.length === units.length ? "Clear all" : "Select all"}
                 </button>
               </div>
+              {action === "download" && units.some((unit) => !unit.qr_code_path) && (
+                <div className="alert warning" role="status">
+                  Some physical units do not have QR codes. Select only units with QR codes to download labels.
+                </div>
+              )}
               <div className="physical-unit-qr-list">
                 {units.map((unit) => (
                   <label className="physical-unit-qr-row" key={unit.id}>
@@ -17672,9 +18430,21 @@ function PhysicalUnitQrModal({ asset, units, loading, error, onClose }) {
               </div>
               <div className="modal-actions">
                 <button type="button" className="secondary-button" onClick={onClose}>Cancel</button>
-                <button type="button" className="primary-button" disabled={!selectedUnits.some((unit) => unit.qr_code_path)} onClick={() => printPhysicalUnitQrLabels(asset, selectedUnits)}>
-                  <Printer size={16} /> Print selected labels
-                </button>
+                {action === "download" ? (
+                  <button
+                    type="button"
+                    className="primary-button"
+                    disabled={!selectedUnitsHaveQrCodes || isDownloading}
+                    onClick={downloadSelectedLabels}
+                  >
+                    {isDownloading ? <RefreshCw size={16} className="spin" /> : <Download size={16} />}
+                    {isDownloading ? "Preparing PDF..." : "Download selected labels"}
+                  </button>
+                ) : (
+                  <button type="button" className="primary-button" disabled={!selectedUnits.some((unit) => unit.qr_code_path)} onClick={() => printPhysicalUnitQrLabels(asset, selectedUnits)}>
+                    <Printer size={16} /> Print selected labels
+                  </button>
+                )}
               </div>
             </>
           )}
@@ -18028,6 +18798,9 @@ function AssetTable({
   onEdit,
   onDelete,
   onPrintUnits,
+  onPrintAllUnits,
+  onDownloadAllUnits,
+  qrActionLoading = null,
   disabled = false,
 }) {
   return (
@@ -18184,30 +18957,30 @@ function AssetTable({
                     >
                       <QrCode size={16} />
                     </button>
-                  {asset.qr_code_path ? (
-                      <>
-                      <button
-                        className="icon-button"
-                        type="button"
-                        title="Print QR code"
-                        onClick={() => printAssetQrCode(asset)}
-                      >
-                        <Printer size={16} />
-                      </button>
-                      <button
-                        className="icon-button"
-                        type="button"
-                        title="Download QR code"
-                        onClick={() => downloadAssetQrCode(asset)}
-                      >
-                        <Download size={16} />
-                      </button>
-                    </>
-                  ) : (
-                    <span style={{ color: "#999", fontSize: 12 }}>
-                      Not generated
-                    </span>
-                  )}
+                    <button
+                      className="icon-button"
+                      type="button"
+                      title="Print all physical unit QR labels"
+                      aria-label={`Print all physical unit QR labels for ${asset.name}`}
+                      onClick={() => onPrintAllUnits?.(asset)}
+                      disabled={disabled || Boolean(qrActionLoading)}
+                    >
+                      {qrActionLoading?.assetId === asset.id && qrActionLoading.action === "print"
+                        ? <RefreshCw size={16} className="spin" />
+                        : <Printer size={16} />}
+                    </button>
+                    <button
+                      className="icon-button"
+                      type="button"
+                      title="Download all physical unit QR labels as PDF"
+                      aria-label={`Download all physical unit QR labels for ${asset.name}`}
+                      onClick={() => onDownloadAllUnits?.(asset)}
+                      disabled={disabled || Boolean(qrActionLoading)}
+                    >
+                      {qrActionLoading?.assetId === asset.id && qrActionLoading.action === "download"
+                        ? <RefreshCw size={16} className="spin" />
+                        : <Download size={16} />}
+                    </button>
                   </div>
                 </td>
                 <td className="actions-column">

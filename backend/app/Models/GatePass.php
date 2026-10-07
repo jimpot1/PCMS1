@@ -12,6 +12,8 @@ class GatePass extends Model
     protected $fillable = [
         'gate_pass_number',
         'asset_id',
+        'asset_unit_id',
+        'holder_id',
         'requested_by',
         'department_id',
         'purpose',
@@ -43,6 +45,16 @@ class GatePass extends Model
     public function asset(): BelongsTo
     {
         return $this->belongsTo(Asset::class);
+    }
+
+    public function assetUnit(): BelongsTo
+    {
+        return $this->belongsTo(AssetUnit::class);
+    }
+
+    public function holder(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'holder_id');
     }
 
     public function department(): BelongsTo

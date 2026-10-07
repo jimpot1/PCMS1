@@ -1,9 +1,46 @@
 import React from 'react';
-import { ChevronRight, Menu } from 'lucide-react';
+import { Menu } from 'lucide-react';
+import { useLocation } from 'react-router-dom';
 import HeaderActions from './HeaderActions.jsx';
 
+const routeTitles = {
+  dashboard: 'Dashboard',
+  assets: 'Asset Registry',
+  ocr: 'OCR Asset Tagging',
+  assignments: 'Asset Assignment',
+  transfers: 'Asset Transfer',
+  returns: 'Asset Return',
+  supplies: 'Supplies Inventory',
+  departments: 'Department',
+  monitoring: 'Inventory Monitoring',
+  maintenance: 'Preventive Maintenance',
+  damage: 'Damage Report',
+  purchases: 'Purchase Workflow',
+  gatepass: 'Gate Pass',
+  audit: 'Audit Dashboard',
+  'walk-in-request': 'Walk-in Request',
+  'approved-release-queue': 'Approved Release Queue',
+  'gate-pass-preparation': 'Gate Pass Preparation',
+  'release-receipt-preparation': 'Release Receipt Preparation',
+  'purchase-order-documents': 'Purchase Order Documents',
+  reports: 'Reports & Analytics',
+  activity: 'Activity & Transaction Logs',
+  'receiving-history': 'Receiving History',
+  'stock-counting': 'Stock Counting',
+  'stock-verification': 'Stock Verification',
+  'inventory-encoding': 'Inventory Encoding',
+  notifications: 'Notifications',
+};
+
 export default function StaffHeader({ currentUser, onLogout, sidebarCollapsed, onToggleSidebar, onOpenMobile }) {
-  const displayName = [currentUser?.first_name, currentUser?.last_name].filter(Boolean).join(' ') || currentUser?.full_name || currentUser?.email || 'PPMO Staff';
+  const location = useLocation();
+  const routeKey = location.pathname.replace(/^\/ppmo\/?/, '').replace(/\/+$/, '') || 'dashboard';
+  const title = routeTitles[routeKey] || routeKey
+    .split('/')
+    .pop()
+    .split('-')
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
   const handleSidebarButton = () => {
     if (window.matchMedia('(max-width: 980px)').matches) {
       onOpenMobile();
@@ -19,9 +56,7 @@ export default function StaffHeader({ currentUser, onLogout, sidebarCollapsed, o
           <Menu size={18} />
         </button>
         <div>
-          <div className="staff-breadcrumb">PCMS / PPMO <ChevronRight size={14} /> Dashboard</div>
-          <h1>Dashboard</h1>
-          <p>Overview of your operations and approvals.</p>
+          <h1>{title}</h1>
         </div>
       </div>
       <div className="staff-header-right">

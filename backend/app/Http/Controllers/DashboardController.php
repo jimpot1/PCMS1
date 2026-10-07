@@ -50,22 +50,43 @@ class DashboardController
         ];
 
         $activityStart = now()->subDays(6)->startOfDay();
-        $releaseCounts = DB::table('activity_logs')
-            ->whereIn('action', $releaseActions)
+        $returnActions = ['asset_returned', 'gate_pass_returned'];
+        $receivingActions = ['po_stock_received', 'po_qc_completed'];
+        $activityActionGroups = [
+            'releases' => $releaseActions,
+            'returns' => $returnActions,
+            'receiving_qc' => $receivingActions,
+        ];
+        $activityActions = collect($activityActionGroups)->flatten()->all();
+        $activityCounts = DB::table('activity_logs')
+            ->whereIn('action', $activityActions)
             ->whereBetween('created_at', [$activityStart, now()->endOfDay()])
-            ->selectRaw('DATE(created_at) as activity_date, COUNT(*) as total')
-            ->groupBy('activity_date')
-            ->pluck('total', 'activity_date');
+            ->selectRaw('DATE(created_at) as activity_date, action, COUNT(*) as total')
+            ->groupBy('activity_date', 'action')
+            ->get()
+            ->reduce(function (array $counts, object $row) use ($activityActionGroups) {
+                foreach ($activityActionGroups as $group => $actions) {
+                    if (in_array($row->action, $actions, true)) {
+                        $counts[$row->activity_date][$group] = ($counts[$row->activity_date][$group] ?? 0) + (int) $row->total;
+                        break;
+                    }
+                }
+
+                return $counts;
+            }, []);
 
         $releaseActivity = collect(range(6, 0))
-            ->map(function (int $daysAgo) use ($releaseCounts) {
+            ->map(function (int $daysAgo) use ($activityCounts) {
                 $date = now()->subDays($daysAgo);
                 $dateKey = $date->toDateString();
+                $counts = $activityCounts[$dateKey] ?? [];
 
                 return [
                     'date' => $dateKey,
                     'label' => $date->format('D'),
-                    'releases' => (int) ($releaseCounts[$dateKey] ?? 0),
+                    'releases' => $counts['releases'] ?? 0,
+                    'returns' => $counts['returns'] ?? 0,
+                    'receiving_qc' => $counts['receiving_qc'] ?? 0,
                 ];
             })
             ->values();

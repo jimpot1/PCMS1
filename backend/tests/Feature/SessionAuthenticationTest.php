@@ -160,4 +160,31 @@ class SessionAuthenticationTest extends TestCase
             $this->getJson($path)->assertUnauthorized();
         }
     }
+
+    public function test_deactivated_user_cannot_use_protected_routes_or_keep_the_session(): void
+    {
+        $user = User::create([
+            'id' => (string) Str::uuid(),
+            'employee_id' => 'SESSION-DEACTIVATED',
+            'full_name' => 'Deactivated Session User',
+            'email' => 'deactivated-session@example.com',
+            'password_hash' => Hash::make('SecretPass123!'),
+            'role' => 'Requester',
+            'status' => 'inactive',
+        ]);
+
+        $this->actingAs($user, 'web')
+            ->getJson('/api/dashboard')
+            ->assertForbidden()
+            ->assertJsonPath('account_deactivated', true);
+
+        Auth::forgetGuards();
+        $this->app['session']->forgetDrivers();
+        $this->getJson('/api/auth/me')
+            ->assertOk()
+            ->assertJson([
+                'authenticated' => false,
+                'user' => null,
+            ]);
+    }
 }

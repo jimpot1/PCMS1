@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\GatePass;
 use App\Models\Asset;
+use App\Models\AssetUnit;
 use App\Models\Department;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
@@ -21,7 +22,7 @@ class GatePassController extends Controller
     public function index(Request $request): JsonResponse
     {
         $passes = GatePass::query()
-            ->with('asset.department', 'department', 'requester')
+            ->with('asset.department', 'assetUnit.custodian', 'holder', 'department', 'requester')
             ->when($request->boolean('mine') || $request->user()?->role === 'Requester', fn ($query) => $query->where('requested_by', $request->user()?->id))
             ->when($request->boolean('deliverable'), fn ($query) => $query->where('status', 'approved'))
             ->when($request->boolean('department_queue') || $request->is('api/department-head/gate-passes/pending'), function ($query) use ($request) {
@@ -41,6 +42,7 @@ class GatePassController extends Controller
     {
         $validated = $request->validate([
             'asset_id' => ['required', 'exists:assets,id'],
+            'asset_unit_id' => ['required', 'integer', 'exists:asset_units,id'],
             'purpose' => ['required', 'string'],
             'valid_until' => ['required', 'date', 'after_or_equal:today'],
             'destination' => ['nullable', 'string', 'max:180'],
@@ -50,27 +52,34 @@ class GatePassController extends Controller
             'condition_before' => ['nullable', 'in:excellent,good,fair,needs_repair,damaged'],
         ]);
 
-        $asset = Asset::with('currentAssignment')->findOrFail($validated['asset_id']);
+        $asset = Asset::findOrFail($validated['asset_id']);
+        $unit = AssetUnit::query()
+            ->with('custodian')
+            ->whereKey($validated['asset_unit_id'])
+            ->where('asset_id', $asset->id)
+            ->first();
 
-        if (! $asset->currentAssignment) {
-            return response()->json(['message' => 'Asset must be assigned before a gate pass can be requested.'], 422);
+        if (! $unit || $unit->status !== 'assigned' || ! $unit->custodian_id) {
+            return response()->json(['message' => 'Select a physical unit with an active assigned holder before requesting a gate pass.'], 422);
         }
 
-        if (GatePass::where('asset_id', $asset->id)->whereIn('status', ['pending', 'approved', 'completed'])->exists()) {
-            return response()->json(['message' => 'This asset already has an active or pending gate pass.'], 422);
+        if (GatePass::where('asset_unit_id', $unit->id)->whereIn('status', ['pending', 'approved', 'completed'])->exists()) {
+            return response()->json(['message' => 'This physical unit already has an active or pending gate pass.'], 422);
         }
 
         $gatePass = GatePass::create([
             'gate_pass_number' => $this->generateGatePassNumber(),
             'asset_id' => $validated['asset_id'],
+            'asset_unit_id' => $unit->id,
+            'holder_id' => $unit->custodian_id,
             'requested_by' => $request->user()?->id,
             'department_id' => $this->departmentIdForUser($request),
             'purpose' => $validated['purpose'],
             'destination' => $validated['destination'] ?? null,
             'vehicle' => $validated['vehicle'] ?? null,
             'driver' => $validated['driver'] ?? null,
-            'quantity' => $validated['quantity'] ?? 1,
-            'condition_before' => $validated['condition_before'] ?? $asset->condition,
+            'quantity' => 1,
+            'condition_before' => $validated['condition_before'] ?? $unit->condition ?? $asset->condition,
             'valid_until' => $validated['valid_until'],
             'status' => 'pending',
         ]);
@@ -81,7 +90,7 @@ class GatePassController extends Controller
 
         $this->logActivity('gate_pass_created', $gatePass, $request);
 
-        $gatePass = $gatePass->fresh()->load('asset.department', 'department', 'requester');
+        $gatePass = $gatePass->fresh()->load('asset.department', 'assetUnit.custodian', 'holder', 'department', 'requester');
 
         return response()->json([
             'data' => $gatePass,
@@ -105,6 +114,7 @@ class GatePassController extends Controller
             'walk_in_notes' => ['nullable', 'string'],
             'department_id' => ['nullable', 'exists:departments,id'],
             'asset_id' => ['required', 'exists:assets,id'],
+            'asset_unit_id' => ['required', 'integer', 'exists:asset_units,id'],
             'purpose' => ['required', 'string'],
             'valid_until' => ['required', 'date', 'after_or_equal:today'],
             'destination' => ['nullable', 'string', 'max:180'],
@@ -122,14 +132,19 @@ class GatePassController extends Controller
             }
         }
 
-        $asset = Asset::with('currentAssignment')->findOrFail($validated['asset_id']);
+        $asset = Asset::findOrFail($validated['asset_id']);
+        $unit = AssetUnit::query()
+            ->with('custodian')
+            ->whereKey($validated['asset_unit_id'])
+            ->where('asset_id', $asset->id)
+            ->first();
 
-        if (! $asset->currentAssignment) {
-            return response()->json(['message' => 'Asset must be assigned before a gate pass can be requested.'], 422);
+        if (! $unit || $unit->status !== 'assigned' || ! $unit->custodian_id) {
+            return response()->json(['message' => 'Select a physical unit with an active assigned holder before requesting a gate pass.'], 422);
         }
 
-        if (GatePass::where('asset_id', $asset->id)->whereIn('status', ['pending', 'approved', 'completed'])->exists()) {
-            return response()->json(['message' => 'This asset already has an active or pending gate pass.'], 422);
+        if (GatePass::where('asset_unit_id', $unit->id)->whereIn('status', ['pending', 'approved', 'completed'])->exists()) {
+            return response()->json(['message' => 'This physical unit already has an active or pending gate pass.'], 422);
         }
 
         $departmentId = $validated['department_id'] ?? null;
@@ -146,14 +161,16 @@ class GatePassController extends Controller
         $gatePass = GatePass::create([
             'gate_pass_number' => $this->generateGatePassNumber(),
             'asset_id' => $validated['asset_id'],
+            'asset_unit_id' => $unit->id,
+            'holder_id' => $unit->custodian_id,
             'requested_by' => $requesterUser?->id,
             'department_id' => $departmentId,
             'purpose' => $validated['purpose'],
             'destination' => $validated['destination'] ?? null,
             'vehicle' => $validated['vehicle'] ?? null,
             'driver' => $validated['driver'] ?? null,
-            'quantity' => $validated['quantity'] ?? 1,
-            'condition_before' => $validated['condition_before'] ?? $asset->condition,
+            'quantity' => 1,
+            'condition_before' => $validated['condition_before'] ?? $unit->condition ?? $asset->condition,
             'valid_until' => $validated['valid_until'],
             'status' => 'pending',
             'security_remarks' => collect([
@@ -171,7 +188,7 @@ class GatePassController extends Controller
             'walk_in_requester' => $requesterUser?->email ?? ($validated['walk_in_requester_name'] ?? null),
         ]);
 
-        $gatePass = $gatePass->fresh()->load('asset.department', 'department', 'requester');
+        $gatePass = $gatePass->fresh()->load('asset.department', 'assetUnit.custodian', 'holder', 'department', 'requester');
 
         return response()->json([
             'data' => $gatePass,
@@ -185,7 +202,7 @@ class GatePassController extends Controller
 
     public function show(GatePass $gatePass): JsonResponse
     {
-        return response()->json($gatePass->load('asset.department', 'department', 'requester'));
+        return response()->json($gatePass->load('asset.department', 'assetUnit.custodian', 'holder', 'department', 'requester'));
     }
 
     public function update(Request $request, GatePass $gatePass): JsonResponse
@@ -198,7 +215,7 @@ class GatePassController extends Controller
         $gatePass->update($validated);
         $this->logActivity('gate_pass_updated', $gatePass, $request);
 
-        return response()->json($gatePass->fresh()->load('asset.department', 'department', 'requester'));
+        return response()->json($gatePass->fresh()->load('asset.department', 'assetUnit.custodian', 'holder', 'department', 'requester'));
     }
 
     public function destroy(Request $request, GatePass $gatePass): JsonResponse
@@ -234,7 +251,7 @@ class GatePassController extends Controller
         $this->logActivity('gate_pass_approved', $gatePass, $request);
 
         return response()->json([
-            'data' => $gatePass->fresh()->load('asset.department', 'department', 'requester'),
+            'data' => $gatePass->fresh()->load('asset.department', 'assetUnit.custodian', 'holder', 'department', 'requester'),
             'workflow' => [
                 'status' => 'approved',
                 'message' => 'Gate pass fully approved.',
@@ -264,7 +281,7 @@ class GatePassController extends Controller
 
         $this->logActivity('gate_pass_rejected', $gatePass, $request);
 
-        return response()->json($gatePass->fresh()->load('asset.department', 'department', 'requester'));
+        return response()->json($gatePass->fresh()->load('asset.department', 'assetUnit.custodian', 'holder', 'department', 'requester'));
     }
 
     public function release(Request $request, GatePass $gatePass): JsonResponse
@@ -292,9 +309,20 @@ class GatePassController extends Controller
                 ]);
             }
 
-            if (! $asset->currentAssignment()->exists()) {
+            $unit = AssetUnit::query()
+                ->whereKey($lockedGatePass->asset_unit_id)
+                ->where('asset_id', $asset->id)
+                ->lockForUpdate()
+                ->first();
+
+            if (
+                ! $unit
+                || $unit->status !== 'assigned'
+                || ! $unit->custodian_id
+                || ($lockedGatePass->holder_id && $unit->custodian_id !== $lockedGatePass->holder_id)
+            ) {
                 throw \Illuminate\Validation\ValidationException::withMessages([
-                    'asset' => 'Asset must have an active assignment before gate pass release.',
+                    'asset_unit_id' => 'The selected physical unit must still be assigned to the recorded holder before release.',
                 ]);
             }
 
@@ -305,10 +333,7 @@ class GatePassController extends Controller
                 'returned_at' => null,
             ]);
 
-            $asset->update([
-                'status' => 'issued',
-                'location' => $asset->location ?: 'Off Campus',
-            ]);
+            $unit->update(['status' => 'in_transit']);
 
             $this->logActivity('gate_pass_released', $lockedGatePass, $request);
 
@@ -325,7 +350,7 @@ class GatePassController extends Controller
                 ]);
             }
 
-            return $lockedGatePass->fresh()->load('asset.department', 'department', 'requester');
+            return $lockedGatePass->fresh()->load('asset.department', 'assetUnit.custodian', 'holder', 'department', 'requester');
         });
 
         return response()->json([
@@ -342,8 +367,8 @@ class GatePassController extends Controller
      */
     public function return(Request $request, GatePass $gatePass): JsonResponse
     {
-        if ($gatePass->status !== 'approved') {
-            return response()->json(['message' => 'Only approved gate passes can be returned.'], 400);
+        if (! in_array($gatePass->status, ['approved', 'completed'], true)) {
+            return response()->json(['message' => 'Only approved or released gate passes can be returned.'], 400);
         }
 
         if ($request->user()?->role === 'Requester' && $gatePass->requested_by !== $request->user()?->id) {
@@ -368,19 +393,26 @@ class GatePassController extends Controller
             'security_remarks' => $validated['security_remarks'] ?? null,
         ]);
 
-        $assetStatus = in_array($validated['condition_after'] ?? null, ['needs_repair', 'damaged'], true)
-            ? (($validated['condition_after'] ?? null) === 'damaged' ? 'damaged' : 'maintenance')
-            : 'available';
-
-        $asset = $gatePass->asset()->first();
-        $gatePass->asset()->update([
-            'status' => $assetStatus,
-            'condition' => $validated['condition_after'] ?? optional($asset)->condition,
-        ]);
+        $unit = $gatePass->assetUnit()->first();
+        if ($unit) {
+            $conditionAfter = $validated['condition_after'] ?? $unit->condition;
+            $unit->update([
+                'status' => match ($conditionAfter) {
+                    'damaged' => 'damaged',
+                    'needs_repair' => 'maintenance',
+                    default => 'assigned',
+                },
+                'condition' => $conditionAfter,
+                'custodian_id' => in_array($conditionAfter, ['needs_repair', 'damaged'], true)
+                    ? null
+                    : $unit->custodian_id,
+            ]);
+        }
 
         if (in_array($validated['condition_after'] ?? null, ['needs_repair', 'damaged'], true)) {
             DB::table('damage_reports')->insert([
                 'asset_id' => $gatePass->asset_id,
+                'asset_unit_id' => $gatePass->asset_unit_id,
                 'department_id' => $gatePass->department_id,
                 'reported_by' => $request->user()?->id,
                 'severity' => ($validated['condition_after'] ?? null) === 'damaged' ? 'moderate' : 'minor',
@@ -394,7 +426,7 @@ class GatePassController extends Controller
 
         $this->logActivity('gate_pass_returned', $gatePass, $request);
 
-        return response()->json($gatePass->fresh()->load('asset.department', 'department', 'requester'));
+        return response()->json($gatePass->fresh()->load('asset.department', 'assetUnit.custodian', 'holder', 'department', 'requester'));
     }
 
     /**
@@ -406,8 +438,12 @@ class GatePassController extends Controller
             return response()->json(['message' => 'Gate pass must be approved before scanning.'], 400);
         }
 
-        // Toggle status between 'approved' (released) and 'returned'
-        $newStatus = $gatePass->status === 'returned' ? 'approved' : 'returned';
+        if (! in_array($gatePass->status, ['approved', 'completed'], true)) {
+            return response()->json(['message' => 'Only approved or released gate passes can be scanned for movement.'], 400);
+        }
+
+        $isCheckOut = $gatePass->status === 'approved';
+        $newStatus = $isCheckOut ? 'completed' : 'returned';
         $returnedAt = $newStatus === 'returned' ? now() : null;
 
         $gatePass->update([
@@ -415,15 +451,15 @@ class GatePassController extends Controller
             'returned_at' => $returnedAt,
         ]);
 
-        $gatePass->asset()->update([
-            'status' => $newStatus === 'returned' ? 'issued' : 'available',
+        $gatePass->assetUnit()->update([
+            'status' => $isCheckOut ? 'in_transit' : 'assigned',
         ]);
 
         $this->logActivity('gate_pass_scanned', $gatePass, $request, ['new_status' => $newStatus]);
 
         return response()->json([
             'message' => $newStatus === 'returned' ? 'Asset checked in' : 'Asset checked out',
-            'gate_pass' => $gatePass->fresh()->load('asset'),
+            'gate_pass' => $gatePass->fresh()->load('asset', 'assetUnit.custodian', 'holder'),
         ]);
     }
 
@@ -483,6 +519,7 @@ class GatePassController extends Controller
             'action' => $action,
             'gate_pass_id' => $gatePass->id,
             'gate_pass_number' => $gatePass->gate_pass_number,
+            'asset_unit_id' => $gatePass->asset_unit_id,
             'user' => optional($request->user())->email ?? 'system',
             'ip' => $request->ip(),
             ...$extra,

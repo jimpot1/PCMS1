@@ -51,6 +51,7 @@ export async function exportElementToPdf(element, filename) {
     scale: 2,
     useCORS: true,
     backgroundColor: '#ffffff',
+    ignoreElements: (node) => node.hasAttribute('data-html2canvas-ignore'),
   });
 
   const pdf = canvasToPdf(canvas, jsPDF);

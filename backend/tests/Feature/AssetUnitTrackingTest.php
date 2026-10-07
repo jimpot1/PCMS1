@@ -88,6 +88,140 @@ class AssetUnitTrackingTest extends TestCase
         $response->assertJsonPath('data.0.unit_code', 'UNIT-002');
     }
 
+    public function test_increasing_asset_quantity_adds_available_physical_units(): void
+    {
+        $staff = \App\Models\User::create([
+            'id' => (string) \Illuminate\Support\Str::uuid(),
+            'employee_id' => 'EMP-EDIT-QUANTITY',
+            'first_name' => 'Asset',
+            'last_name' => 'Editor',
+            'full_name' => 'Asset Editor',
+            'email' => 'asset.editor@example.test',
+            'password_hash' => bcrypt('secret'),
+            'role' => 'PPMO Staff',
+            'department' => 'Operations',
+            'status' => 'active',
+        ]);
+        $asset = Asset::create([
+            'asset_id' => 'AST-QUANTITY-001',
+            'property_number' => 'PROP-QUANTITY-001',
+            'name' => 'Quantity Test Asset',
+            'quantity' => 2,
+            'available_quantity' => 2,
+            'condition' => 'good',
+            'status' => 'available',
+        ]);
+        foreach ([1, 2] as $sequence) {
+            AssetUnit::create([
+                'asset_id' => $asset->id,
+                'unit_code' => "AST-QUANTITY-001-" . sprintf('%03d', $sequence),
+                'status' => 'available',
+                'condition' => 'good',
+            ]);
+        }
+
+        $this->actingAs($staff)
+            ->putJson('/api/assets/' . $asset->id, ['quantity' => 4])
+            ->assertOk()
+            ->assertJsonPath('asset.quantity', 4)
+            ->assertJsonPath('asset.available_quantity', 4);
+
+        $this->assertSame(4, AssetUnit::where('asset_id', $asset->id)->where('status', 'available')->count());
+    }
+
+    public function test_decreasing_asset_quantity_only_removes_available_units(): void
+    {
+        $staff = \App\Models\User::create([
+            'id' => (string) \Illuminate\Support\Str::uuid(),
+            'employee_id' => 'EMP-EDIT-QUANTITY-2',
+            'first_name' => 'Asset',
+            'last_name' => 'Editor',
+            'full_name' => 'Asset Editor',
+            'email' => 'asset.editor.two@example.test',
+            'password_hash' => bcrypt('secret'),
+            'role' => 'PPMO Staff',
+            'department' => 'Operations',
+            'status' => 'active',
+        ]);
+        $asset = Asset::create([
+            'asset_id' => 'AST-QUANTITY-002',
+            'property_number' => 'PROP-QUANTITY-002',
+            'name' => 'Quantity Test Asset',
+            'quantity' => 3,
+            'available_quantity' => 2,
+            'condition' => 'good',
+            'status' => 'available',
+        ]);
+        foreach ([
+            ['AST-QUANTITY-002-001', 'available'],
+            ['AST-QUANTITY-002-002', 'available'],
+            ['AST-QUANTITY-002-003', 'assigned'],
+        ] as [$unitCode, $status]) {
+            AssetUnit::create([
+                'asset_id' => $asset->id,
+                'unit_code' => $unitCode,
+                'status' => $status,
+                'condition' => 'good',
+            ]);
+        }
+
+        $this->actingAs($staff)
+            ->putJson('/api/assets/' . $asset->id, ['quantity' => 2])
+            ->assertOk()
+            ->assertJsonPath('asset.quantity', 2)
+            ->assertJsonPath('asset.available_quantity', 1);
+
+        $this->assertDatabaseHas('asset_units', [
+            'asset_id' => $asset->id,
+            'unit_code' => 'AST-QUANTITY-002-003',
+            'status' => 'assigned',
+        ]);
+        $this->assertSame(1, AssetUnit::where('asset_id', $asset->id)->where('status', 'removed')->count());
+    }
+
+    public function test_resaving_asset_quantity_restores_removed_units_before_creating_more(): void
+    {
+        $staff = \App\Models\User::create([
+            'id' => (string) \Illuminate\Support\Str::uuid(),
+            'employee_id' => 'EMP-RESTORE-UNITS',
+            'first_name' => 'Asset',
+            'last_name' => 'Editor',
+            'full_name' => 'Asset Editor',
+            'email' => 'asset.restore@example.test',
+            'password_hash' => bcrypt('secret'),
+            'role' => 'PPMO Staff',
+            'department' => 'Operations',
+            'status' => 'active',
+        ]);
+        $asset = Asset::create([
+            'asset_id' => 'AST-QUANTITY-015',
+            'property_number' => 'PROP-QUANTITY-015',
+            'name' => 'Quantity Reconciliation Test',
+            'quantity' => 15,
+            'available_quantity' => 10,
+            'condition' => 'good',
+            'status' => 'available',
+        ]);
+        foreach (range(1, 15) as $sequence) {
+            AssetUnit::create([
+                'asset_id' => $asset->id,
+                'unit_code' => 'AST-QUANTITY-015-' . sprintf('%03d', $sequence),
+                'status' => $sequence >= 6 && $sequence <= 10 ? 'removed' : 'available',
+                'condition' => 'good',
+            ]);
+        }
+
+        $this->actingAs($staff)
+            ->putJson('/api/assets/' . $asset->id, ['quantity' => 15])
+            ->assertOk()
+            ->assertJsonPath('asset.quantity', 15)
+            ->assertJsonPath('asset.available_quantity', 15);
+
+        $this->assertSame(15, AssetUnit::where('asset_id', $asset->id)->where('status', 'available')->count());
+        $this->assertSame(0, AssetUnit::where('asset_id', $asset->id)->where('status', 'removed')->count());
+        $this->assertSame(15, AssetUnit::where('asset_id', $asset->id)->count());
+    }
+
     public function test_single_asset_assignment_can_use_available_asset_unit(): void
     {
         $staff = \App\Models\User::create([
