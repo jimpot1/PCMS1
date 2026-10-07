@@ -4948,6 +4948,9 @@ function EnhancedAssignmentsPage() {
   const [dashboardData, setDashboardData] = useState(null);
   const [assetsList, setAssetsList] = useState([]);
   const [assetUnits, setAssetUnits] = useState([]);
+  const [assetUnitsLoading, setAssetUnitsLoading] = useState(false);
+  const [assetUnitsError, setAssetUnitsError] = useState("");
+  const [assetUnitsRefreshKey, setAssetUnitsRefreshKey] = useState(0);
   const [usersList, setUsersList] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
@@ -5138,7 +5141,12 @@ function EnhancedAssignmentsPage() {
   );
   const hasInsufficientAvailableUnits = requestedQuantity > availableAssetUnits.length;
   const hasSelectionMismatch = selectedPhysicalUnitIds.length !== requestedQuantity;
-  const shouldBlockAssignment = Boolean(formValues.asset_id) && (hasInsufficientAvailableUnits || hasSelectionMismatch);
+  const shouldBlockAssignment = Boolean(formValues.asset_id) && (
+    assetUnitsLoading ||
+    Boolean(assetUnitsError) ||
+    hasInsufficientAvailableUnits ||
+    hasSelectionMismatch
+  );
   const selectedUser = usersList.find(
     (user) => String(user.id) === String(formValues.assigned_to),
   );
@@ -5216,16 +5224,25 @@ function EnhancedAssignmentsPage() {
     if (!formValues.asset_id) {
       setAssetUnits([]);
       setSelectedPhysicalUnitIds([]);
+      setAssetUnitsLoading(false);
+      setAssetUnitsError("");
       return;
     }
     setAssetUnits([]);
+    setAssetUnitsLoading(true);
+    setAssetUnitsError("");
     pcmsApi.assetUnits(formValues.asset_id).then((units) => {
       if (!ignore) setAssetUnits(units || []);
-    }).catch(() => {
-      if (!ignore) setAssetUnits([]);
+    }).catch((error) => {
+      if (!ignore) {
+        setAssetUnits([]);
+        setAssetUnitsError(error?.message || "Physical units could not be loaded. Please retry.");
+      }
+    }).finally(() => {
+      if (!ignore) setAssetUnitsLoading(false);
     });
     return () => { ignore = true; };
-  }, [formValues.asset_id]);
+  }, [formValues.asset_id, assetUnitsRefreshKey]);
 
   useEffect(() => {
     if (!formValues.asset_id) {
@@ -5236,6 +5253,16 @@ function EnhancedAssignmentsPage() {
     const eligibleIds = availableAssetUnits.map((unit) => unit.id);
     const validExisting = [...new Set(selectedPhysicalUnitIds.filter((id) => eligibleIds.includes(id)))];
     const requested = Math.max(1, Number(formValues.quantity || 1));
+    if (selectedAssetRequestId) {
+      const requestedSelection = validExisting.slice(0, requested);
+      setSelectedPhysicalUnitIds((currentSelection) => (
+        currentSelection.length === requestedSelection.length &&
+        currentSelection.every((id, index) => id === requestedSelection[index])
+          ? currentSelection
+          : requestedSelection
+      ));
+      return;
+    }
     const nextSelection = [];
 
     for (const id of validExisting) {
@@ -5255,7 +5282,7 @@ function EnhancedAssignmentsPage() {
         normalizedSelection.every((id) => currentIds.includes(id));
       return sameSelection ? currentSelection : normalizedSelection;
     });
-  }, [availableAssetUnits, formValues.asset_id, formValues.quantity, selectedPhysicalUnitIds]);
+  }, [availableAssetUnits, formValues.asset_id, formValues.quantity, selectedAssetRequestId, selectedPhysicalUnitIds]);
 
   const openCreateDialog = () => {
     setCreateError(null);
@@ -5274,16 +5301,22 @@ function EnhancedAssignmentsPage() {
 
   const processAssetRequest = (purchaseRequest) => {
     const lineItem = (purchaseRequest.line_items || [])[0] || {};
-    const asset = assetsList.find((item) => String(item.id) === String(lineItem.source_id));
+    const requestedAssetId = lineItem.source_id ?? lineItem.asset_id ?? "";
+    const asset = assetsList.find((item) => String(item.id) === String(requestedAssetId));
+    if (!requestedAssetId) {
+      setActionError("This asset request is missing its linked Asset Registry record. Update the request before processing it.");
+      return;
+    }
     const requestedQuantity = Number(
       lineItem.approved_qty || lineItem.approved_quantity || lineItem.qty || lineItem.quantity || 1,
     );
+    setActionError(null);
     setCreateError(null);
     setCreateSuccess(null);
     setSelectedAssetRequestId(purchaseRequest.id);
     setFormValues({
       ...makeEmptyForm(),
-      asset_id: asset?.id ? String(asset.id) : String(lineItem.source_id || ""),
+      asset_id: asset?.id ? String(asset.id) : String(requestedAssetId),
       assigned_to: purchaseRequest.requested_by || "",
       quantity: String(requestedQuantity),
       purpose: purchaseRequest.purpose || "",
@@ -5295,6 +5328,9 @@ function EnhancedAssignmentsPage() {
     setRecommendations([]);
     setEmployeeProfile(null);
     setAssetUnits([]);
+    setAssetUnitsError("");
+    setAssetUnitsLoading(true);
+    setAssetUnitsRefreshKey((key) => key + 1);
     setShowCreateDialog(true);
   };
 
@@ -5321,6 +5357,7 @@ function EnhancedAssignmentsPage() {
   const closeCreateDialog = () => {
     setShowCreateDialog(false);
     setCreateLoading(false);
+    setSelectedAssetRequestId(null);
     setSelectedPhysicalUnitIds([]);
     setPhysicalUnitSearch("");
     setShowAssetSuggestions(false);
@@ -5353,6 +5390,21 @@ function EnhancedAssignmentsPage() {
       const normalizedSelectedUnitIds = [...new Set(
         selectedPhysicalUnitIds.filter((unitId) => availableAssetUnits.some((unit) => unit.id === unitId)),
       )];
+
+      if (assetUnitsLoading) {
+        setCreateError("Wait for the physical units to finish loading before creating the assignment.");
+        return;
+      }
+
+      if (assetUnitsError) {
+        setCreateError(assetUnitsError);
+        return;
+      }
+
+      if (selectedAssetRequestId && assetUnits.length === 0) {
+        setCreateError("No physical units are registered for this asset. Register its units before processing the request.");
+        return;
+      }
 
       if (selectedQuantity > availableAssetUnits.length) {
         setCreateError(`Only ${availableAssetUnits.length} of ${selectedQuantity} requested physical units are currently available.`);
@@ -6141,7 +6193,7 @@ function EnhancedAssignmentsPage() {
         <div className="modal-overlay" role="dialog" aria-modal="true">
           <div className="modal-card wide-modal">
             <div className="modal-header">
-              <h3>Create Asset Assignment</h3>
+              <h3>{selectedAssetRequestId ? "Process Asset Assignment" : "Create Asset Assignment"}</h3>
               <button
                 className="icon-button"
                 onClick={closeCreateDialog}
@@ -6157,6 +6209,7 @@ function EnhancedAssignmentsPage() {
                   Asset
                   <input
                     value={assetQuery}
+                    disabled={Boolean(selectedAssetRequestId)}
                     onChange={(event) => {
                       setAssetQuery(event.target.value);
                       setShowAssetSuggestions(true);
@@ -6240,6 +6293,7 @@ function EnhancedAssignmentsPage() {
                   {usersList.length > 0 ? (
                     <select
                       value={formValues.assigned_to}
+                      disabled={Boolean(selectedAssetRequestId)}
                       onChange={(event) =>
                         updateField("assigned_to", event.target.value)
                       }
@@ -6260,6 +6314,7 @@ function EnhancedAssignmentsPage() {
                   ) : (
                     <input
                       value={formValues.assigned_to}
+                      disabled={Boolean(selectedAssetRequestId)}
                       onChange={(event) =>
                         updateField("assigned_to", event.target.value)
                       }
@@ -6307,6 +6362,7 @@ function EnhancedAssignmentsPage() {
                     min="1"
                     max={selectedAsset ? getAvailableQuantity(selectedAsset) : undefined}
                     value={formValues.quantity}
+                    readOnly={Boolean(selectedAssetRequestId)}
                     onChange={(event) => {
                       const numericValue = Math.max(1, Number(event.target.value || 1));
                       updateField("quantity", String(numericValue));
@@ -6314,7 +6370,7 @@ function EnhancedAssignmentsPage() {
                     required
                   />
                 </label>
-                {selectedAsset && (
+                {formValues.asset_id && (
                   <div className="full-width panel" style={{ margin: 0, padding: 14, background: "#f8fafc", border: "1px solid rgba(148, 163, 184, 0.4)", borderRadius: 12 }}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 10, flexWrap: "wrap" }}>
                       <strong style={{ fontSize: 15, color: "#0f172a" }}>Physical Units</strong>
@@ -6335,9 +6391,25 @@ function EnhancedAssignmentsPage() {
                         {selectedPhysicalUnitIds.length} of {requestedQuantity} selected
                       </span>
                     </div>
-                    {availableAssetUnits.length === 0 ? (
+                    {selectedAssetRequestId && (
+                      <p className="small-text" style={{ margin: "0 0 10px", color: "#475569" }}>
+                        Select exactly {requestedQuantity} available unit(s) for this approved request.
+                      </p>
+                    )}
+                    {assetUnitsLoading ? (
+                      <p className="small-text" style={{ margin: 0, padding: 8 }}>Loading physical units...</p>
+                    ) : assetUnitsError ? (
+                      <div className="alert danger" role="alert" style={{ margin: 0, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                        <span>{assetUnitsError}</span>
+                        <button type="button" className="secondary-button" onClick={() => setAssetUnitsRefreshKey((key) => key + 1)}>
+                          Retry
+                        </button>
+                      </div>
+                    ) : availableAssetUnits.length === 0 ? (
                       <p className="small-text" style={{ margin: 0, padding: 8, color: "#b91c1c" }}>
-                        No available physical units are currently available for this asset.
+                        {assetUnits.length === 0
+                          ? "No physical units are registered for this asset. Register its units in Asset Registry before assigning it."
+                          : "No available physical units are currently available for this asset."}
                       </p>
                     ) : (
                       <>
@@ -6405,7 +6477,7 @@ function EnhancedAssignmentsPage() {
                                       {unit.unit_code || `Asset Unit ${unit.id}`}
                                     </div>
                                     <div style={{ fontSize: 12, color: "#475569", marginTop: 2 }}>
-                                      Asset ID: {unit.id} | Condition: {unit.condition || selectedAsset.condition || "Good"} | Available
+                                      Asset ID: {unit.id} | Condition: {unit.condition || selectedAsset?.condition || "Good"} | Available
                                     </div>
                                   </div>
                                 </label>
@@ -6417,6 +6489,7 @@ function EnhancedAssignmentsPage() {
                           <button
                             type="button"
                             className="secondary-button"
+                            disabled={Boolean(selectedAssetRequestId)}
                             onClick={() => setSelectedPhysicalUnitIds(availableAssetUnits.slice(0, requestedQuantity).map((unit) => unit.id))}
                             style={{
                               minWidth: 172,
@@ -6638,9 +6711,9 @@ function EnhancedAssignmentsPage() {
                 <button
                   type="submit"
                   className="primary-button"
-                  disabled={createLoading}
+                  disabled={createLoading || assetUnitsLoading || shouldBlockAssignment}
                 >
-                  {createLoading ? "Creating..." : "Create Assignment"}
+                  {createLoading ? "Creating..." : selectedAssetRequestId ? "Process Assignment" : "Create Assignment"}
                 </button>
               </div>
             </form>

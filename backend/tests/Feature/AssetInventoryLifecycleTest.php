@@ -459,13 +459,19 @@ class AssetInventoryLifecycleTest extends TestCase
         $asset = Asset::create([
             'asset_id' => 'AST-' . Str::upper(Str::random(8)),
             'property_number' => 'INV-ROUTE-1002',
-            'name' => 'Untracked Physical Asset',
+            'name' => 'Tracked Physical Asset',
             'quantity' => 1,
             'available_quantity' => 1,
             'condition' => 'good',
             'status' => 'available',
             'purchase_cost' => 1000,
             'purchase_date' => now()->toDateString(),
+        ]);
+        $unit = \App\Models\AssetUnit::create([
+            'asset_id' => $asset->id,
+            'unit_code' => 'UNIT-ROUTE-1002',
+            'status' => 'available',
+            'condition' => 'good',
         ]);
         $purchaseRequest = \App\Models\PurchaseRequest::create([
             'request_number' => 'REQ-ROUTE-1002',
@@ -478,7 +484,7 @@ class AssetInventoryLifecycleTest extends TestCase
                 'source_type' => 'asset',
                 'source_id' => $asset->id,
                 'workflow_destination' => 'asset_assignment',
-                'item' => 'Untracked Physical Asset',
+                'item' => 'Tracked Physical Asset',
                 'qty' => 1,
                 'quantity' => 1,
             ]],
@@ -488,6 +494,7 @@ class AssetInventoryLifecycleTest extends TestCase
             'asset_id' => $asset->id,
             'assigned_to' => $requester->id,
             'quantity' => 1,
+            'physical_unit_ids' => [$unit->id],
             'assignment_type' => 'permanent',
             'accept_now' => true,
             'purchase_request_id' => $purchaseRequest->id,
@@ -504,6 +511,55 @@ class AssetInventoryLifecycleTest extends TestCase
 
         $this->postJson('/api/assignments', $payload)->assertStatus(422);
         $this->assertDatabaseCount('asset_assignments', 1);
+    }
+
+    public function test_asset_request_assignment_requires_registered_physical_units(): void
+    {
+        $staff = $this->makeUser('PPMO Staff', 'PPMO Staff');
+        $requester = $this->makeUser('Requester', 'Requester');
+        $asset = Asset::create([
+            'asset_id' => 'AST-' . Str::upper(Str::random(8)),
+            'property_number' => 'INV-ROUTE-1003',
+            'name' => 'Asset Without Registered Units',
+            'quantity' => 1,
+            'available_quantity' => 1,
+            'condition' => 'good',
+            'status' => 'available',
+            'purchase_cost' => 1000,
+            'purchase_date' => now()->toDateString(),
+        ]);
+        $purchaseRequest = \App\Models\PurchaseRequest::create([
+            'request_number' => 'REQ-ROUTE-1003',
+            'requested_by' => $requester->id,
+            'current_stage' => 'ppmo_staff',
+            'status' => 'approved',
+            'request_type' => 'request',
+            'workflow_destination' => 'asset_assignment',
+            'line_items' => [[
+                'source_type' => 'asset',
+                'source_id' => $asset->id,
+                'workflow_destination' => 'asset_assignment',
+                'item' => $asset->name,
+                'qty' => 1,
+                'quantity' => 1,
+            ]],
+        ]);
+
+        $this->actingAs($staff)
+            ->postJson('/api/assignments', [
+                'asset_id' => $asset->id,
+                'assigned_to' => $requester->id,
+                'quantity' => 1,
+                'assignment_type' => 'permanent',
+                'accept_now' => true,
+                'purchase_request_id' => $purchaseRequest->id,
+            ])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('physical_unit_ids');
+
+        $this->assertSame('approved', $purchaseRequest->fresh()->status);
+        $this->assertDatabaseMissing('asset_assignments', ['asset_id' => $asset->id]);
+        $this->assertSame(1, (int) $asset->fresh()->available_quantity);
     }
 
     public function test_ppmo_staff_can_update_purchase_order_for_receiving_workflow(): void

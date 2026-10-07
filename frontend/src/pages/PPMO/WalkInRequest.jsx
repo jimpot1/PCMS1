@@ -85,8 +85,6 @@ export default function WalkInRequest() {
     walk_in_requester_contact: '',
     walk_in_notes: '',
     department_id: '',
-    unit: '',
-    unit_custom: '',
     branch: '',
     priority: 'normal',
     date_needed: '',
@@ -112,12 +110,9 @@ export default function WalkInRequest() {
         setSelectedRequester(request?.requester || null);
         setAlreadyApproved(false);
         updateField('request_type', 'purchase_order');
-        const normalizedUnit = normalizeUnit(request?.unit);
         setForm((current) => ({
           ...current,
           department_id: request?.department_id || current.department_id,
-          unit: normalizedUnit.unit || current.unit,
-          unit_custom: normalizedUnit.customUnit || current.unit_custom,
           branch: request?.branch || current.branch,
           priority: request?.priority || current.priority,
           date_needed: request?.date_needed || current.date_needed,
@@ -309,8 +304,6 @@ export default function WalkInRequest() {
       walk_in_requester_contact: '',
       walk_in_notes: '',
       department_id: '',
-      unit: '',
-      unit_custom: '',
       branch: '',
       priority: 'normal',
       date_needed: '',
@@ -396,9 +389,6 @@ export default function WalkInRequest() {
       } else {
         response = await pcmsApi.createWalkInPurchaseRequest({
           ...common,
-          unit: form.unit === 'other'
-            ? form.unit_custom.trim() || undefined
-            : form.unit || undefined,
           branch: form.branch || undefined,
           priority: form.priority,
           date_needed: form.date_needed || undefined,
@@ -696,31 +686,6 @@ export default function WalkInRequest() {
                     <label htmlFor="walkin-date-needed">Date Needed</label>
                     <input id="walkin-date-needed" type="date" min={todayIso} value={form.date_needed} onChange={(e) => updateField('date_needed', e.target.value)} />
                   </div>
-                </div>
-                <div className="walkin-field-group">
-                  <label htmlFor="walkin-unit">Unit</label>
-                  <select
-                    id="walkin-unit"
-                    value={unitOptions.includes(form.unit) ? form.unit : form.unit ? 'other' : ''}
-                    onChange={(event) => {
-                      updateField('unit', event.target.value);
-                      updateField('unit_custom', '');
-                    }}
-                  >
-                    <option value="">Select unit</option>
-                    {unitOptions.map((unit) => <option key={unit} value={unit}>{unit}</option>)}
-                    <option value="other">Other...</option>
-                  </select>
-                  {form.unit === 'other' && (
-                    <input
-                      id="walkin-unit-custom"
-                      type="text"
-                      value={form.unit_custom}
-                      onChange={(event) => updateField('unit_custom', event.target.value)}
-                      placeholder="Enter unit"
-                      required
-                    />
-                  )}
                 </div>
               </>
             )}

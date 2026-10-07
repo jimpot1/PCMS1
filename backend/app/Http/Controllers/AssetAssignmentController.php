@@ -206,6 +206,12 @@ class AssetAssignmentController extends Controller
                 ->lockForUpdate()
                 ->get();
 
+            if ($purchaseRequest && ! $hasTrackedUnits) {
+                throw ValidationException::withMessages([
+                    'physical_unit_ids' => 'No physical units are registered for this asset. Register its units before processing the request.',
+                ]);
+            }
+
             if ($hasTrackedUnits) {
                 if (count($providedUnitIds) !== $requestedQuantity) {
                     throw ValidationException::withMessages([
