@@ -4664,14 +4664,14 @@ function AssetReturnPage() {
       {error && <div className="form-message error">{error}</div>}
       <SuccessModal message={message} />
 
-      <section className="metric-grid compact">
+      <section className="metric-grid compact return-metrics">
         <StatCard label="Awaiting Return" value={active.length} change="Active assignments" icon={Timer} tone="orange" />
         <StatCard label="Due This Week" value={dueSoon} change="Items approaching due date" icon={CalendarClock} tone="amber" />
         <StatCard label="Returned" value={returned.length} change="Completed check-ins" icon={PackageCheck} tone="green" />
         <StatCard label="Total Records" value={assignments.length} change="Assignment history" icon={History} tone="blue" />
       </section>
 
-      <section className="return-workflow">
+      <section className="return-workflow return-workflow-polished">
         <div className="workflow-step">
           <span className="step-number">1</span>
           <div>
@@ -4695,7 +4695,7 @@ function AssetReturnPage() {
         </div>
       </section>
 
-      <section className="panel role-panel">
+      <section className="panel role-panel return-awaiting-panel">
         <div className="panel-header-inline">
           <PanelHeader title="Assets Awaiting Return" subtitle="Select an assignment to complete the inspection and check-in." />
           <div className="return-controls">
@@ -4721,9 +4721,9 @@ function AssetReturnPage() {
         ) : visibleActive.length === 0 ? (
           <p className="empty-state">No active assets match the current return filter.</p>
         ) : (
-          <div className="approval-list">
+          <div className="approval-list return-awaiting-list" role="region" aria-label="Assets awaiting return" tabIndex={0}>
             {visibleActive.map((assignment) => (
-              <article className="approval-card" key={assignment.id}>
+              <article className="approval-card return-awaiting-card" key={assignment.id}>
                 <div>
                   <strong>{assignment.asset?.name || `Asset #${assignment.asset_id}`}</strong>
                   <p>
@@ -4742,7 +4742,7 @@ function AssetReturnPage() {
         )}
       </section>
 
-      <section className="panel role-panel">
+      <section className="panel role-panel return-history-panel">
         <PanelHeader title="Return History" subtitle="Previously checked-in assets and their recorded condition." />
         {visibleReturned.length === 0 ? (
           <p className="empty-state">No completed returns yet.</p>
