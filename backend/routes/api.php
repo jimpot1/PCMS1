@@ -83,6 +83,8 @@ Route::middleware(['web', 'auth:sanctum', 'active.account', 'delete.admin'])->gr
     Route::post('/stock-movements', [StockMovementController::class, 'store'])->middleware('role:PPMO Staff,System Administrator');
     Route::get('/stock-movements', [StockMovementController::class, 'index']);
     Route::get('/stock-movements/{movement}', [StockMovementController::class, 'show']);
+    Route::get('/supply-history', [StockMovementController::class, 'supplyHistory'])
+        ->middleware('role:System Administrator,PPMO Staff,Property Custodian,OIC');
     Route::get('/supply-requests/queue', [PurchaseRequestController::class, 'supplyQueue'])->middleware('role:System Administrator,PPMO Staff,Property Custodian,OIC');
     Route::get('/purchase-requests/asset-assignment-queue', [PurchaseRequestController::class, 'assetAssignmentQueue'])->middleware('role:System Administrator,PPMO Staff,Property Custodian,OIC');
     Route::apiResource('purchase-requests', PurchaseRequestController::class);

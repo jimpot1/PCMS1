@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Supply;
 use App\Models\StockMovement;
+use App\Models\User;
 use App\Services\AnomalyDetectionService;   // ADD THIS LINE
 use App\Services\LlmAnomalyExplanationService;
 use App\Services\LowStockRequisitionService;
@@ -167,5 +168,115 @@ if (! $supply) {
     public function show(StockMovement $movement): JsonResponse
     {
         return response()->json($movement->load('supply', 'department'));
+    }
+
+    public function supplyHistory(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'department_id' => ['required', 'integer', 'exists:departments,id'],
+            'per_page' => ['nullable', 'integer', 'min:1', 'max:200'],
+        ]);
+        $departmentId = (int) $validated['department_id'];
+        $limit = (int) ($validated['per_page'] ?? 100);
+
+        $movements = StockMovement::query()
+            ->where('department_id', $departmentId)
+            ->whereIn('movement_type', ['in', 'write_off'])
+            ->with(['supply:id,name,sku,unit', 'department:id,name'])
+            ->orderByDesc('created_at')
+            ->limit($limit)
+            ->get();
+
+        $actorIds = $movements
+            ->flatMap(fn (StockMovement $movement) => [$movement->issued_by, $movement->requested_by])
+            ->filter()
+            ->unique()
+            ->values();
+        $actors = $actorIds->isEmpty()
+            ? collect()
+            : User::query()->whereIn('id', $actorIds)->get(['id', 'full_name', 'first_name', 'last_name', 'email'])->keyBy('id');
+
+        $movementHistory = $movements->map(function (StockMovement $movement) use ($actors) {
+            $actor = $actors->get($movement->issued_by ?: $movement->requested_by);
+            $actorName = $actor?->full_name
+                ?: trim(implode(' ', array_filter([$actor?->first_name, $actor?->last_name])))
+                ?: $actor?->email;
+
+            return [
+                'id' => 'movement-' . $movement->id,
+                'type' => $movement->movement_type === 'write_off' ? 'write_off' : 'stock_in',
+                'supply_name' => $movement->supply?->name ?? 'Deleted supply',
+                'sku' => $movement->supply?->sku,
+                'quantity' => $movement->quantity,
+                'unit' => $movement->supply?->unit,
+                'department_name' => $movement->department?->name,
+                'category' => $movement->write_off_category,
+                'notes' => $movement->notes,
+                'performed_by' => $actorName ?: 'Unknown user',
+                'created_at' => $movement->created_at,
+            ];
+        });
+
+        $creationLogs = DB::table('activity_logs')
+            ->where('action', 'supply_created')
+            ->orderByDesc('created_at')
+            ->get(['id', 'payload', 'created_at']);
+        $creationPayloads = $creationLogs->mapWithKeys(function ($log) {
+            $payload = is_array($log->payload)
+                ? $log->payload
+                : json_decode((string) $log->payload, true);
+
+            return [$log->id => is_array($payload) ? $payload : []];
+        });
+        $supplyIds = $creationPayloads
+            ->pluck('supply_id')
+            ->filter()
+            ->unique()
+            ->values();
+        $supplies = $supplyIds->isEmpty()
+            ? collect()
+            : Supply::query()
+                ->with('department:id,name')
+                ->whereIn('id', $supplyIds)
+                ->get(['id', 'name', 'sku', 'unit', 'department_id'])
+                ->keyBy('id');
+
+        $createdHistory = $creationLogs
+            ->map(function ($log) use ($creationPayloads, $supplies, $departmentId) {
+                $payload = $creationPayloads->get($log->id, []);
+                $supply = $supplies->get($payload['supply_id'] ?? null);
+                $recordDepartmentId = $payload['department_id'] ?? $supply?->department_id;
+
+                if ((int) $recordDepartmentId !== $departmentId) {
+                    return null;
+                }
+
+                return [
+                    'id' => 'created-' . $log->id,
+                    'type' => 'added',
+                    'supply_name' => $payload['name'] ?? $supply?->name ?? 'Supply',
+                    'sku' => $payload['sku'] ?? $supply?->sku,
+                    'quantity' => $payload['initial_quantity'] ?? $payload['quantity'] ?? null,
+                    'unit' => $payload['unit'] ?? $supply?->unit,
+                    'department_name' => $payload['department_name'] ?? $supply?->department?->name,
+                    'category' => $payload['category'] ?? null,
+                    'notes' => $payload['description'] ?? null,
+                    'performed_by' => $payload['user_name'] ?? $payload['user'] ?? 'Unknown user',
+                    'created_at' => $log->created_at,
+                ];
+            })
+            ->filter()
+            ->take($limit);
+
+        $history = $createdHistory
+            ->concat($movementHistory)
+            ->sortByDesc('created_at')
+            ->take($limit)
+            ->values();
+
+        return response()->json([
+            'data' => $history,
+            'per_page' => $limit,
+        ]);
     }
 }

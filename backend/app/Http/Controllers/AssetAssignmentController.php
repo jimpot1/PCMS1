@@ -252,17 +252,6 @@ class AssetAssignmentController extends Controller
                 ]);
             }
 
-            if (
-                AssetAssignment::where('asset_id', $lockedAsset->id)
-                    ->where('assigned_to', $employee->id)
-                    ->whereIn('status', ['active', 'pending_acceptance'])
-                    ->exists()
-            ) {
-                throw ValidationException::withMessages([
-                    'employee' => 'This asset is already assigned to the selected employee.',
-                ]);
-            }
-
             $selectedUnits = $hasTrackedUnits
                 ? AssetUnit::whereIn('id', $selectedUnitIds)
                     ->where('asset_id', $lockedAsset->id)

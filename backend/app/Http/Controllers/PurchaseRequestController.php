@@ -221,6 +221,7 @@ class PurchaseRequestController extends Controller
                 'department_id' => $purchaseRequest->department_id,
                 'department_name' => $purchaseRequest->department_name,
                 'department' => $purchaseRequest->department,
+                'branch' => $purchaseRequest->branch,
                 'purpose' => $purchaseRequest->purpose,
                 'date_needed' => $purchaseRequest->date_needed,
                 'created_at' => $purchaseRequest->created_at,
@@ -438,6 +439,10 @@ class PurchaseRequestController extends Controller
     public function walkInRequesterOptions(Request $request): JsonResponse
     {
         $search = trim((string) $request->input('search', ''));
+        if ($search === '') {
+            return response()->json(['data' => []]);
+        }
+
         $searchPattern = '%' . strtolower($search) . '%';
 
         $departmentIdsByName = Department::query()
@@ -479,7 +484,7 @@ class PurchaseRequestController extends Controller
             'has_account' => ['required', 'boolean'],
             'requester_user_id' => ['required_if:has_account,true', 'nullable', 'uuid', 'exists:users,id'],
             'walk_in_requester_name' => ['required_if:has_account,false', 'nullable', 'string', 'max:255'],
-            'walk_in_requester_contact' => ['nullable', 'string', 'max:255'],
+            'walk_in_requester_contact' => ['required_if:has_account,false', 'nullable', 'email', 'max:255'],
             'walk_in_notes' => ['nullable', 'string'],
             'department_id' => ['nullable', 'exists:departments,id'],
             'procurement_for_request_id' => ['nullable', 'integer', 'exists:purchase_requests,id'],
@@ -604,7 +609,15 @@ class PurchaseRequestController extends Controller
                 'priority' => $validated['priority'] ?? 'normal',
                 'date_needed' => $validated['date_needed'] ?? null,
                 'purpose' => $validated['purpose'] ?? null,
-                'requested_by_name' => $validated['has_account'] ? $requesterUser->name : ($validated['walk_in_requester_name'] ?? null),
+                'requested_by_name' => $validated['has_account']
+                    ? ($requesterUser->full_name
+                        ?: trim(implode(' ', array_filter([
+                            $requesterUser->first_name,
+                            $requesterUser->middle_name,
+                            $requesterUser->last_name,
+                        ])))
+                        ?: $requesterUser->email)
+                    : ($validated['walk_in_requester_name'] ?? null),
                 'attachment_path' => $attachmentPath,
                 'approval_document_path' => $approvalDocumentPath,
                 'approval_status' => $alreadyApproved ? 'pending_verification' : 'not_required',
@@ -819,7 +832,7 @@ class PurchaseRequestController extends Controller
         $validated = $request->validate([
             'department_id' => ['nullable', 'exists:departments,id'],
             'walk_in_requester_name' => ['nullable', 'string', 'max:255'],
-            'walk_in_requester_contact' => ['nullable', 'string', 'max:255'],
+            'walk_in_requester_contact' => ['nullable', 'email', 'max:255'],
             'branch' => ['nullable', 'string', 'max:255'],
             'unit' => ['nullable', 'string', 'max:255'],
             'priority' => ['nullable', 'in:low,normal,urgent,critical'],
@@ -1901,7 +1914,7 @@ HTML;
             'sku' => $supply->sku,
             'name' => $supply->name,
             'category' => $supply->category,
-            'unit' => 'unit',
+            'unit' => $supply->unit ?: 'unit',
             'description' => $supply->description ?: $supply->category,
             'status' => $this->availabilityStatus($stock, (int) ($supply->minimum_stock ?? 0)),
             'current_stock' => $stock,

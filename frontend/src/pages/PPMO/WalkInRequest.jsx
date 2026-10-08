@@ -3,27 +3,13 @@ import { useSearchParams } from 'react-router-dom';
 import { AlertTriangle, CheckCircle2, ClipboardList, FileText, Loader2, PackageCheck, Plus, Search, ShieldCheck, Trash2, UploadCloud, UserPlus, X } from 'lucide-react';
 import { pcmsApi } from '../../services/api.js';
 import SuccessModal from '../../components/SuccessModal.jsx';
+import { normalizeSupplyUnit, SUPPLY_UNIT_OPTIONS } from '../../constants/supplyUnits.js';
 
 const documentTypes = [
   { value: 'request', label: 'Request Form', icon: ClipboardList },
   { value: 'purchase_order', label: 'Purchase Order', icon: FileText },
   { value: 'gate_pass', label: 'Gate Pass', icon: PackageCheck },
 ];
-
-const unitOptions = [
-  'piece', 'pcs', 'unit', 'set', 'pair', 'box', 'pack', 'ream', 'sheet',
-  'bottle', 'can', 'tube', 'roll', 'bag', 'carton', 'bundle', 'dozen',
-  'kg', 'g', 'liter', 'ml', 'meter', 'cm', 'lot',
-];
-
-function normalizeUnit(value) {
-  const label = String(value || '').trim();
-  const standardUnit = unitOptions.find((unit) => unit.toLowerCase() === label.toLowerCase());
-  return {
-    unit: standardUnit || (label ? 'other' : ''),
-    customUnit: standardUnit || !label ? '' : label,
-  };
-}
 
 const emptyLineItem = () => ({
   item: '',
@@ -122,7 +108,7 @@ export default function WalkInRequest() {
           setLineItems(request.line_items.map((line) => ({
             ...emptyLineItem(),
             qty: line.qty || line.quantity || 1,
-            ...normalizeUnit(line.unit),
+            ...normalizeSupplyUnit(line.unit),
             item: line.item || line.particular || line.description || '',
             particular: line.particular || line.item || line.description || '',
             description: line.description || '',
@@ -157,18 +143,30 @@ export default function WalkInRequest() {
   }, [approvalDocument]);
 
   useEffect(() => {
-    if (!hasAccount) {
+    const search = requesterSearch.trim();
+    if (!hasAccount || !search) {
       setRequesterOptions([]);
+      setSearching(false);
       return;
     }
+    let active = true;
     const timer = setTimeout(() => {
       setSearching(true);
-      pcmsApi.walkInRequesterOptions(requesterSearch)
-        .then(setRequesterOptions)
-        .catch(() => setRequesterOptions([]))
-        .finally(() => setSearching(false));
+      pcmsApi.walkInRequesterOptions(search)
+        .then((options) => {
+          if (active) setRequesterOptions(options);
+        })
+        .catch(() => {
+          if (active) setRequesterOptions([]);
+        })
+        .finally(() => {
+          if (active) setSearching(false);
+        });
     }, 300);
-    return () => clearTimeout(timer);
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
   }, [requesterSearch, hasAccount]);
 
   useEffect(() => {
@@ -233,7 +231,7 @@ export default function WalkInRequest() {
   const selectLineItem = (index, catalogItem) => {
     const qty = Number(lineItems[index]?.qty || 1);
     const unitPrice = Number(catalogItem.unit_cost ?? catalogItem.unit_price ?? 0);
-    const normalizedUnit = normalizeUnit(catalogItem.unit || lineItems[index]?.unit || 'unit');
+    const normalizedUnit = normalizeSupplyUnit(catalogItem.unit || lineItems[index]?.unit || 'unit');
     setLineItems((current) => current.map((line, i) => i === index ? {
       ...line,
       item: catalogItem.name,
@@ -330,6 +328,10 @@ export default function WalkInRequest() {
       setError('Enter the walk-in requester name.');
       return;
     }
+    if (!hasAccount && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.walk_in_requester_contact.trim())) {
+      setError('Enter a valid email address for the walk-in requester.');
+      return;
+    }
     if (form.request_type === 'request' && !form.date_needed) {
       setError('Date needed is required for Request Form submissions.');
       return;
@@ -362,7 +364,7 @@ export default function WalkInRequest() {
       has_account: hasAccount,
       requester_user_id: hasAccount ? selectedRequester?.id : undefined,
       walk_in_requester_name: hasAccount ? undefined : form.walk_in_requester_name,
-      walk_in_requester_contact: form.walk_in_requester_contact || undefined,
+      walk_in_requester_contact: !hasAccount ? form.walk_in_requester_contact.trim() : undefined,
       walk_in_notes: form.walk_in_notes || undefined,
       procurement_for_request_id: procurementForId || undefined,
       department_id: form.department_id || undefined,
@@ -519,8 +521,8 @@ export default function WalkInRequest() {
                   <input id="walkin-name" type="text" value={form.walk_in_requester_name} onChange={(e) => updateField('walk_in_requester_name', e.target.value)} placeholder="Full name" required />
                 </div>
                 <div className="walkin-field-group">
-                  <label htmlFor="walkin-contact">Contact Number / Email</label>
-                  <input id="walkin-contact" type="text" value={form.walk_in_requester_contact} onChange={(e) => updateField('walk_in_requester_contact', e.target.value)} />
+                  <label htmlFor="walkin-contact">Email</label>
+                  <input id="walkin-contact" type="email" value={form.walk_in_requester_contact} onChange={(e) => updateField('walk_in_requester_contact', e.target.value)} placeholder="name@example.com" required />
                 </div>
               </div>
             )}
@@ -803,7 +805,7 @@ export default function WalkInRequest() {
                         <div className="walkin-unit-field">
                           <select
                             aria-label={`Unit for item ${index + 1}`}
-                            value={unitOptions.includes(line.unit) ? line.unit : line.unit ? 'other' : ''}
+                            value={SUPPLY_UNIT_OPTIONS.includes(line.unit) ? line.unit : line.unit ? 'other' : ''}
                             onChange={(event) => {
                               const value = event.target.value;
                               setLineItems((current) => current.map((item, i) => i === index
@@ -812,7 +814,7 @@ export default function WalkInRequest() {
                             }}
                           >
                             <option value="">Select unit</option>
-                            {unitOptions.map((unit) => <option key={unit} value={unit}>{unit}</option>)}
+                            {SUPPLY_UNIT_OPTIONS.map((unit) => <option key={unit} value={unit}>{unit}</option>)}
                             <option value="other">Other...</option>
                           </select>
                           {line.unit === 'other' && (

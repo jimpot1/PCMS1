@@ -118,6 +118,50 @@ class SessionAuthenticationTest extends TestCase
         }
     }
 
+    public function test_activity_logs_fill_missing_actor_fields_from_the_account_record(): void
+    {
+        $user = User::create([
+            'id' => (string) Str::uuid(),
+            'employee_id' => 'ACTIVITY-TEST',
+            'first_name' => 'Activity',
+            'last_name' => 'Staff',
+            'full_name' => 'Activity Staff',
+            'email' => 'activity@example.com',
+            'password_hash' => Hash::make('SecretPass123!'),
+            'role' => 'PPMO Staff',
+            'status' => 'active',
+        ]);
+
+        \Illuminate\Support\Facades\DB::table('activity_logs')->insert([
+            'action' => 'supply_created',
+            'payload' => json_encode(['user' => $user->email]),
+            'status' => 'active',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->actingAs($this->createActivityLogViewer())
+            ->getJson('/api/activity-logs')
+            ->assertOk()
+            ->assertJsonPath('data.0.user_name', 'Activity Staff')
+            ->assertJsonPath('data.0.role', 'PPMO Staff')
+            ->assertJsonPath('data.0.email', 'activity@example.com')
+            ->assertJsonPath('data.0.username', 'ACTIVITY-TEST');
+    }
+
+    private function createActivityLogViewer(): User
+    {
+        return User::create([
+            'id' => (string) Str::uuid(),
+            'employee_id' => 'ACTIVITY-ADMIN',
+            'full_name' => 'Activity Administrator',
+            'email' => 'activity-admin@example.com',
+            'password_hash' => Hash::make('SecretPass123!'),
+            'role' => 'System Administrator',
+            'status' => 'active',
+        ]);
+    }
+
     private function createUserWithOtp(string $role, int $index): User
     {
         $user = User::create([

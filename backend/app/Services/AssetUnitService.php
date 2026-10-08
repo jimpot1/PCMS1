@@ -71,10 +71,14 @@ class AssetUnitService
         $query = AssetUnit::where('asset_id', $asset->id)->lockForUpdate();
 
         if ($unitId) {
-            return $query->whereKey($unitId)->first();
+            return $query
+                ->whereKey($unitId)
+                ->where('status', 'assigned')
+                ->first();
         }
 
         return $query
+            ->where('status', 'assigned')
             ->where(function ($builder) use ($asset) {
                 $builder->where('department_id', $asset->department_id)
                     ->orWhere('custodian_id', $asset->current_holder_id ?: $asset->custodian_id);

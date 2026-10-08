@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Asset;
 use App\Models\AssetUnit;
 use App\Models\AssetTransfer;
+use App\Models\Department;
 use App\Models\User;
 use App\Services\AssetUnitService;
 use Illuminate\Http\JsonResponse;
@@ -15,7 +16,17 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class TransferController extends Controller
 {
-    protected array $relations = ['asset', 'assetUnit', 'fromDepartment', 'toDepartment', 'requester', 'fromCustodian', 'toCustodian', 'approvedBy'];
+    protected array $relations = [
+        'asset.custodian',
+        'asset.currentHolder',
+        'assetUnit.custodian',
+        'fromDepartment',
+        'toDepartment',
+        'requester',
+        'fromCustodian',
+        'toCustodian',
+        'approvedBy',
+    ];
 
     public function __construct()
     {
@@ -95,12 +106,23 @@ class TransferController extends Controller
         $asset = Asset::findOrFail($validated['asset_id']);
         $quantity = (int) ($validated['quantity'] ?? 1);
         $toCustodian = User::findOrFail($validated['to_custodian_id']);
+        $hasTrackedUnits = AssetUnit::where('asset_id', $asset->id)->exists();
 
-        if ($quantity === 1 && ! empty($validated['asset_unit_id']) && ! app(AssetUnitService::class)->selectForTransfer($asset, $validated['asset_unit_id'])) {
-            return response()->json(['message' => 'No identifiable available unit exists for this asset.'], 422);
+        if ($hasTrackedUnits && $quantity !== 1) {
+            return response()->json(['message' => 'Tracked physical units must be transferred one assigned unit per request.'], 422);
+        }
+        if ($hasTrackedUnits && empty($validated['asset_unit_id'])) {
+            return response()->json(['message' => 'Select an assigned physical unit to transfer.'], 422);
+        }
+        $assetUnit = null;
+        if ($quantity === 1 && ! empty($validated['asset_unit_id'])) {
+            $assetUnit = app(AssetUnitService::class)->selectForTransfer($asset, $validated['asset_unit_id']);
+            if (! $assetUnit) {
+                return response()->json(['message' => 'The selected physical unit is not assigned to this asset or is no longer assigned.'], 422);
+            }
         }
 
-        $validationError = $this->validateTransferRequest($asset, $quantity, $request);
+        $validationError = $this->validateTransferRequest($asset, $quantity, $request, null, $validated['asset_unit_id'] ?? null);
         if ($validationError) {
             return response()->json(['message' => $validationError], 422);
         }
@@ -108,18 +130,21 @@ class TransferController extends Controller
         if (($toCustodian->status ?? 'active') !== 'active') {
             return response()->json(['message' => 'Destination custodian must be an active employee.'], 422);
         }
+        if (mb_strtolower(trim((string) $toCustodian->department)) !== mb_strtolower(trim((string) Department::find($validated['to_department_id'])?->name))) {
+            return response()->json(['message' => 'Select an active receiving custodian from the destination department.'], 422);
+        }
 
-        $transfer = DB::transaction(function () use ($validated, $request, $asset, $quantity) {
+        $transfer = DB::transaction(function () use ($validated, $request, $asset, $assetUnit, $quantity) {
             $transfer = AssetTransfer::create([
                 'transfer_number' => $this->generateTransferNumber(),
                 'asset_id' => $asset->id,
                 'asset_unit_id' => $validated['asset_unit_id'] ?? null,
-                'from_department_id' => $asset->department_id,
+                'from_department_id' => $assetUnit?->department_id ?: $asset->department_id,
                 'to_department_id' => $validated['to_department_id'],
-                'from_custodian_id' => $asset->current_holder_id ?: $asset->custodian_id,
+                'from_custodian_id' => $assetUnit?->custodian_id ?: ($asset->current_holder_id ?: $asset->custodian_id),
                 'to_custodian_id' => $validated['to_custodian_id'],
                 'requested_by' => $request->user()?->id,
-                'status' => 'transfer_requested',
+                'status' => 'ready_for_transfer',
                 'reason' => $validated['reason'],
                 'quantity' => $quantity,
                 'transfer_type' => $validated['transfer_type'] ?? 'permanent',
@@ -127,9 +152,16 @@ class TransferController extends Controller
                 'risk_score' => $this->calculateRiskScore($asset, $quantity),
             ]);
 
-            $this->recordHistory($transfer, 'transfer_requested', $request);
-            $this->logActivity('transfer_requested', $transfer, $request);
-            $this->notifyTransfer($transfer, 'pending_approval', $request, ['Department Head', 'PPMO Staff', 'System Administrator']);
+            $this->recordHistory($transfer, 'ready_for_transfer', $request, [
+                'source' => 'new_transfer_request',
+                'approval_required' => false,
+            ]);
+            $this->logActivity('transfer_ready_for_execution', $transfer, $request);
+            $this->notifyTransfer($transfer, 'ready_for_transfer', $request, [
+                'Requester',
+                'Receiving Custodian',
+                'Current Custodian',
+            ]);
 
             return $transfer;
         });
@@ -190,7 +222,18 @@ class TransferController extends Controller
     {
         $validated = $request->validate([
             'notes' => ['nullable', 'string', 'max:1000'],
+            'to_custodian_id' => ['nullable', 'uuid', 'exists:users,id'],
         ]);
+
+        $toCustodianId = $validated['to_custodian_id'] ?? $transfer->to_custodian_id;
+        $toCustodian = $toCustodianId ? User::find($toCustodianId) : null;
+        $toDepartment = Department::find($transfer->to_department_id);
+        if (! $toCustodian || ($toCustodian->status ?? 'active') !== 'active') {
+            return response()->json(['message' => 'Select an active receiving custodian before approving this transfer.'], 422);
+        }
+        if (! $toDepartment || mb_strtolower(trim((string) $toCustodian->department)) !== mb_strtolower(trim((string) $toDepartment->name))) {
+            return response()->json(['message' => 'The receiving custodian must belong to the destination department.'], 422);
+        }
 
         if ($transfer->status === 'transfer_requested' || $transfer->status === 'pending') {
             if ($request->user()?->role === 'Department Head' && ! $this->requesterInSameDepartment($request, $transfer)) {
@@ -199,6 +242,7 @@ class TransferController extends Controller
 
             $transfer->update([
                 'status' => 'department_approved',
+                'to_custodian_id' => $toCustodian->id,
                 'department_approved_by' => $request->user()?->id,
                 'approval_notes' => $validated['notes'] ?? $transfer->approval_notes,
             ]);
@@ -212,13 +256,16 @@ class TransferController extends Controller
 
         if ($transfer->status === 'department_approved' || $transfer->status === 'on_hold') {
             $asset = Asset::find($transfer->asset_id);
-            $validationError = $asset ? $this->validateTransferRequest($asset, (int) $transfer->quantity, $request, $transfer->id) : 'Asset no longer exists.';
+            $validationError = $asset
+                ? $this->validateTransferRequest($asset, (int) $transfer->quantity, $request, $transfer->id, $transfer->asset_unit_id)
+                : 'Asset no longer exists.';
             if ($validationError) {
                 return response()->json(['message' => $validationError], 422);
             }
 
             $transfer->update([
                 'status' => 'ready_for_transfer',
+                'to_custodian_id' => $toCustodian->id,
                 'approved_by' => $request->user()?->id,
                 'approval_notes' => $validated['notes'] ?? $transfer->approval_notes,
             ]);
@@ -297,21 +344,33 @@ class TransferController extends Controller
         $validated = $request->validate([
             'transfer_date' => ['nullable', 'date'],
             'actual_quantity' => ['nullable', 'integer', 'min:1'],
+            'to_custodian_id' => ['nullable', 'uuid', 'exists:users,id'],
             'condition_before' => ['nullable', 'in:excellent,good,fair,needs_repair,damaged,lost_parts'],
             'condition_after' => ['nullable', 'in:excellent,good,fair,needs_repair,damaged,lost_parts'],
             'photo_before' => ['nullable', 'image', 'max:5120'],
             'photo_after' => ['nullable', 'image', 'max:5120'],
-            'receiving_signature' => ['required', 'string'],
-            'releasing_signature' => ['required', 'string'],
+            'receiving_signature' => ['nullable', 'string', 'max:255'],
+            'releasing_signature' => ['nullable', 'string', 'max:255'],
             'remarks' => ['nullable', 'string', 'max:2000'],
         ]);
 
         $asset = Asset::findOrFail($transfer->asset_id);
-        $actualQuantity = (int) ($validated['actual_quantity'] ?? $transfer->quantity ?? 1);
-        $destinationCustodianId = $transfer->to_custodian_id ?: $this->destinationCustodianId($transfer->to_department_id);
+        $actualQuantity = $transfer->asset_unit_id
+            ? 1
+            : (int) ($validated['actual_quantity'] ?? $transfer->quantity ?? 1);
+        $destinationCustodianId = $validated['to_custodian_id']
+            ?? $transfer->to_custodian_id
+            ?? $this->destinationCustodianId($transfer->to_department_id);
 
         if (! $destinationCustodianId) {
-            return response()->json(['message' => 'Assign an active receiving employee to the destination department before executing this transfer.'], 422);
+            return response()->json(['message' => 'Select an active receiving custodian in the destination department before executing this transfer.'], 422);
+        }
+        $destinationCustodian = User::find($destinationCustodianId);
+        $destinationDepartment = Department::find($transfer->to_department_id);
+        if (! $destinationCustodian || ($destinationCustodian->status ?? 'active') !== 'active' ||
+            ! $destinationDepartment ||
+            mb_strtolower(trim((string) $destinationCustodian->department)) !== mb_strtolower(trim((string) $destinationDepartment->name))) {
+            return response()->json(['message' => 'The receiving custodian must be an active employee in the destination department.'], 422);
         }
 
         if ($actualQuantity > (int) $transfer->quantity) {
@@ -329,10 +388,16 @@ class TransferController extends Controller
 
             $asset = Asset::query()->lockForUpdate()->findOrFail($transfer->asset_id);
 
+            $unit = $transfer->asset_unit_id
+                ? app(AssetUnitService::class)->selectForTransfer($asset, $transfer->asset_unit_id)
+                : null;
+            if ($transfer->asset_unit_id && ! $unit) {
+                throw new \RuntimeException('The selected physical unit is no longer assigned and cannot be transferred.');
+            }
             $previous = [
-                'department_id' => $asset->department_id,
-                'custodian_id' => $asset->custodian_id,
-                'current_holder_id' => $asset->current_holder_id,
+                'department_id' => $unit?->department_id ?: $asset->department_id,
+                'custodian_id' => $unit?->custodian_id ?: ($asset->custodian_id ?: $asset->current_holder_id),
+                'current_holder_id' => $unit?->custodian_id ?: ($asset->current_holder_id ?: $asset->custodian_id),
                 'quantity' => $asset->quantity,
             ];
 
@@ -345,42 +410,38 @@ class TransferController extends Controller
                 'condition_after' => $validated['condition_after'] ?? $asset->condition,
                 'photo_before_path' => $photoBefore,
                 'photo_after_path' => $photoAfter,
-                'receiving_signature' => $validated['receiving_signature'],
-                'releasing_signature' => $validated['releasing_signature'],
+                'receiving_signature' => $validated['receiving_signature'] ?? null,
+                'releasing_signature' => $validated['releasing_signature'] ?? null,
                 'remarks' => $validated['remarks'] ?? null,
                 'executed_by' => $request->user()?->id,
             ]);
 
-            $assetUpdates = [
-                'department_id' => $transfer->to_department_id,
-                'custodian_id' => $destinationCustodianId,
-                'current_holder_id' => $destinationCustodianId,
-                'last_transfer_at' => now(),
-                'location' => optional($transfer->toDepartment)->location ?: $asset->location,
-            ];
-
-            if (in_array($transfer->condition_after, ['needs_repair', 'damaged', 'lost_parts'], true)) {
-                $assetUpdates['condition'] = $transfer->condition_after;
-                $assetUpdates['status'] = $transfer->condition_after === 'damaged' ? 'damaged' : 'maintenance';
+            $assetUpdates = ['last_transfer_at' => now()];
+            $hasSingleTrackedUnit = $unit &&
+                AssetUnit::where('asset_id', $asset->id)->where('status', '!=', 'removed')->count() === 1;
+            if (! $unit || $hasSingleTrackedUnit) {
+                $assetUpdates = array_merge($assetUpdates, [
+                    'department_id' => $transfer->to_department_id,
+                    'custodian_id' => $destinationCustodianId,
+                    'current_holder_id' => $destinationCustodianId,
+                    'location' => optional($transfer->toDepartment)->location ?: $asset->location,
+                ]);
+                if (in_array($transfer->condition_after, ['needs_repair', 'damaged', 'lost_parts'], true)) {
+                    $assetUpdates['condition'] = $transfer->condition_after;
+                    $assetUpdates['status'] = $transfer->condition_after === 'damaged' ? 'damaged' : 'maintenance';
+                }
             }
-
             $asset->update($assetUpdates);
 
-            if ($actualQuantity === 1) {
-                $unit = app(AssetUnitService::class)->selectForTransfer($asset, $transfer->asset_unit_id);
-                if ($transfer->asset_unit_id && ! $unit) {
-                    throw new \RuntimeException('The selected asset unit is no longer available for transfer.');
-                }
-
-                if ($unit) {
-                    $unit->update([
+            if ($unit) {
+                $unit->update([
                     'status' => in_array($transfer->condition_after, ['needs_repair', 'damaged', 'lost_parts'], true) ? ($transfer->condition_after === 'damaged' ? 'damaged' : 'maintenance') : 'assigned',
                     'department_id' => $transfer->to_department_id,
                     'custodian_id' => $destinationCustodianId,
                     'condition' => $transfer->condition_after,
                     'location' => optional($transfer->toDepartment)->location ?: $unit->location,
-                    ]);
-                    app(AssetUnitService::class)->recordMovement($unit, 'transfer', [
+                ]);
+                app(AssetUnitService::class)->recordMovement($unit, 'transfer', [
                     'from_department_id' => $previous['department_id'],
                     'to_department_id' => $transfer->to_department_id,
                     'from_custodian_id' => $previous['current_holder_id'] ?: $previous['custodian_id'],
@@ -388,14 +449,16 @@ class TransferController extends Controller
                     'reference_type' => 'asset_transfer',
                     'reference_id' => $transfer->id,
                     'remarks' => $validated['remarks'] ?? null,
-                    ]);
-                }
+                ]);
             }
 
-            DB::table('asset_assignments')
+            $assignments = DB::table('asset_assignments')
                 ->where('asset_id', $asset->id)
-                ->whereIn('status', ['active', 'pending_acceptance'])
-                ->update([
+                ->whereIn('status', ['active', 'pending_acceptance']);
+            if ($transfer->asset_unit_id) {
+                $assignments->where('asset_unit_id', $transfer->asset_unit_id);
+            }
+            $assignments->update([
                     'assigned_to' => $destinationCustodianId,
                     'department_id' => $transfer->to_department_id,
                     'updated_at' => now(),
@@ -521,7 +584,32 @@ class TransferController extends Controller
             ->value('id');
     }
 
-    protected function validateTransferRequest(Asset $asset, int $quantity, Request $request, ?int $ignoreTransferId = null): ?string
+    protected function calculateRiskScore(Asset $asset, int $quantity): float
+    {
+        $score = 0;
+
+        if (in_array($asset->condition, ['fair', 'needs_repair'], true)) {
+            $score += 25;
+        }
+        if ($quantity > max(1, floor((int) ($asset->quantity ?? 1) / 2))) {
+            $score += 15;
+        }
+        if (AssetTransfer::where('asset_id', $asset->id)
+            ->where('created_at', '>=', now()->subDays(90))
+            ->count() >= 3) {
+            $score += 25;
+        }
+
+        return (float) min(100, $score);
+    }
+
+    protected function validateTransferRequest(
+        Asset $asset,
+        int $quantity,
+        Request $request,
+        ?int $ignoreTransferId = null,
+        ?int $assetUnitId = null,
+    ): ?string
     {
         if (in_array($asset->status, ['disposed', 'damaged'], true)) {
             return 'Asset must be active and not disposed or damaged before transfer.';
@@ -531,11 +619,34 @@ class TransferController extends Controller
             return 'Transfer quantity cannot exceed asset quantity.';
         }
 
-        $pending = AssetTransfer::where('asset_id', $asset->id)
+        $pendingTransfer = AssetTransfer::where('asset_id', $asset->id)
             ->whereIn('status', ['transfer_requested', 'pending', 'department_approved', 'ready_for_transfer', 'on_hold', 'revision_requested'])
+            ->when($assetUnitId, fn ($query) => $query->where(function ($units) use ($assetUnitId) {
+                $units->where('asset_unit_id', $assetUnitId)
+                    ->orWhere(function ($legacy) {
+                        $legacy->whereNull('asset_unit_id')
+                            ->where(function ($movement) {
+                                $movement->whereColumn('from_department_id', '!=', 'to_department_id')
+                                    ->orWhereNull('from_department_id')
+                                    ->orWhereNull('to_department_id');
+                            });
+                    });
+            }))
             ->when($ignoreTransferId, fn ($query) => $query->where('id', '!=', $ignoreTransferId))
-            ->exists();
-        if ($pending) {
+            ->orderByDesc('created_at')
+            ->first();
+        if ($pendingTransfer) {
+            if ($assetUnitId) {
+                $unitCode = AssetUnit::whereKey($assetUnitId)->value('unit_code');
+
+                return sprintf(
+                    '%s already has active transfer %s (%s). Select a different physical unit or resolve that transfer first.',
+                    $unitCode ?: "Physical unit #{$assetUnitId}",
+                    $pendingTransfer->transfer_number ?: "TR-{$pendingTransfer->id}",
+                    str_replace('_', ' ', $pendingTransfer->status),
+                );
+            }
+
             return 'This asset already has a pending transfer workflow.';
         }
 
@@ -639,6 +750,7 @@ class TransferController extends Controller
         $transfer->loadMissing($this->relations);
         $titles = [
             'pending_approval' => 'Transfer pending approval',
+            'ready_for_transfer' => 'Transfer ready for execution',
             'approved' => 'Transfer approved',
             'rejected' => 'Transfer rejected',
             'on_hold' => 'Transfer on hold',

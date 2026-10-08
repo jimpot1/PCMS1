@@ -3,11 +3,13 @@
 namespace App\Http\Controllers;
 
 use App\Models\Asset;
+use App\Models\AssetUnit;
 use App\Models\AssetTransfer;
 use App\Models\AuditAssetCount;
 use App\Models\AuditScan;
 use App\Models\AuditSupplyCount;
 use App\Models\DamageReport;
+use App\Models\Department;
 use App\Models\PhysicalAudit;
 use App\Models\Supply;
 use App\Services\AnomalyDetectionService;
@@ -82,11 +84,22 @@ class AuditController extends Controller
 
     public function show(PhysicalAudit $audit): JsonResponse
     {
-        $audit->load('auditScans.asset', 'supplyCounts.supply', 'assetCounts.asset');
+        $audit->load(
+            'auditScans.asset',
+            'auditScans.assetUnit',
+            'auditScans.foundDepartment',
+            'supplyCounts.supply',
+            'assetCounts.asset',
+        );
         $scans = $audit->auditScans;
         $includesAssets = in_array($audit->audit_type ?? 'assets', ['assets', 'combined'], true);
         $includesSupplies = in_array($audit->audit_type ?? 'assets', ['supplies', 'combined'], true);
-        $scansByAsset = $scans->keyBy('asset_id');
+        $scansByAsset = $scans->groupBy('asset_id')->map(
+            fn ($assetScans) => $assetScans->firstWhere('result', 'wrong_department')
+                ?? $assetScans->firstWhere('result', 'verified')
+                ?? $assetScans->first(),
+        );
+        $scanResultsByAsset = $scansByAsset->map(fn (AuditScan $scan) => $scan->result);
         $assetCountsByAsset = $audit->assetCounts->keyBy('asset_id');
         $assetSnapshot = $audit->assetCounts;
         if ($includesAssets && ! $audit->asset_snapshot_created_at && $audit->status !== 'completed') {
@@ -130,6 +143,8 @@ class AuditController extends Controller
                         : $asset?->department?->name,
                     'result' => $scan?->result ?? 'unverified',
                     'scan_id' => $scan?->id,
+                    'physical_unit_id' => $scan?->asset_unit_id,
+                    'physical_unit_code' => $scan?->assetUnit?->unit_code,
                     'found_department_id' => $scan?->found_department_id,
                     'system_quantity' => $item instanceof AuditAssetCount
                         ? (int) $item->expected_quantity
@@ -144,10 +159,10 @@ class AuditController extends Controller
         $countedAssets = $expectedAssets->where('quantity_status', '!=', 'uncounted')->count();
 
         $summary = [
-            'verified' => $scans->where('result', 'verified')->count(),
-            'missing' => $scans->where('result', 'missing')->count(),
-            'wrong_department' => $scans->where('result', 'wrong_department')->count(),
-            'unexpected_assets' => $scans->where('result', 'unexpected')->count(),
+            'verified' => $scanResultsByAsset->filter(fn ($result) => $result === 'verified')->count(),
+            'missing' => $scanResultsByAsset->filter(fn ($result) => $result === 'missing')->count(),
+            'wrong_department' => $scanResultsByAsset->filter(fn ($result) => $result === 'wrong_department')->count(),
+            'unexpected_assets' => $scanResultsByAsset->filter(fn ($result) => $result === 'unexpected')->count(),
             'total' => $scans->count(),
             'expected' => $expectedAssets->count(),
             'unverified' => $expectedAssets->where('result', 'unverified')->count(),
@@ -368,11 +383,29 @@ class AuditController extends Controller
 
         $validated = $request->validate([
             'asset_id' => ['required', 'exists:assets,id'],
+            'asset_unit_id' => ['nullable', 'integer', 'exists:asset_units,id'],
             'found_department_id' => ['required', 'exists:departments,id'],
             'ocr_scan_id' => ['nullable', 'exists:ocr_scans,id'],
         ]);
 
         $asset = Asset::findOrFail($validated['asset_id']);
+        $assetUnit = isset($validated['asset_unit_id'])
+            ? AssetUnit::whereKey($validated['asset_unit_id'])
+                ->where('asset_id', $asset->id)
+                ->first()
+            : null;
+        if (isset($validated['asset_unit_id']) && ! $assetUnit) {
+            return response()->json([
+                'message' => 'The selected physical unit does not belong to this asset.',
+                'errors' => ['asset_unit_id' => ['The selected physical unit does not belong to this asset.']],
+            ], 422);
+        }
+        if ($assetUnit && $assetUnit->status !== 'assigned') {
+            return response()->json([
+                'message' => 'Only an assigned physical unit can be selected for an audit scan.',
+                'errors' => ['asset_unit_id' => ['Only an assigned physical unit can be selected for an audit scan.']],
+            ], 422);
+        }
         $foundDepartmentId = $validated['found_department_id'];
         $snapshot = $audit->assetCounts()->where('asset_id', $asset->id)->first();
         $expectedDepartmentId = $snapshot && $audit->asset_snapshot_created_at
@@ -380,20 +413,28 @@ class AuditController extends Controller
             : $asset->department_id;
         $auditDepartmentId = $audit->department_id ?? $expectedDepartmentId;
 
-        $existingScan = AuditScan::query()
+        $existingScans = AuditScan::query()
             ->where('audit_id', $audit->id)
-            ->where('asset_id', $asset->id)
-            ->first();
-        if ($existingScan) {
+            ->where('asset_id', $asset->id);
+        $duplicateScan = $assetUnit
+            ? (clone $existingScans)->where('asset_unit_id', $assetUnit->id)->first()
+            : $existingScans->first();
+        $hasUntrackedScan = $assetUnit
+            ? (clone $existingScans)->whereNull('asset_unit_id')->exists()
+            : false;
+        if ($duplicateScan || $hasUntrackedScan) {
             return response()->json([
-                'message' => 'This asset has already been scanned in this audit.',
-                'scan' => $existingScan->load('asset', 'foundDepartment'),
+                'message' => $assetUnit
+                    ? 'This physical unit has already been scanned in this audit.'
+                    : 'This asset has already been scanned in this audit.',
+                'scan' => $duplicateScan?->load('asset', 'assetUnit', 'foundDepartment'),
             ], 409);
         }
 
         // Determine result
-        $result = $audit->asset_snapshot_created_at && ! $snapshot ? 'unexpected' : 'verified';
-        if ($expectedDepartmentId != $foundDepartmentId) {
+        $isUnexpectedAsset = $audit->asset_snapshot_created_at && ! $snapshot;
+        $result = $isUnexpectedAsset ? 'unexpected' : 'verified';
+        if (! $isUnexpectedAsset && $expectedDepartmentId != $foundDepartmentId) {
             $result = 'wrong_department';
             // Detect untracked transfer
             AnomalyDetectionService::detectUntrackedTransfer($asset->id, $foundDepartmentId);
@@ -402,6 +443,10 @@ class AuditController extends Controller
                 ->where('asset_id', $asset->id)
                 ->where('from_department_id', $auditDepartmentId)
                 ->where('to_department_id', $foundDepartmentId)
+                ->when($assetUnit, fn ($query) => $query->where(function ($units) use ($assetUnit) {
+                    $units->where('asset_unit_id', $assetUnit->id)
+                        ->orWhereNull('asset_unit_id');
+                }))
                 ->whereIn('status', ['transfer_requested', 'department_approved', 'ready_for_transfer'])
                 ->exists();
 
@@ -409,12 +454,14 @@ class AuditController extends Controller
                 AssetTransfer::create([
                     'transfer_number' => $this->generateTransferNumber(),
                     'asset_id' => $asset->id,
+                    'asset_unit_id' => $assetUnit?->id,
                     'from_department_id' => $auditDepartmentId,
                     'to_department_id' => $foundDepartmentId,
+                    'from_custodian_id' => $assetUnit?->custodian_id ?: ($asset->current_holder_id ?: $asset->custodian_id),
                     'requested_by' => $request->user()?->id,
                     'status' => 'transfer_requested',
-                    'reason' => "Physical audit found asset in department {$foundDepartmentId}.",
-                    'quantity' => (int) ($asset->quantity ?? 1),
+                    'reason' => 'Physical audit found asset in '.(Department::find($foundDepartmentId)?->name ?: "Department #{$foundDepartmentId}").'.',
+                    'quantity' => $assetUnit ? 1 : (int) ($asset->quantity ?? 1),
                     'transfer_type' => 'permanent',
                 ]);
             }
@@ -423,6 +470,7 @@ class AuditController extends Controller
         $scan = AuditScan::create([
             'audit_id' => $audit->id,
             'asset_id' => $asset->id,
+            'asset_unit_id' => $assetUnit?->id,
             'found_department_id' => $foundDepartmentId,
             'result' => $result,
             'ocr_scan_id' => $validated['ocr_scan_id'] ?? null,
@@ -430,7 +478,7 @@ class AuditController extends Controller
 
         $this->logActivity('audit_scan_recorded', $scan, $request);
 
-        return response()->json($scan->fresh()->load('asset', 'foundDepartment'), 201);
+        return response()->json($scan->fresh()->load('asset', 'assetUnit', 'foundDepartment'), 201);
     }
 
     /**
@@ -492,10 +540,17 @@ class AuditController extends Controller
 
             // Generate summary
             $scans = $audit->auditScans;
+            $scanResultsByAsset = $scans->groupBy('asset_id')->map(
+                fn ($assetScans) => $assetScans->contains('result', 'wrong_department')
+                    ? 'wrong_department'
+                    : ($assetScans->contains('result', 'verified')
+                        ? 'verified'
+                        : $assetScans->first()->result),
+            );
             $summary = [
-                'verified' => $scans->where('result', 'verified')->count(),
-                'missing' => $scans->where('result', 'missing')->count(),
-                'wrong_department' => $scans->where('result', 'wrong_department')->count(),
+                'verified' => $scanResultsByAsset->filter(fn ($result) => $result === 'verified')->count(),
+                'missing' => $scanResultsByAsset->filter(fn ($result) => $result === 'missing')->count(),
+                'wrong_department' => $scanResultsByAsset->filter(fn ($result) => $result === 'wrong_department')->count(),
                 'total' => $scans->count(),
             ];
 

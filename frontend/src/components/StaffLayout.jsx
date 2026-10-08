@@ -69,7 +69,10 @@ export default function StaffLayout({ currentUser, onLogout }) {
             onLogout={handleLogoutRequest}
             sidebarCollapsed={sidebarCollapsed}
             onToggleSidebar={() => setSidebarCollapsed((value) => !value)}
-            onOpenMobile={() => setMobileOpen(true)}
+            onOpenMobile={() => {
+              setSidebarCollapsed(false);
+              setMobileOpen(true);
+            }}
           />
           <main className="staff-content">
             <Outlet />

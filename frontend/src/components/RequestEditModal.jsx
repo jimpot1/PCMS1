@@ -35,19 +35,32 @@ function formatCurrency(value) {
   return new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP' }).format(Number(value || 0));
 }
 
+function formatDateInput(value) {
+  const date = String(value || '');
+  return /^\d{4}-\d{2}-\d{2}/.test(date) ? date.slice(0, 10) : '';
+}
+
 export default function RequestEditModal({ request, departments, onClose, onSaved }) {
   const initialLineItems = Array.isArray(request?.line_items) && request.line_items.length > 0
     ? request.line_items.map(normalizeLineItem)
     : [emptyLineItem()];
+  const requester = request?.requester;
+  const requesterName = requester?.full_name
+    || [requester?.first_name, requester?.middle_name, requester?.last_name].filter(Boolean).join(' ')
+    || requester?.email
+    || request?.requested_by_name
+    || '';
+  const savedContactEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(request?.walk_in_requester_contact || '')
+    ? request.walk_in_requester_contact
+    : '';
 
   const [form, setForm] = useState({
     department_id: request?.department_id || request?.department?.id || '',
-    walk_in_requester_name: request?.walk_in_requester_name || request?.requested_by_name || '',
-    walk_in_requester_contact: request?.walk_in_requester_contact || '',
+    walk_in_requester_name: request?.walk_in_requester_name || requesterName,
+    walk_in_requester_contact: savedContactEmail || requester?.email || '',
     branch: request?.branch || '',
     priority: request?.priority || 'normal',
-    date_needed: request?.date_needed || '',
-    unit: request?.unit || '',
+    date_needed: formatDateInput(request?.date_needed),
     purpose: request?.purpose || '',
     walk_in_notes: request?.walk_in_notes || '',
   });
@@ -135,7 +148,6 @@ export default function RequestEditModal({ request, departments, onClose, onSave
         branch: form.branch || null,
         priority: form.priority || null,
         date_needed: form.date_needed || null,
-        unit: form.unit || null,
         purpose: form.purpose || null,
         walk_in_notes: form.walk_in_notes || null,
         total_amount: subtotal,
@@ -187,10 +199,10 @@ export default function RequestEditModal({ request, departments, onClose, onSave
               </div>
 
               <div className="request-field-group">
-                <label htmlFor="req-edit-contact">Requester Contact</label>
+                <label htmlFor="req-edit-contact">Requester Email</label>
                 <input
                   id="req-edit-contact"
-                  type="text"
+                  type="email"
                   value={form.walk_in_requester_contact}
                   disabled={saving}
                   onChange={(event) => updateField('walk_in_requester_contact', event.target.value)}
@@ -245,17 +257,6 @@ export default function RequestEditModal({ request, departments, onClose, onSave
                   value={form.date_needed}
                   disabled={saving}
                   onChange={(event) => updateField('date_needed', event.target.value)}
-                />
-              </div>
-
-              <div className="request-field-group request-field-full">
-                <label htmlFor="req-edit-unit">Unit</label>
-                <input
-                  id="req-edit-unit"
-                  type="text"
-                  value={form.unit}
-                  disabled={saving}
-                  onChange={(event) => updateField('unit', event.target.value)}
                 />
               </div>
 

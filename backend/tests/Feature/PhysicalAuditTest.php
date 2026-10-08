@@ -6,6 +6,7 @@ use App\Http\Controllers\AuditController;
 use App\Http\Controllers\TransferController;
 use App\Models\Asset;
 use App\Models\AssetAssignment;
+use App\Models\AssetUnit;
 use App\Models\AssetTransfer;
 use App\Models\AuditScan;
 use App\Models\Department;
@@ -151,6 +152,98 @@ class PhysicalAuditTest extends TestCase
             ->assertJsonPath('expected_assets.0.physical_quantity', 1);
     }
 
+    public function test_manual_audit_scan_records_a_selected_unit_of_the_asset(): void
+    {
+        $staff = $this->makeUser('PPMO Staff');
+        $department = $this->makeDepartment('AUD-UNIT');
+        $asset = $this->makeAsset($department, 'AUD-UNIT');
+        $otherAsset = $this->makeAsset($department, 'AUD-UNIT-OTHER');
+        $unit = AssetUnit::create([
+            'asset_id' => $asset->id,
+            'unit_code' => 'UNIT-AUD-001',
+            'status' => 'assigned',
+            'condition' => 'good',
+        ]);
+        $secondUnit = AssetUnit::create([
+            'asset_id' => $asset->id,
+            'unit_code' => 'UNIT-AUD-002',
+            'status' => 'assigned',
+            'condition' => 'good',
+        ]);
+        $availableUnit = AssetUnit::create([
+            'asset_id' => $asset->id,
+            'unit_code' => 'UNIT-AUD-AVAILABLE',
+            'status' => 'available',
+            'condition' => 'good',
+        ]);
+        $otherUnit = AssetUnit::create([
+            'asset_id' => $otherAsset->id,
+            'unit_code' => 'UNIT-AUD-OTHER',
+            'status' => 'assigned',
+            'condition' => 'good',
+        ]);
+        $this->actingAs($staff);
+        $audit = $this->postJson('/api/audits', [
+            'area' => 'Audit Unit Test',
+            'department_id' => $department->id,
+            'scheduled_at' => now()->toDateString(),
+        ])->assertCreated()->json();
+
+        $this->postJson('/api/audits/'.$audit['id'].'/scan', [
+            'asset_id' => $asset->id,
+            'asset_unit_id' => $otherUnit->id,
+            'found_department_id' => $department->id,
+        ])->assertUnprocessable();
+        $this->postJson('/api/audits/'.$audit['id'].'/scan', [
+            'asset_id' => $asset->id,
+            'asset_unit_id' => $availableUnit->id,
+            'found_department_id' => $department->id,
+        ])->assertUnprocessable();
+
+        $this->postJson('/api/audits/'.$audit['id'].'/scan', [
+            'asset_id' => $asset->id,
+            'asset_unit_id' => $unit->id,
+            'found_department_id' => $department->id,
+        ])->assertCreated()
+            ->assertJsonPath('asset_unit.unit_code', 'UNIT-AUD-001');
+
+        $this->postJson('/api/audits/'.$audit['id'].'/scan', [
+            'asset_id' => $asset->id,
+            'asset_unit_id' => $unit->id,
+            'found_department_id' => $department->id,
+        ])->assertStatus(409)
+            ->assertJsonPath('message', 'This physical unit has already been scanned in this audit.');
+
+        $this->postJson('/api/audits/'.$audit['id'].'/scan', [
+            'asset_id' => $asset->id,
+            'asset_unit_id' => $secondUnit->id,
+            'found_department_id' => $department->id,
+        ])->assertCreated()
+            ->assertJsonPath('asset_unit.unit_code', 'UNIT-AUD-002');
+
+        $this->assertDatabaseHas('audit_scans', [
+            'audit_id' => $audit['id'],
+            'asset_id' => $asset->id,
+            'asset_unit_id' => $unit->id,
+        ]);
+        $this->getJson('/api/audits/'.$audit['id'])
+            ->assertOk()
+            ->assertJsonPath('expected_assets.0.physical_unit_code', 'UNIT-AUD-001');
+
+        $this->postJson('/api/audits/'.$audit['id'].'/scan', [
+            'asset_id' => $otherAsset->id,
+            'asset_unit_id' => $otherUnit->id,
+            'found_department_id' => $department->id,
+        ])->assertCreated()
+            ->assertJsonPath('asset_unit.unit_code', 'UNIT-AUD-OTHER');
+
+        $this->getJson('/api/audits/'.$audit['id'])
+            ->assertOk()
+            ->assertJsonPath('summary.total', 3)
+            ->assertJsonPath('summary.verified', 2);
+        $this->assertDatabaseCount('audit_scans', 3);
+    }
+
     public function test_completing_audit_uses_snapshotted_assets_after_reallocation(): void
     {
         $staff = $this->makeUser('PPMO Staff');
@@ -182,6 +275,7 @@ class PhysicalAuditTest extends TestCase
     {
         $staff = $this->makeUser('PPMO Staff');
         $department = $this->makeDepartment('AUD-UNEXPECTED');
+        $otherDepartment = $this->makeDepartment('AUD-UNEXPECTED-OTHER');
         $this->actingAs($staff);
 
         $audit = $this->postJson('/api/audits', [
@@ -189,7 +283,7 @@ class PhysicalAuditTest extends TestCase
             'department_id' => $department->id,
             'scheduled_at' => now()->toDateString(),
         ])->assertCreated()->json();
-        $asset = $this->makeAsset($department, 'AUD-UNEXPECTED');
+        $asset = $this->makeAsset($otherDepartment, 'AUD-UNEXPECTED');
 
         $this->postJson('/api/audits/'.$audit['id'].'/scan', [
             'asset_id' => $asset->id,
@@ -200,6 +294,8 @@ class PhysicalAuditTest extends TestCase
             ->assertOk()
             ->assertJsonPath('summary.expected', 0)
             ->assertJsonPath('summary.unexpected_assets', 1)
+            ->assertJsonPath('summary.wrong_department', 0)
+            ->assertJsonPath('summary.progress_percent', 0)
             ->assertJsonCount(0, 'expected_assets');
     }
 
@@ -283,6 +379,14 @@ class PhysicalAuditTest extends TestCase
         $auditDepartment = $this->makeDepartment('AUD2L');
         $foundDepartment = $this->makeDepartment('AUD2B');
         $asset = $this->makeAsset($recordedDepartment, 'AUD2');
+        $unit = AssetUnit::create([
+            'asset_id' => $asset->id,
+            'unit_code' => 'UNIT-AUD2-001',
+            'status' => 'assigned',
+            'department_id' => $recordedDepartment->id,
+            'custodian_id' => $staff->id,
+            'condition' => 'good',
+        ]);
         $audit = PhysicalAudit::create([
             'audit_number' => 'AUD-2026-000002',
             'area' => 'Office',
@@ -294,6 +398,7 @@ class PhysicalAuditTest extends TestCase
 
         (new AuditController)->scan($this->request($staff, [
             'asset_id' => $asset->id,
+            'asset_unit_id' => $unit->id,
             'found_department_id' => $foundDepartment->id,
         ]), $audit);
 
@@ -303,10 +408,105 @@ class PhysicalAuditTest extends TestCase
         ]);
         $this->assertDatabaseHas('asset_transfers', [
             'asset_id' => $asset->id,
+            'asset_unit_id' => $unit->id,
             'from_department_id' => $auditDepartment->id,
             'to_department_id' => $foundDepartment->id,
+            'quantity' => 1,
             'status' => 'transfer_requested',
+            'reason' => 'Physical audit found asset in '.$foundDepartment->name.'.',
         ]);
+    }
+
+    public function test_unit_transfer_execution_moves_only_the_selected_unit_and_assignment(): void
+    {
+        $staff = $this->makeUser('PPMO Staff');
+        $sourceHolder = $this->makeUser('Requester');
+        $source = $this->makeDepartment('UNIT-MOVE-SOURCE');
+        $destination = $this->makeDepartment('UNIT-MOVE-DEST');
+        $receivingEmployee = $this->makeUser('Department Head');
+        $receivingEmployee->update(['department' => $destination->name]);
+        $asset = Asset::create([
+            'asset_id' => 'AST-UNIT-MOVE',
+            'property_number' => 'PROP-UNIT-MOVE',
+            'name' => 'Multi-unit transfer test asset',
+            'department_id' => $source->id,
+            'custodian_id' => $sourceHolder->id,
+            'current_holder_id' => $sourceHolder->id,
+            'quantity' => 2,
+            'available_quantity' => 0,
+            'condition' => 'good',
+            'status' => 'assigned',
+        ]);
+        $movingUnit = AssetUnit::create([
+            'asset_id' => $asset->id,
+            'unit_code' => 'UNIT-MOVE-001',
+            'status' => 'assigned',
+            'department_id' => $source->id,
+            'custodian_id' => $sourceHolder->id,
+            'condition' => 'good',
+        ]);
+        $stationaryUnit = AssetUnit::create([
+            'asset_id' => $asset->id,
+            'unit_code' => 'UNIT-MOVE-002',
+            'status' => 'assigned',
+            'department_id' => $source->id,
+            'custodian_id' => $sourceHolder->id,
+            'condition' => 'good',
+        ]);
+        $movingAssignment = AssetAssignment::create([
+            'asset_id' => $asset->id,
+            'asset_unit_id' => $movingUnit->id,
+            'assigned_to' => $sourceHolder->id,
+            'assigned_by' => $staff->id,
+            'department_id' => $source->id,
+            'quantity' => 1,
+            'purpose' => 'Unit being moved',
+            'condition_before' => 'good',
+            'assigned_at' => now(),
+            'status' => 'active',
+            'approval_status' => 'approved',
+        ]);
+        $stationaryAssignment = AssetAssignment::create([
+            'asset_id' => $asset->id,
+            'asset_unit_id' => $stationaryUnit->id,
+            'assigned_to' => $sourceHolder->id,
+            'assigned_by' => $staff->id,
+            'department_id' => $source->id,
+            'quantity' => 1,
+            'purpose' => 'Unit staying at source',
+            'condition_before' => 'good',
+            'assigned_at' => now(),
+            'status' => 'active',
+            'approval_status' => 'approved',
+        ]);
+        $transfer = AssetTransfer::create([
+            'transfer_number' => 'TR-2026-UNIT-MOVE',
+            'asset_id' => $asset->id,
+            'asset_unit_id' => $movingUnit->id,
+            'from_department_id' => $source->id,
+            'to_department_id' => $destination->id,
+            'from_custodian_id' => $sourceHolder->id,
+            'to_custodian_id' => $receivingEmployee->id,
+            'requested_by' => $sourceHolder->id,
+            'quantity' => 1,
+            'transfer_type' => 'permanent',
+            'status' => 'ready_for_transfer',
+            'reason' => 'Transfer one physical unit.',
+        ]);
+
+        $response = (new TransferController)->execute($this->request($staff), $transfer);
+
+        $this->assertSame(200, $response->getStatusCode());
+        $this->assertSame($source->id, $asset->fresh()->department_id);
+        $this->assertSame($sourceHolder->id, $asset->fresh()->current_holder_id);
+        $this->assertSame($destination->id, $movingUnit->fresh()->department_id);
+        $this->assertSame($receivingEmployee->id, $movingUnit->fresh()->custodian_id);
+        $this->assertSame($source->id, $stationaryUnit->fresh()->department_id);
+        $this->assertSame($sourceHolder->id, $stationaryUnit->fresh()->custodian_id);
+        $this->assertSame($receivingEmployee->id, $movingAssignment->fresh()->assigned_to);
+        $this->assertSame($destination->id, $movingAssignment->fresh()->department_id);
+        $this->assertSame($sourceHolder->id, $stationaryAssignment->fresh()->assigned_to);
+        $this->assertSame($source->id, $stationaryAssignment->fresh()->department_id);
     }
 
     public function test_completing_audit_creates_follow_up_for_missing_assets(): void
@@ -427,11 +627,11 @@ class PhysicalAuditTest extends TestCase
     {
         $staff = $this->makeUser('PPMO Staff');
         $requester = $this->makeUser('Requester');
-        $requester->update(['department' => 'Logistics']);
         $receivingEmployee = $this->makeUser('Department Head');
-        $receivingEmployee->update(['department' => 'Clinic']);
         $logistics = $this->makeDepartment('LOG4');
         $clinic = $this->makeDepartment('CLN4');
+        $requester->update(['department' => $logistics->name]);
+        $receivingEmployee->update(['department' => $clinic->name]);
         $asset = $this->makeAsset($logistics, 'TR4');
 
         AssetAssignment::create([
@@ -461,10 +661,7 @@ class PhysicalAuditTest extends TestCase
             'reason' => 'Physical audit correction',
         ]);
 
-        $response = (new TransferController)->execute($this->request($staff, [
-            'receiving_signature' => 'Clinic Receiver',
-            'releasing_signature' => 'Logistics Staff',
-        ]), $transfer);
+        $response = (new TransferController)->execute($this->request($staff), $transfer);
 
         $this->assertSame(200, $response->getStatusCode());
         $this->assertSame($clinic->id, $asset->fresh()->department_id);

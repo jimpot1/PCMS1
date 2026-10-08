@@ -46,6 +46,16 @@ class Asset extends Model
         return $this->belongsTo(AssetCategory::class, 'category_id');
     }
 
+    public function custodian(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'custodian_id');
+    }
+
+    public function currentHolder(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'current_holder_id');
+    }
+
     public function department(): BelongsTo
     {
         return $this->belongsTo(Department::class);

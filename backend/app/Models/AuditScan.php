@@ -14,6 +14,7 @@ class AuditScan extends Model
     protected $fillable = [
         'audit_id',
         'asset_id',
+        'asset_unit_id',
         'found_department_id',
         'result',
         'ocr_scan_id',
@@ -32,6 +33,11 @@ class AuditScan extends Model
     public function asset(): BelongsTo
     {
         return $this->belongsTo(Asset::class);
+    }
+
+    public function assetUnit(): BelongsTo
+    {
+        return $this->belongsTo(AssetUnit::class);
     }
 
     public function foundDepartment(): BelongsTo

@@ -527,6 +527,18 @@ export async function fetchStockMovements({
   return response?.data || [];
 }
 
+export async function fetchSupplyHistory({
+  department_id,
+  limit = 100,
+} = {}) {
+  const params = new URLSearchParams({
+    department_id: String(department_id || ""),
+    per_page: String(limit),
+  });
+  const response = await request(`/supply-history?${params.toString()}`);
+  return response?.data || [];
+}
+
 export async function fetchTransfers({
   limit = 200,
   search = "",
@@ -579,10 +591,10 @@ export async function createTransfer(payload) {
   });
 }
 
-export async function approveTransfer(id) {
+export async function approveTransfer(id, notes = "", toCustodianId = "") {
   return request(`/transfers/${id}/approve`, {
     method: "PATCH",
-    body: JSON.stringify({}),
+    body: JSON.stringify({ notes, to_custodian_id: toCustodianId || null }),
   });
 }
 
@@ -789,6 +801,7 @@ export async function deleteAudit(id) {
 export async function scanAuditAsset(auditId, payload) {
   const record = {
     asset_id: payload.asset_id,
+    asset_unit_id: payload.asset_unit_id || null,
     found_department_id: payload.found_department_id,
   };
 
@@ -1426,12 +1439,14 @@ export const pcmsApi = {
   recordStockMovement: (payload) => recordStockMovement(payload),
   fetchStockMovements: (opts) => fetchStockMovements(opts),
   stockMovements: (opts) => fetchStockMovements(opts),
+  fetchSupplyHistory: (opts) => fetchSupplyHistory(opts),
   fetchTransfers: (opts) => fetchTransfers(opts),
   transfers: (opts) => fetchTransfers(opts),
   transfer: (id) => fetchTransfer(id),
   transferRecommendations: (payload) => fetchTransferRecommendations(payload),
   createTransfer: (payload) => createTransfer(payload),
-  approveTransfer: (id) => approveTransfer(id),
+  approveTransfer: (id, notes, toCustodianId) =>
+    approveTransfer(id, notes, toCustodianId),
   rejectTransfer: (id, reason) => rejectTransfer(id, reason),
   holdTransfer: (id, reason) => holdTransfer(id, reason),
   requestTransferRevision: (id, reason) => requestTransferRevision(id, reason),
