@@ -1393,6 +1393,15 @@ export async function deactivateUser(id) {
   return request(`/users/${id}`, { method: "DELETE" });
 }
 
+export async function permanentlyDeleteUser(id) {
+  return request(`/users/${id}/permanent`, { method: "DELETE" });
+}
+
+export async function fetchDeletedUserHistory() {
+  const response = await request("/users/deleted-history?per_page=100");
+  return response?.data || [];
+}
+
 export const pcmsApi = {
   dashboard: () => request("/dashboard"),
   notifications: () => fetchNotifications(),
@@ -1554,6 +1563,8 @@ export const pcmsApi = {
   verifyUserActionPassword: (password) => verifyUserActionPassword(password),
   updateUser: (id, payload) => updateUser(id, payload),
   deactivateUser: (id) => deactivateUser(id),
+  permanentlyDeleteUser: (id) => permanentlyDeleteUser(id),
+  deletedUserHistory: () => fetchDeletedUserHistory(),
   systemSettings: () => fetchSystemSettings(),
   updateSystemSettings: (payload) => updateSystemSettings(payload),
   

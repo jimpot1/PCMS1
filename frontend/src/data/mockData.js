@@ -109,9 +109,10 @@ export const notifications = [
 
 export const roleMatrix = [
   { role: 'System Administrator', permissions: [true, true, true, true, true] },
-  { role: 'Property Custodian', permissions: [true, true, true, true, false] },
-  { role: 'PPMO Staff', permissions: [true, true, true, true, false] },
-  { role: 'Department Head', permissions: [true, false, true, true, false] },
-  { role: 'Employee', permissions: [true, false, false, false, false] },
-  { role: 'Auditor', permissions: [true, true, false, true, false] }
+  { role: 'Property Custodian / PPMO Staff', permissions: [true, true, true, true, false] },
+  { role: 'Department Head', permissions: [true, false, true, false, false] },
+  { role: 'Recommending Approver', permissions: [true, false, true, false, false] },
+  { role: 'OIC', permissions: [true, true, true, true, false] },
+  { role: 'President / CEO', permissions: [true, false, true, false, false] },
+  { role: 'Requester', permissions: [true, true, false, false, false] }
 ];

@@ -18077,12 +18077,17 @@ const normalizeManagedUserRole = (role) =>
 
 function UsersPage() {
   const [users, setUsers] = useState([]);
+  const [deletedUserHistory, setDeletedUserHistory] = useState([]);
+  const [selectedUserRole, setSelectedUserRole] = useState("");
   const [departmentsList, setDepartmentsList] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
   const [showInviteForm, setShowInviteForm] = useState(false);
   const [userActionToVerify, setUserActionToVerify] = useState(null);
+  const [userPendingDeletion, setUserPendingDeletion] = useState(null);
+  const [deletingUser, setDeletingUser] = useState(false);
+  const [deletionError, setDeletionError] = useState(null);
   const [actionVerificationPassword, setActionVerificationPassword] = useState("");
   const [actionVerificationError, setActionVerificationError] = useState(null);
   const [isVerifyingUserAction, setIsVerifyingUserAction] = useState(false);
@@ -18117,6 +18122,7 @@ function UsersPage() {
 
   useEffect(() => {
     loadUsers();
+    loadDeletedUserHistory();
     pcmsApi
       .departments()
       .then(setDepartmentsList)
@@ -18135,13 +18141,28 @@ function UsersPage() {
     }
   };
 
+  const loadDeletedUserHistory = async () => {
+    try {
+      const history = await pcmsApi.deletedUserHistory();
+      setDeletedUserHistory(history || []);
+    } catch (err) {
+      setError(err?.message || "Unable to load deleted account history.");
+    }
+  };
+
+  const visibleUsers = selectedUserRole
+    ? users.filter((user) => normalizeManagedUserRole(user.role) === selectedUserRole)
+    : users;
+
   useLiveSync(async () => {
-    const [usersResponse, departmentsResponse] = await Promise.all([
+    const [usersResponse, departmentsResponse, deletedHistoryResponse] = await Promise.all([
       pcmsApi.users(),
       pcmsApi.departments(),
+      pcmsApi.deletedUserHistory(),
     ]);
     setUsers(usersResponse || []);
     setDepartmentsList(departmentsResponse || []);
+    setDeletedUserHistory(deletedHistoryResponse || []);
   }, { enabled: !showInviteForm && !editingUser });
 
   const handleInvite = async (e) => {
@@ -18253,6 +18274,7 @@ function UsersPage() {
 
   const requestVerifiedUserAction = (action, user = null) => {
     setError(null);
+    setDeletionError(null);
     setActionVerificationError(null);
     setActionVerificationPassword("");
     setUserActionToVerify({ action, user });
@@ -18285,6 +18307,8 @@ function UsersPage() {
         await handleDeactivate(user);
       } else if (action === "reactivate" && user) {
         await handleReactivate(user);
+      } else if (action === "delete" && user) {
+        setUserPendingDeletion(user);
       }
     } catch (verificationError) {
       let message = verificationError?.message || "Password verification failed.";
@@ -18306,6 +18330,23 @@ function UsersPage() {
       setActionVerificationError(message);
     } finally {
       setIsVerifyingUserAction(false);
+    }
+  };
+
+  const handlePermanentDelete = async () => {
+    if (!userPendingDeletion || deletingUser) return;
+
+    setDeletionError(null);
+    setDeletingUser(true);
+    try {
+      await pcmsApi.permanentlyDeleteUser(userPendingDeletion.id);
+      setSuccess(`${userPendingDeletion.full_name} was permanently deleted. The deletion was added to account history.`);
+      setUserPendingDeletion(null);
+      await Promise.all([loadUsers(), loadDeletedUserHistory()]);
+    } catch (err) {
+      setDeletionError(err?.message || "Failed to permanently delete user.");
+    } finally {
+      setDeletingUser(false);
     }
   };
 
@@ -18393,6 +18434,60 @@ function UsersPage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {userPendingDeletion && (
+        <div
+          className="modal-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="delete-user-title"
+          onClick={() => !deletingUser && setUserPendingDeletion(null)}
+        >
+          <div
+            className="modal-card user-form-modal user-action-verification-modal"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="modal-header">
+              <div>
+                <h3 id="delete-user-title">Permanently Delete Account?</h3>
+                <p className="modal-subtitle">
+                  This permanently removes <strong>{userPendingDeletion.full_name}</strong>’s login account. A record will be kept in deleted account history; this action cannot be undone.
+                </p>
+              </div>
+              <button
+                className="icon-button"
+                type="button"
+                onClick={() => setUserPendingDeletion(null)}
+                aria-label="Cancel permanent account deletion"
+                disabled={deletingUser}
+              >
+                <X size={18} />
+              </button>
+            </div>
+            {deletionError && (
+              <div className="alert danger">{deletionError}</div>
+            )}
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => setUserPendingDeletion(null)}
+                disabled={deletingUser}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="danger-button"
+                onClick={handlePermanentDelete}
+                disabled={deletingUser}
+              >
+                <Trash2 size={15} /> {deletingUser ? "Deleting…" : "Permanently Delete"}
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -18786,6 +18881,22 @@ function UsersPage() {
       )}
 
       <div className="table-card">
+        <div className="data-toolbar user-management-toolbar">
+          <label htmlFor="user-role-filter">
+            Filter by role
+            <select
+              id="user-role-filter"
+              className="filter-select"
+              value={selectedUserRole}
+              onChange={(event) => setSelectedUserRole(event.target.value)}
+            >
+              <option value="">All roles</option>
+              {USER_ROLES.map((role) => (
+                <option key={role} value={role}>{role}</option>
+              ))}
+            </select>
+          </label>
+        </div>
         {loading ? (
           <div className="loading-card">Loading users…</div>
         ) : (
@@ -18801,12 +18912,12 @@ function UsersPage() {
               </tr>
             </thead>
             <tbody>
-              {users.length === 0 ? (
+              {visibleUsers.length === 0 ? (
                 <tr>
-                  <td colSpan="6">No users yet</td>
+                  <td colSpan="6">{users.length === 0 ? "No users yet" : "No users match this role."}</td>
                 </tr>
               ) : (
-                users.map((user) => (
+                visibleUsers.map((user) => (
                   <tr key={user.id}>
                     <td>
                       <strong>{user.full_name}</strong>
@@ -18849,6 +18960,13 @@ function UsersPage() {
                             <UserCheck size={14} /> Reactivate
                           </button>
                         )}
+                        <button
+                          className="small-button danger-button"
+                          type="button"
+                          onClick={() => requestVerifiedUserAction("delete", user)}
+                        >
+                          <Trash2 size={14} /> Delete
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -18857,6 +18975,47 @@ function UsersPage() {
             </tbody>
           </table>
         )}
+      </div>
+
+      <div className="panel" style={{ marginTop: 20 }}>
+        <div className="panel-header">
+          <h3>Deleted Account History</h3>
+        </div>
+        <div className="table-card">
+          <table>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Email</th>
+                <th>Role</th>
+                <th>Department</th>
+                <th>Deleted At</th>
+                <th>Deleted By</th>
+              </tr>
+            </thead>
+            <tbody>
+              {deletedUserHistory.length === 0 ? (
+                <tr>
+                  <td colSpan="6">No deleted accounts recorded.</td>
+                </tr>
+              ) : (
+                deletedUserHistory.map((record) => (
+                  <tr key={record.id}>
+                    <td>
+                      <strong>{record.full_name || "—"}</strong>
+                      {record.employee_id && <span> · {record.employee_id}</span>}
+                    </td>
+                    <td>{record.email}</td>
+                    <td>{record.role}</td>
+                    <td>{record.department || "—"}</td>
+                    <td>{record.deleted_at ? new Date(record.deleted_at).toLocaleString() : "—"}</td>
+                    <td>{record.deleted_by_name || record.deleted_by_email || "—"}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       <div className="panel" style={{ marginTop: 20 }}>

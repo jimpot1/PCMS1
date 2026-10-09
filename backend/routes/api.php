@@ -137,6 +137,10 @@ Route::middleware(['web', 'auth:sanctum', 'active.account', 'delete.admin'])->gr
     Route::apiResource('assignments', \App\Http\Controllers\AssetAssignmentController::class);
     Route::post('/users/verify-action-password', [UserController::class, 'verifyActionPassword'])
         ->middleware(['role:System Administrator', 'throttle:6,1']);
+    Route::get('/users/deleted-history', [UserController::class, 'deletedHistory'])
+        ->middleware('role:System Administrator');
+    Route::delete('/users/{user}/permanent', [UserController::class, 'permanentlyDestroy'])
+        ->middleware('role:System Administrator');
     Route::apiResource('users', UserController::class)->middleware('role:System Administrator');
     Route::get('/system-settings', [SystemSettingController::class, 'index'])->middleware('role:System Administrator');
     Route::patch('/system-settings', [SystemSettingController::class, 'update'])->middleware('role:System Administrator');

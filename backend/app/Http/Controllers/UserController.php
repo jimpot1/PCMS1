@@ -3,8 +3,10 @@
 namespace App\Http\Controllers;
 
 use App\Models\User;
+use App\Models\DeletedUserHistory;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rules\Password;
@@ -65,6 +67,15 @@ class UserController
             ->paginate($request->integer('per_page', 50));
 
         return response()->json($users);
+    }
+
+    public function deletedHistory(Request $request): JsonResponse
+    {
+        $history = DeletedUserHistory::query()
+            ->orderByDesc('deleted_at')
+            ->paginate($request->integer('per_page', 100));
+
+        return response()->json($history);
     }
 
     public function store(Request $request): JsonResponse
@@ -156,5 +167,54 @@ class UserController
         $user->update(['status' => 'inactive']);
 
         return response()->json(['message' => 'User deactivated.']);
+    }
+
+    public function permanentlyDestroy(Request $request, User $user): JsonResponse
+    {
+        $actor = $request->user();
+        if ($actor && $actor->is($user)) {
+            return response()->json([
+                'message' => 'You cannot permanently delete your own account.',
+            ], 422);
+        }
+
+        DB::transaction(function () use ($actor, $user) {
+            DeletedUserHistory::create([
+                'deleted_user_id' => $user->id,
+                'employee_id' => $user->employee_id,
+                'first_name' => $user->first_name,
+                'middle_name' => $user->middle_name,
+                'last_name' => $user->last_name,
+                'full_name' => $user->full_name,
+                'email' => $user->email,
+                'role' => $user->role,
+                'department' => $user->department,
+                'status' => $user->status,
+                'deleted_by_id' => $actor?->id,
+                'deleted_by_name' => $actor?->full_name,
+                'deleted_by_email' => $actor?->email,
+                'deleted_at' => now(),
+            ]);
+
+            DB::table('activity_logs')->insert([
+                'action' => 'user_permanently_deleted',
+                'payload' => json_encode([
+                    'action' => 'user_permanently_deleted',
+                    'deleted_user_id' => $user->id,
+                    'deleted_user_name' => $user->full_name,
+                    'deleted_user_email' => $user->email,
+                    'deleted_by_id' => $actor?->id,
+                    'deleted_by_name' => $actor?->full_name,
+                    'deleted_by_email' => $actor?->email,
+                ]),
+                'status' => 'active',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+
+            $user->delete();
+        });
+
+        return response()->json(['message' => 'User permanently deleted and recorded in history.']);
     }
 }
