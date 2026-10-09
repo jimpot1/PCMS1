@@ -514,6 +514,12 @@ class PhysicalAuditTest extends TestCase
         $staff = $this->makeUser('OIC');
         $department = $this->makeDepartment('AUD3');
         $asset = $this->makeAsset($department, 'AUD3');
+        $unit = AssetUnit::create([
+            'asset_id' => $asset->id,
+            'unit_code' => 'UNIT-AUD3-001',
+            'status' => 'available',
+            'condition' => 'good',
+        ]);
         $audit = PhysicalAudit::create([
             'audit_number' => 'AUD-2026-000003',
             'area' => 'Storage',
@@ -535,6 +541,17 @@ class PhysicalAuditTest extends TestCase
             'asset_id' => $asset->id,
             'description' => 'Physical audit AUD-2026-000003 could not verify this asset.',
             'status' => 'submitted',
+        ]);
+        $this->assertDatabaseHas('assets', [
+            'id' => $asset->id,
+            'status' => 'lost',
+            'condition' => 'lost',
+            'available_quantity' => 0,
+        ]);
+        $this->assertDatabaseHas('asset_units', [
+            'id' => $unit->id,
+            'status' => 'disposed',
+            'condition' => 'unserviceable',
         ]);
         $this->assertDatabaseHas('activity_logs', ['action' => 'audit_completed']);
     }

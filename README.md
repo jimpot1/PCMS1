@@ -10,6 +10,62 @@ Property Custodian Management System (PCMS) is a web-based platform for managing
 - Optional services: Python OCR and anomaly processing
 - Primary workflows: request submission, approval routing, asset tracking, reporting, and audit support
 
+## Simple Role and Module Guide
+
+PCMS modules are the sections available from the side menu after signing in. Some actions are restricted to particular roles, even when a module is visible.
+
+### System Administrator
+
+The System Administrator oversees the system and its records:
+
+- **Dashboard** — Review a summary of system activity and operational work.
+- **Asset Registry** — Add, update, search, and review property records.
+- **OCR Asset Tagging** — Scan asset tags and review OCR scan history.
+- **Asset Assignment** — Record assets issued to employees and manage assignment and return records.
+- **Asset Transfer** — Review and manage requests to move assets between departments.
+- **Asset Return** — Track assets returned by their assigned users.
+- **Supplies Inventory** — Maintain supply records and stock information.
+- **Department** — Maintain the departments used by asset and workflow records.
+- **Preventive Maintenance** — Track maintenance work and upcoming maintenance needs.
+- **Damage Report** — Record and follow up on reported asset damage.
+- **Purchase Workflow** — Monitor purchase requests and related processing.
+- **Gate Pass** — Review gate-pass records and their status.
+- **Audit Dashboard** — Review inventory audit work and results.
+- **Inventory Monitoring** — Review unusual inventory activity and related alerts.
+- **Report & Analytics** — Review and export available operational reports.
+- **User Management** — Create, update, deactivate, and manage user accounts. Permanent deletion is available only where authorized and is recorded in deletion history.
+- **Notification** — View system notifications.
+- **System Settings** — Manage configurable system settings.
+- **Activity Logs** — Review recorded user and system actions.
+
+### PPMO Staff
+
+PPMO Staff handle day-to-day property, inventory, procurement, and document processing:
+
+- **Dashboard** — See operational summaries and work queues.
+- **Asset Registry** — Maintain and search property records.
+- **OCR Asset Tagging** — Scan asset tags and review OCR results.
+- **Asset Assignment** — Process asset issuance and assignment records.
+- **Asset Transfer** — Process asset movement requests and related records.
+- **Asset Return** — Record and manage returned assets.
+- **Supplies Inventory** — Track supplies and inventory movements.
+- **Department** — View and use department records in operations.
+- **Inventory Monitoring** — Review inventory alerts and investigate unusual activity.
+- **Preventive Maintenance** — Track maintenance needs and work.
+- **Damage Report** — Record and manage damage reports.
+- **Purchase Workflow** — Process requests through the operational stages, including receiving and release where authorized.
+- **Gate Pass** — Manage gate-pass records and processing.
+- **Audit Dashboard** — Perform inventory audit and verification work.
+- **Walk-in Request** — Enter a purchase request on behalf of a walk-in requester.
+- **Approved Release Queue** — Work on approved requests that are ready for release.
+- **Gate Pass Preparation** — Prepare gate-pass documents.
+- **Release Receipt Preparation** — Prepare receipts for released items.
+- **Purchase Order Documents** — Access purchase-order documents for processing.
+- **Reports & Analytics** — Review available reports and analytics.
+- **Activity & Transaction Logs** — Review operational activity and transaction records.
+
+PPMO Staff do not have the System Administrator's user-management or system-settings menu. Available actions may still depend on the user's permissions and the status of a request or record.
+
 ## Project Structure
 
 ```text

@@ -508,6 +508,11 @@ class AuditController extends Controller
                 $missingIds = $expectedAssetIds->diff($scannedAssetIds)->diff($countedAssetIds);
 
                 foreach ($missingIds as $assetId) {
+                    $missingAsset = Asset::find($assetId);
+                    if (! $missingAsset) {
+                        continue;
+                    }
+
                     AuditScan::create([
                         'audit_id' => $audit->id,
                         'asset_id' => $assetId,
@@ -531,6 +536,16 @@ class AuditController extends Controller
                             'status' => 'submitted',
                         ]);
                     }
+
+                    $missingAsset->update([
+                        'status' => 'lost',
+                        'condition' => 'lost',
+                        'available_quantity' => 0,
+                    ]);
+                    AssetUnit::where('asset_id', $missingAsset->id)->update([
+                        'status' => 'disposed',
+                        'condition' => 'unserviceable',
+                    ]);
                 }
 
                 $audit->load('auditScans');

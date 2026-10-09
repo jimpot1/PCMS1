@@ -10301,6 +10301,8 @@ function MaintenancePage({ currentUser }) {
   const [selectedRecord, setSelectedRecord] = useState(null);
   const [assetUnits, setAssetUnits] = useState([]);
   const [assetUnitsLoading, setAssetUnitsLoading] = useState(false);
+  const [assetUnitsError, setAssetUnitsError] = useState("");
+  const assetUnitsRequestRef = useRef(0);
   const [formData, setFormData] = useState({
     asset_id: "",
     asset_unit_id: "",
@@ -10437,13 +10439,28 @@ function MaintenancePage({ currentUser }) {
   };
 
   const loadAssetUnits = async (assetId) => {
+    const requestId = ++assetUnitsRequestRef.current;
+    setAssetUnits([]);
+    setAssetUnitsError("");
+    if (!assetId) {
+      setAssetUnitsLoading(false);
+      return;
+    }
+
     setAssetUnitsLoading(true);
     try {
-      setAssetUnits(await pcmsApi.assetUnits(assetId));
-    } catch {
-      setAssetUnits([]);
+      const response = await pcmsApi.assetUnits(assetId);
+      if (requestId === assetUnitsRequestRef.current) {
+        setAssetUnits(Array.isArray(response) ? response : response?.data || []);
+      }
+    } catch (error) {
+      if (requestId === assetUnitsRequestRef.current) {
+        setAssetUnitsError(error?.message || "Unable to load physical units for this asset.");
+      }
     } finally {
-      setAssetUnitsLoading(false);
+      if (requestId === assetUnitsRequestRef.current) {
+        setAssetUnitsLoading(false);
+      }
     }
   };
 
@@ -10477,10 +10494,6 @@ function MaintenancePage({ currentUser }) {
       setMaintenanceScannerError(error?.message || "Unable to resolve the scanned asset.");
     }
   };
-
-  const selectedMaintenanceAsset = assetsList.find(
-    (asset) => String(asset.id) === String(formData.asset_id),
-  );
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -10681,13 +10694,13 @@ function MaintenancePage({ currentUser }) {
                 )}
               </div>
             </div>
-            {Number(selectedMaintenanceAsset?.quantity || 1) > 1 && (
+            {formData.asset_id && (
             <div className="field-row maintenance-field maintenance-field-wide">
               <label>Physical Unit</label>
               <select
                 value={formData.asset_unit_id}
                 onChange={(event) =>
-                  setFormData({ ...formData, asset_unit_id: event.target.value })
+                  setFormData((current) => ({ ...current, asset_unit_id: event.target.value }))
                 }
                 disabled={!formData.asset_id || assetUnitsLoading}
               >
@@ -10701,6 +10714,8 @@ function MaintenancePage({ currentUser }) {
               <small>
                 {assetUnitsLoading
                   ? "Loading physical units..."
+                  : assetUnitsError
+                    ? assetUnitsError
                   : assetUnits.length > 0
                     ? "Choose one unit or leave this as All physical units."
                     : "No individually tracked units; this schedule applies to the asset."}
@@ -19586,8 +19601,9 @@ function AssetDetailGrid({ asset }) {
       .replace(/\s+/g, "_");
     if (key === "available") return "success";
     if (["in_use", "assigned", "transferred"].includes(key)) return "info";
-    if (["maintenance", "under_maintenance"].includes(key)) return "warning";
-    if (key === "damaged") return "danger";
+    if (["maintenance", "under_maintenance", "unserviceable"].includes(key))
+      return "warning";
+    if (["damaged", "lost", "disposed"].includes(key)) return "danger";
     return "neutral";
   };
   const getConditionTone = (value) => {
@@ -19598,7 +19614,7 @@ function AssetDetailGrid({ asset }) {
     if (key === "fair") return "caution";
     if (["poor", "needs_repair", "under_inspection"].includes(key))
       return "warning";
-    if (key === "damaged") return "danger";
+    if (["damaged", "lost", "unserviceable"].includes(key)) return "danger";
     return "neutral";
   };
   const renderBadge = (value, kind) => {
@@ -20011,9 +20027,9 @@ function AssetTable({
                 <td>{asset.condition}</td>
                 <td>
                   <span
-                    className={`status ${asset.status === "maintenance" ? "warning" : asset.status === "damaged" ? "danger" : asset.status === "disposed" ? "danger" : (asset.available_quantity ?? asset.quantity ?? 1) > 0 ? "success" : "info"}`}
+                    className={`status ${asset.status === "maintenance" || asset.status === "unserviceable" ? "warning" : ["damaged", "lost", "disposed"].includes(asset.status) ? "danger" : (asset.available_quantity ?? asset.quantity ?? 1) > 0 ? "success" : "info"}`}
                   >
-                    {["maintenance", "damaged", "disposed"].includes(
+                    {["maintenance", "damaged", "lost", "unserviceable", "disposed"].includes(
                       asset.status,
                     )
                       ? asset.status
