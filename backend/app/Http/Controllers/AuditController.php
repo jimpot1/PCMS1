@@ -537,15 +537,6 @@ class AuditController extends Controller
                         ]);
                     }
 
-                    $missingAsset->update([
-                        'status' => 'lost',
-                        'condition' => 'lost',
-                        'available_quantity' => 0,
-                    ]);
-                    AssetUnit::where('asset_id', $missingAsset->id)->update([
-                        'status' => 'disposed',
-                        'condition' => 'unserviceable',
-                    ]);
                 }
 
                 $audit->load('auditScans');

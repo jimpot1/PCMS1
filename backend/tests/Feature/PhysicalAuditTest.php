@@ -539,21 +539,72 @@ class PhysicalAuditTest extends TestCase
         ]);
         $this->assertDatabaseHas('damage_reports', [
             'asset_id' => $asset->id,
+            'asset_unit_id' => null,
             'description' => 'Physical audit AUD-2026-000003 could not verify this asset.',
             'status' => 'submitted',
         ]);
         $this->assertDatabaseHas('assets', [
             'id' => $asset->id,
-            'status' => 'lost',
-            'condition' => 'lost',
-            'available_quantity' => 0,
+            'status' => 'available',
+            'condition' => 'good',
+            'available_quantity' => 1,
         ]);
         $this->assertDatabaseHas('asset_units', [
             'id' => $unit->id,
+            'status' => 'available',
+            'condition' => 'good',
+        ]);
+        $this->assertDatabaseHas('activity_logs', ['action' => 'audit_completed']);
+    }
+
+    public function test_declaring_one_physical_unit_lost_does_not_dispose_other_units(): void
+    {
+        $staff = $this->makeUser('Property Custodian');
+        $department = $this->makeDepartment('UNIT-INCIDENT');
+        $asset = $this->makeAsset($department, 'UNIT-INCIDENT');
+        $asset->update(['quantity' => 2, 'available_quantity' => 2]);
+        $selectedUnit = AssetUnit::create([
+            'asset_id' => $asset->id,
+            'unit_code' => 'UNIT-INCIDENT-001',
+            'status' => 'available',
+            'condition' => 'good',
+        ]);
+        $otherUnit = AssetUnit::create([
+            'asset_id' => $asset->id,
+            'unit_code' => 'UNIT-INCIDENT-002',
+            'status' => 'available',
+            'condition' => 'good',
+        ]);
+        $this->actingAs($staff);
+
+        $report = $this->postJson('/api/damage-reports', [
+            'asset_id' => $asset->id,
+            'asset_unit_id' => $selectedUnit->id,
+            'incident_type' => 'lost',
+            'incident_date' => now()->toDateString(),
+            'severity' => 'critical',
+            'description' => 'One physical unit is missing.',
+        ])->assertCreated()->assertJsonPath('asset_unit_id', $selectedUnit->id);
+
+        $this->patchJson('/api/damage-reports/'.$report->json('id'), [
+            'status' => 'declared_lost',
+        ])->assertOk();
+
+        $this->assertDatabaseHas('asset_units', [
+            'id' => $selectedUnit->id,
             'status' => 'disposed',
             'condition' => 'unserviceable',
         ]);
-        $this->assertDatabaseHas('activity_logs', ['action' => 'audit_completed']);
+        $this->assertDatabaseHas('asset_units', [
+            'id' => $otherUnit->id,
+            'status' => 'available',
+            'condition' => 'good',
+        ]);
+        $this->assertDatabaseHas('assets', [
+            'id' => $asset->id,
+            'status' => 'available',
+            'available_quantity' => 1,
+        ]);
     }
 
     public function test_supply_audit_records_quantity_variance(): void

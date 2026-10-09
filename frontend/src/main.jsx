@@ -10464,6 +10464,10 @@ function MaintenancePage({ currentUser }) {
     }
   };
 
+  const availableMaintenanceUnits = assetUnits.filter(
+    (unit) => String(unit.status || "").toLowerCase() === "available",
+  );
+
   const selectMaintenanceAsset = (asset) => {
     setFormData((current) => ({ ...current, asset_id: asset.id, asset_unit_id: "" }));
     setAssetQuery(`${asset.name} · ${asset.property_number || asset.asset_id}`);
@@ -10497,6 +10501,23 @@ function MaintenancePage({ currentUser }) {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setError(null);
+    if (assetUnitsLoading) {
+      setError("Wait for the physical units to finish loading before scheduling maintenance.");
+      return;
+    }
+    if (assetUnitsError) {
+      setError(assetUnitsError);
+      return;
+    }
+    if (
+      assetUnits.length > 0 &&
+      !availableMaintenanceUnits.some((unit) => String(unit.id) === String(formData.asset_unit_id))
+    ) {
+      setError("Select an available physical unit to schedule maintenance.");
+      return;
+    }
+
     try {
       await pcmsApi.createMaintenanceRecord(formData);
       setSuccess("Maintenance record created successfully");
@@ -10664,11 +10685,7 @@ function MaintenancePage({ currentUser }) {
                           }}
                           onMouseDown={(ev) => {
                             ev.preventDefault();
-                            setFormData({ ...formData, asset_id: a.id });
-                            setAssetQuery(
-                              `${a.name} · ${a.property_number || a.asset_id}`,
-                            );
-                            setShowAssetSuggestions(false);
+                            selectMaintenanceAsset(a);
                           }}
                         >
                           <strong style={{ display: "block" }}>{a.name}</strong>
@@ -10704,10 +10721,14 @@ function MaintenancePage({ currentUser }) {
                 }
                 disabled={!formData.asset_id || assetUnitsLoading}
               >
-                <option value="">All physical units</option>
-                {assetUnits.map((unit) => (
+                {assetUnits.length === 0 ? (
+                  <option value="">Asset-level maintenance (no tracked units)</option>
+                ) : (
+                  <option value="">Select an available physical unit</option>
+                )}
+                {availableMaintenanceUnits.map((unit) => (
                   <option key={unit.id} value={unit.id}>
-                    {unit.unit_code || `Unit ${unit.id}`} · {unit.status || "available"}
+                    {unit.unit_code || `Unit ${unit.id}`}
                   </option>
                 ))}
               </select>
@@ -10716,9 +10737,11 @@ function MaintenancePage({ currentUser }) {
                   ? "Loading physical units..."
                   : assetUnitsError
                     ? assetUnitsError
-                  : assetUnits.length > 0
-                    ? "Choose one unit or leave this as All physical units."
-                    : "No individually tracked units; this schedule applies to the asset."}
+                    : assetUnits.length === 0
+                      ? "No individually tracked units; this schedule applies to the asset."
+                      : availableMaintenanceUnits.length > 0
+                        ? "Select one available unit. Other units will not be affected."
+                        : "This asset has no available physical units to schedule."}
               </small>
             </div>
             )}
@@ -10974,6 +10997,7 @@ function DamagePage() {
   const [showAssetSuggestions, setShowAssetSuggestions] = useState(false);
   const [assetUnits, setAssetUnits] = useState([]);
   const [assetUnitsLoading, setAssetUnitsLoading] = useState(false);
+  const [assetUnitsError, setAssetUnitsError] = useState("");
   const [selectedReport, setSelectedReport] = useState(null);
   const [pendingStatusAction, setPendingStatusAction] = useState(null);
   const [damageScannerOpen, setDamageScannerOpen] = useState(false);
@@ -11098,11 +11122,14 @@ function DamagePage() {
     setFormData((current) => ({ ...current, asset_id: asset.id, asset_unit_id: "" }));
     setAssetSearch(`${asset.name} · ${asset.property_number || asset.asset_id}`);
     setShowAssetSuggestions(false);
+    setAssetUnits([]);
+    setAssetUnitsError("");
     setAssetUnitsLoading(true);
     try {
       setAssetUnits(await pcmsApi.assetUnits(asset.id));
-    } catch {
+    } catch (error) {
       setAssetUnits([]);
+      setAssetUnitsError(error?.message || "Unable to load physical units for this asset.");
     } finally {
       setAssetUnitsLoading(false);
     }
@@ -11132,10 +11159,6 @@ function DamagePage() {
       setDamageScannerError(error?.message || "Unable to resolve the scanned asset.");
     }
   };
-
-  const selectedDamageAsset = assets.find(
-    (asset) => String(asset.id) === String(formData.asset_id),
-  );
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -11398,7 +11421,6 @@ function DamagePage() {
                     </ul>
                   )}
                 </div>
-                {Number(selectedDamageAsset?.quantity || 1) > 1 && (
                 <div className="field-row damage-field damage-field-wide">
                   <label>Physical Unit</label>
                   <select
@@ -11418,12 +11440,13 @@ function DamagePage() {
                   <small>
                     {assetUnitsLoading
                       ? "Loading physical units..."
+                      : assetUnitsError
+                        ? assetUnitsError
                       : assetUnits.length > 0
-                        ? "Choose one unit or leave this as All physical units."
-                        : "No individually tracked units; this report applies to the asset."}
+                        ? "Choose a unit to report an issue for one physical item."
+                          : "No individually tracked units; this report applies to the asset."}
                   </small>
                 </div>
-                )}
                 <div className="field-row damage-field damage-field-wide">
                   <label>Evidence photo <span className="field-optional">Optional</span></label>
                   <div className="damage-upload-row">

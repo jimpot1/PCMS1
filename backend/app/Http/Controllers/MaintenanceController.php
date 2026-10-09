@@ -53,7 +53,12 @@ class MaintenanceController extends Controller
             if (! $assetUnit) {
                 return response()->json(['message' => 'The selected physical unit does not belong to the selected asset.'], 422);
             }
+            if ($assetUnit->status !== 'available') {
+                return response()->json(['message' => 'Maintenance can only be scheduled for an available physical unit.'], 422);
+            }
             $validated['asset_unit_id'] = $assetUnit->id;
+        } elseif (AssetUnit::where('asset_id', $asset->id)->exists()) {
+            return response()->json(['message' => 'Select an available physical unit to schedule maintenance for this asset.'], 422);
         }
         if (in_array($asset->status, ['lost', 'unserviceable', 'disposed'], true)) {
             return response()->json(['message' => 'Maintenance cannot be scheduled for a lost, unserviceable, or disposed asset.'], 422);
@@ -61,6 +66,11 @@ class MaintenanceController extends Controller
 
         $duplicate = MaintenanceRecord::query()
             ->where('asset_id', $asset->id)
+            ->when(
+                $validated['asset_unit_id'] ?? null,
+                fn ($query, $unitId) => $query->where('asset_unit_id', $unitId),
+                fn ($query) => $query->whereNull('asset_unit_id'),
+            )
             ->where('type', $validated['type'])
             ->whereIn('status', ['scheduled', 'in_progress'])
             ->when($validated['scheduled_at'] ?? null, fn ($query, $date) => $query->whereDate('scheduled_at', $date))

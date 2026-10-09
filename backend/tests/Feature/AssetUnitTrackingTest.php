@@ -88,6 +88,119 @@ class AssetUnitTrackingTest extends TestCase
         $response->assertJsonPath('data.0.unit_code', 'UNIT-002');
     }
 
+    public function test_asset_units_endpoint_backfills_available_units_for_legacy_assets(): void
+    {
+        $staff = \App\Models\User::create([
+            'id' => (string) \Illuminate\Support\Str::uuid(),
+            'employee_id' => 'EMP-LEGACY-UNITS',
+            'first_name' => 'Asset',
+            'last_name' => 'Staff',
+            'full_name' => 'Asset Staff',
+            'email' => 'asset.legacy.units@example.test',
+            'password_hash' => bcrypt('secret'),
+            'role' => 'PPMO Staff',
+            'status' => 'active',
+        ]);
+        $asset = Asset::create([
+            'asset_id' => 'AST-LEGACY-UNITS',
+            'property_number' => 'PROP-LEGACY-UNITS',
+            'name' => 'Legacy Asset Without Unit Records',
+            'quantity' => 3,
+            'available_quantity' => 2,
+            'condition' => 'good',
+            'status' => 'available',
+        ]);
+        $this->actingAs($staff);
+
+        $this->getJson('/api/assets/'.$asset->id.'/units')
+            ->assertOk()
+            ->assertJsonCount(2, 'data')
+            ->assertJsonPath('data.0.status', 'available')
+            ->assertJsonPath('data.1.status', 'available');
+
+        $this->assertSame(2, AssetUnit::where('asset_id', $asset->id)->where('status', 'available')->count());
+    }
+
+    public function test_asset_unit_endpoint_creates_a_unit_and_updates_inventory_totals(): void
+    {
+        $staff = \App\Models\User::create([
+            'id' => (string) \Illuminate\Support\Str::uuid(),
+            'employee_id' => 'EMP-ADD-UNIT',
+            'first_name' => 'Asset',
+            'last_name' => 'Staff',
+            'full_name' => 'Asset Staff',
+            'email' => 'asset.add.unit@example.test',
+            'password_hash' => bcrypt('secret'),
+            'role' => 'PPMO Staff',
+            'status' => 'active',
+        ]);
+        $asset = Asset::create([
+            'asset_id' => 'AST-ADD-UNIT',
+            'property_number' => 'PROP-ADD-UNIT',
+            'name' => 'Unit Add Test Asset',
+            'quantity' => 1,
+            'available_quantity' => 1,
+            'condition' => 'good',
+            'status' => 'available',
+        ]);
+        $this->actingAs($staff);
+
+        $response = $this->postJson('/api/assets/'.$asset->id.'/units', [])
+            ->assertCreated()
+            ->assertJsonPath('unit_code', 'AST-ADD-UNIT-001')
+            ->assertJsonPath('status', 'available');
+
+        $this->assertDatabaseHas('assets', [
+            'id' => $asset->id,
+            'quantity' => 1,
+            'available_quantity' => 1,
+        ]);
+        $this->assertSame(1, AssetUnit::where('asset_id', $asset->id)->count());
+        $this->assertNotEmpty($response->json('qr_code_path'));
+    }
+
+    public function test_adding_a_unit_when_existing_quantity_is_tracked_increases_asset_quantity(): void
+    {
+        $staff = \App\Models\User::create([
+            'id' => (string) \Illuminate\Support\Str::uuid(),
+            'employee_id' => 'EMP-ADD-UNIT-2',
+            'first_name' => 'Asset',
+            'last_name' => 'Staff',
+            'full_name' => 'Asset Staff Two',
+            'email' => 'asset.add.unit.two@example.test',
+            'password_hash' => bcrypt('secret'),
+            'role' => 'PPMO Staff',
+            'status' => 'active',
+        ]);
+        $asset = Asset::create([
+            'asset_id' => 'AST-ADD-UNIT-2',
+            'property_number' => 'PROP-ADD-UNIT-2',
+            'name' => 'Tracked Unit Add Test Asset',
+            'quantity' => 1,
+            'available_quantity' => 1,
+            'condition' => 'good',
+            'status' => 'available',
+        ]);
+        AssetUnit::create([
+            'asset_id' => $asset->id,
+            'unit_code' => 'AST-ADD-UNIT-2-001',
+            'status' => 'available',
+            'condition' => 'good',
+        ]);
+        $this->actingAs($staff);
+
+        $this->postJson('/api/assets/'.$asset->id.'/units', [])
+            ->assertCreated()
+            ->assertJsonPath('unit_code', 'AST-ADD-UNIT-2-002');
+
+        $this->assertDatabaseHas('assets', [
+            'id' => $asset->id,
+            'quantity' => 2,
+            'available_quantity' => 2,
+        ]);
+        $this->assertSame(2, AssetUnit::where('asset_id', $asset->id)->where('status', 'available')->count());
+    }
+
     public function test_increasing_asset_quantity_adds_available_physical_units(): void
     {
         $staff = \App\Models\User::create([

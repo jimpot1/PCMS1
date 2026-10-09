@@ -6,6 +6,7 @@ use App\Models\Asset;
 use App\Models\AssetUnit;
 use App\Models\AssetUnitMovement;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
+use Illuminate\Support\Facades\DB;
 
 class AssetUnitService
 {
@@ -35,6 +36,37 @@ class AssetUnitService
             }
         }
 
+        $this->createMissingUnits($asset, $activeCount, $lastSequence, $target);
+    }
+
+    public function ensureTrackedUnits(Asset $asset): void
+    {
+        DB::transaction(function () use ($asset): void {
+            $asset = Asset::query()->lockForUpdate()->findOrFail($asset->id);
+            $units = AssetUnit::where('asset_id', $asset->id)->get(['id', 'status', 'unit_code']);
+            $activeCount = $units->where('status', '!=', 'removed')->count();
+            $targetAvailable = $asset->status === 'available'
+                ? min(
+                    (int) ($asset->quantity ?? 0),
+                    (int) ($asset->available_quantity ?? $asset->quantity ?? 0),
+                )
+                : 0;
+            $availableCount = $units->where('status', 'available')->count();
+            $target = $activeCount + max(0, $targetAvailable - $availableCount);
+            $lastSequence = $units->reduce(function (int $highest, AssetUnit $unit): int {
+                if (preg_match('/-(\d+)$/', (string) $unit->unit_code, $matches) !== 1) {
+                    return $highest;
+                }
+
+                return max($highest, (int) $matches[1]);
+            }, 0);
+
+            $this->createMissingUnits($asset, $activeCount, $lastSequence, $target);
+        });
+    }
+
+    private function createMissingUnits(Asset $asset, int $activeCount, int $lastSequence, int $target): void
+    {
         for ($sequence = $lastSequence + 1; $activeCount < $target; $sequence++, $activeCount++) {
             $unit = AssetUnit::create([
                 'asset_id' => $asset->id,

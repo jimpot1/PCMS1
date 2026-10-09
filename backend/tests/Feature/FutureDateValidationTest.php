@@ -144,6 +144,68 @@ class FutureDateValidationTest extends TestCase
         $this->assertSame($user->id, $response->getData(true)['data']['holder_id']);
     }
 
+    public function test_maintenance_schedules_only_the_selected_available_unit(): void
+    {
+        $user = $this->makeUser('PPMO Staff');
+        $department = $this->makeDepartment('MAINTENANCE-UNITS');
+        $asset = $this->makeAsset($department, 'MAINTENANCE-UNITS');
+        $asset->update(['quantity' => 2, 'available_quantity' => 2]);
+        $selectedUnit = AssetUnit::create([
+            'asset_id' => $asset->id,
+            'unit_code' => 'UNIT-MAINTENANCE-001',
+            'status' => 'available',
+            'condition' => 'good',
+        ]);
+        $otherUnit = AssetUnit::create([
+            'asset_id' => $asset->id,
+            'unit_code' => 'UNIT-MAINTENANCE-002',
+            'status' => 'available',
+            'condition' => 'good',
+        ]);
+
+        $response = (new MaintenanceController())->store($this->request($user, [
+            'asset_id' => $asset->id,
+            'asset_unit_id' => $selectedUnit->id,
+            'type' => 'preventive',
+            'priority' => 'medium',
+            'scheduled_at' => now()->addDay()->toDateString(),
+            'notes' => 'Service the selected unit.',
+        ]));
+
+        $this->assertSame(201, $response->getStatusCode());
+        $this->assertSame($selectedUnit->id, $response->getData(true)['asset_unit_id']);
+        $this->assertSame('maintenance', $selectedUnit->fresh()->status);
+        $this->assertSame('available', $otherUnit->fresh()->status);
+        $this->assertSame(1, $asset->fresh()->available_quantity);
+    }
+
+    public function test_maintenance_requires_a_unit_when_the_asset_has_tracked_units(): void
+    {
+        $user = $this->makeUser('PPMO Staff');
+        $department = $this->makeDepartment('MAINTENANCE-REQUIRED-UNIT');
+        $asset = $this->makeAsset($department, 'MAINTENANCE-REQUIRED-UNIT');
+        AssetUnit::create([
+            'asset_id' => $asset->id,
+            'unit_code' => 'UNIT-MAINTENANCE-REQUIRED-001',
+            'status' => 'available',
+            'condition' => 'good',
+        ]);
+
+        $response = (new MaintenanceController())->store($this->request($user, [
+            'asset_id' => $asset->id,
+            'type' => 'preventive',
+            'priority' => 'medium',
+            'scheduled_at' => now()->addDay()->toDateString(),
+        ]));
+
+        $this->assertSame(422, $response->getStatusCode());
+        $this->assertDatabaseCount('maintenance_records', 0);
+        $this->assertDatabaseHas('asset_units', [
+            'asset_id' => $asset->id,
+            'status' => 'available',
+        ]);
+    }
+
     public function test_gate_passes_are_tracked_per_physical_unit(): void
     {
         $user = $this->makeUser('PPMO Staff');

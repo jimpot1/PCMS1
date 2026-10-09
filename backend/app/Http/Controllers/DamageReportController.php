@@ -142,11 +142,24 @@ class DamageReportController extends Controller
             }
 
             if ($units->isNotEmpty()) {
-                $this->syncAssetFromUnits($report->asset, $report->status === 'repaired' ? 'available' : $report->status);
+                $this->syncAssetFromUnits($report->asset, match ($report->status) {
+                    'repaired' => 'available',
+                    'declared_lost' => 'lost',
+                    'declared_unserviceable' => 'unserviceable',
+                    default => 'disposed',
+                });
             }
         }
 
-        if ($oldStatus !== $report->status) {
+        if ($oldStatus !== $report->status && $report->asset_unit_id && $report->status === 'under_repair') {
+            AssetUnit::whereKey($report->asset_unit_id)->update([
+                'status' => 'maintenance',
+                'condition' => 'needs_repair',
+            ]);
+            $this->syncAssetFromUnits($report->asset, 'maintenance');
+        }
+
+        if ($oldStatus !== $report->status && ! $report->asset_unit_id) {
             $asset = Asset::find($report->asset_id);
             $assetUpdates = match ($report->status) {
                 'under_repair' => ['status' => 'maintenance', 'condition' => 'needs_repair', 'available_quantity' => 0],
@@ -208,13 +221,17 @@ class DamageReportController extends Controller
 
     protected function syncAssetFromUnits(Asset $asset, ?string $fallbackStatus = null): void
     {
-        $available = AssetUnit::where('asset_id', $asset->id)
-            ->where('status', 'available')
-            ->count();
+        $units = AssetUnit::where('asset_id', $asset->id);
+        $available = (clone $units)->where('status', 'available')->count();
+        $total = (clone $units)->count();
 
         $asset->update([
             'available_quantity' => $available,
-            'status' => $available > 0 ? 'available' : ($fallbackStatus ?: 'damaged'),
+            'status' => $available > 0
+                ? 'available'
+                : ($total > 0 && (clone $units)->whereNotIn('status', ['disposed'])->exists()
+                    ? ($fallbackStatus ?: 'damaged')
+                    : ($fallbackStatus ?: 'disposed')),
         ]);
     }
 
