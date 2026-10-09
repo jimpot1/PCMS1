@@ -24,7 +24,7 @@ use Illuminate\Support\Facades\Route;
 
 Route::get('/purchase-requests/{purchaseRequest}/receipt/view', [PurchaseRequestController::class, 'receiptDocument']);
 
-Route::middleware(['web', 'auth:sanctum', 'delete.admin'])->group(function () {
+Route::middleware(['web', 'auth:sanctum', 'active.account', 'delete.admin'])->group(function () {
     Route::get('/dashboard', DashboardController::class);
     Route::get('/ppmo/metrics', [DashboardController::class, 'ppmoMetrics'])->middleware('role:PPMO Staff,Property Custodian,OIC');
     Route::get('/notifications', [NotificationController::class, 'index']);
@@ -83,6 +83,8 @@ Route::middleware(['web', 'auth:sanctum', 'delete.admin'])->group(function () {
     Route::post('/stock-movements', [StockMovementController::class, 'store'])->middleware('role:PPMO Staff,System Administrator');
     Route::get('/stock-movements', [StockMovementController::class, 'index']);
     Route::get('/stock-movements/{movement}', [StockMovementController::class, 'show']);
+    Route::get('/supply-history', [StockMovementController::class, 'supplyHistory'])
+        ->middleware('role:System Administrator,PPMO Staff,Property Custodian,OIC');
     Route::get('/supply-requests/queue', [PurchaseRequestController::class, 'supplyQueue'])->middleware('role:System Administrator,PPMO Staff,Property Custodian,OIC');
     Route::get('/purchase-requests/asset-assignment-queue', [PurchaseRequestController::class, 'assetAssignmentQueue'])->middleware('role:System Administrator,PPMO Staff,Property Custodian,OIC');
     Route::apiResource('purchase-requests', PurchaseRequestController::class);
@@ -133,6 +135,8 @@ Route::middleware(['web', 'auth:sanctum', 'delete.admin'])->group(function () {
     Route::patch('/assignments/{id}/cancel', [\App\Http\Controllers\AssetAssignmentController::class, 'cancel']);
     Route::patch('/assignments/{id}/return', [\App\Http\Controllers\AssetAssignmentController::class, 'returnAssignment']);
     Route::apiResource('assignments', \App\Http\Controllers\AssetAssignmentController::class);
+    Route::post('/users/verify-action-password', [UserController::class, 'verifyActionPassword'])
+        ->middleware(['role:System Administrator', 'throttle:6,1']);
     Route::apiResource('users', UserController::class)->middleware('role:System Administrator');
     Route::get('/system-settings', [SystemSettingController::class, 'index'])->middleware('role:System Administrator');
     Route::patch('/system-settings', [SystemSettingController::class, 'update'])->middleware('role:System Administrator');

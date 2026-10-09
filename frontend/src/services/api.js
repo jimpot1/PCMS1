@@ -527,6 +527,18 @@ export async function fetchStockMovements({
   return response?.data || [];
 }
 
+export async function fetchSupplyHistory({
+  department_id,
+  limit = 100,
+} = {}) {
+  const params = new URLSearchParams({
+    department_id: String(department_id || ""),
+    per_page: String(limit),
+  });
+  const response = await request(`/supply-history?${params.toString()}`);
+  return response?.data || [];
+}
+
 export async function fetchTransfers({
   limit = 200,
   search = "",
@@ -579,10 +591,10 @@ export async function createTransfer(payload) {
   });
 }
 
-export async function approveTransfer(id) {
+export async function approveTransfer(id, notes = "", toCustodianId = "") {
   return request(`/transfers/${id}/approve`, {
     method: "PATCH",
-    body: JSON.stringify({}),
+    body: JSON.stringify({ notes, to_custodian_id: toCustodianId || null }),
   });
 }
 
@@ -789,6 +801,7 @@ export async function deleteAudit(id) {
 export async function scanAuditAsset(auditId, payload) {
   const record = {
     asset_id: payload.asset_id,
+    asset_unit_id: payload.asset_unit_id || null,
     found_department_id: payload.found_department_id,
   };
 
@@ -997,6 +1010,7 @@ export async function fetchGatePasses({ limit = 200 } = {}) {
 export async function createGatePass(payload) {
   const record = {
     asset_id: payload.asset_id,
+    asset_unit_id: payload.asset_unit_id,
     purpose: payload.purpose,
     valid_until: payload.valid_until,
   };
@@ -1307,6 +1321,17 @@ export async function createSupabaseDepartment(payload) {
   });
 }
 
+export async function updateDepartment(id, payload) {
+  return request(`/departments/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteDepartment(id) {
+  return request(`/departments/${id}`, { method: "DELETE" });
+}
+
 export async function fetchNotifications() {
   return request("/notifications");
 }
@@ -1350,6 +1375,13 @@ export async function createUser(payload) {
   });
 }
 
+export async function verifyUserActionPassword(password) {
+  return request("/users/verify-action-password", {
+    method: "POST",
+    body: JSON.stringify({ password }),
+  });
+}
+
 export async function updateUser(id, payload) {
   return request(`/users/${id}`, {
     method: "PATCH",
@@ -1370,6 +1402,8 @@ export const pcmsApi = {
   assets: (opts) => fetchBackendAssets(opts),
   departments: () => fetchSupabaseDepartments(),
   createDepartment: (payload) => createSupabaseDepartment(payload),
+  updateDepartment: (id, payload) => updateDepartment(id, payload),
+  deleteDepartment: (id) => deleteDepartment(id),
   markAllNotificationsRead: () => markAllNotificationsRead(),
   markNotificationRead: (source, id) => markNotificationRead(source, id),
   asset: (id) => fetchBackendAsset(id),
@@ -1405,12 +1439,14 @@ export const pcmsApi = {
   recordStockMovement: (payload) => recordStockMovement(payload),
   fetchStockMovements: (opts) => fetchStockMovements(opts),
   stockMovements: (opts) => fetchStockMovements(opts),
+  fetchSupplyHistory: (opts) => fetchSupplyHistory(opts),
   fetchTransfers: (opts) => fetchTransfers(opts),
   transfers: (opts) => fetchTransfers(opts),
   transfer: (id) => fetchTransfer(id),
   transferRecommendations: (payload) => fetchTransferRecommendations(payload),
   createTransfer: (payload) => createTransfer(payload),
-  approveTransfer: (id) => approveTransfer(id),
+  approveTransfer: (id, notes, toCustodianId) =>
+    approveTransfer(id, notes, toCustodianId),
   rejectTransfer: (id, reason) => rejectTransfer(id, reason),
   holdTransfer: (id, reason) => holdTransfer(id, reason),
   requestTransferRevision: (id, reason) => requestTransferRevision(id, reason),
@@ -1515,6 +1551,7 @@ export const pcmsApi = {
   fetchUsers: (opts) => fetchUsers(opts),
   users: (opts) => fetchUsers(opts),
   createUser: (payload) => createUser(payload),
+  verifyUserActionPassword: (password) => verifyUserActionPassword(password),
   updateUser: (id, payload) => updateUser(id, payload),
   deactivateUser: (id) => deactivateUser(id),
   systemSettings: () => fetchSystemSettings(),

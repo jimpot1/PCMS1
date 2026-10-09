@@ -24,7 +24,6 @@ export default function ApprovedReleaseQueue() {
   const [error, setError] = useState(null);
   const [stockError, setStockError] = useState(null);
   const [message, setMessage] = useState(null);
-  const [notes, setNotes] = useState({});
   const [processingId, setProcessingId] = useState(null);
   const [confirmTarget, setConfirmTarget] = useState(null);
   const [viewTarget, setViewTarget] = useState(null);
@@ -65,7 +64,6 @@ export default function ApprovedReleaseQueue() {
     try {
       const response = await pcmsApi.verifyWalkInApproval(item.id, {
         decision,
-        verification_notes: notes[item.id] || undefined,
       });
       setMessage(response?.message || 'Walk-in approval verification updated.');
       await loadQueue();
@@ -177,12 +175,6 @@ export default function ApprovedReleaseQueue() {
                                 Click <strong>Edit</strong> to upload the approved request form before this can be verified.
                               </p>
                             )}
-                            <input
-                              value={notes[item.id] || ''}
-                              onChange={(event) => setNotes((current) => ({ ...current, [item.id]: event.target.value }))}
-                              placeholder="Verification notes"
-                              disabled={!item.approval_document_path}
-                            />
                             <div>
                               <button
                                 className="staff-action-button success"

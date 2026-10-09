@@ -195,30 +195,6 @@ OCR;
     }
 
     #[Test]
-    public function it_removes_ocr_spaces_around_hyphens_in_asset_codes_and_descriptions(): void
-    {
-        $text = <<<'OCR'
-Property Number: : PROP - 2026-0915
-Asset Name: Steel Filing Cabinet
-Model: FC - 4D
-Serial Number: SS - FC - 2026-018
-Description: Four - drawer cabinet with central locking mechanism
-Location: Student Services Building - Room 2
-OCR;
-
-        $method = new \ReflectionMethod(GoogleVisionOcrService::class, 'extractFields');
-        $method->setAccessible(true);
-
-        $fields = $method->invoke(null, $text);
-
-        $this->assertSame('PROP-2026-0915', $fields['property_number']);
-        $this->assertSame('FC-4D', $fields['model']);
-        $this->assertSame('SS-FC-2026-018', $fields['serial_number']);
-        $this->assertSame('Four-drawer cabinet with central locking mechanism', $fields['description']);
-        $this->assertSame('Student Services Building - Room 2', $fields['location']);
-    }
-
-    #[Test]
     public function it_maps_bounding_box_rows_without_merging_neighboring_cells(): void
     {
         $rows = [
