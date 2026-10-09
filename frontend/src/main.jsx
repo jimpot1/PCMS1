@@ -16613,6 +16613,12 @@ function UsersPage() {
   const [editSaving, setEditSaving] = useState(false);
   const [showEditPassword, setShowEditPassword] = useState(false);
   const [showEditPasswordConfirm, setShowEditPasswordConfirm] = useState(false);
+  const [showActionPasswordDialog, setShowActionPasswordDialog] = useState(false);
+  const [actionPassword, setActionPassword] = useState("");
+  const [actionPasswordError, setActionPasswordError] = useState("");
+  const [actionPasswordDescription, setActionPasswordDescription] = useState("");
+  const [isVerifyingActionPassword, setIsVerifyingActionPassword] = useState(false);
+  const pendingUserActionRef = useRef(null);
 
   useEffect(() => {
     loadUsers();
@@ -16642,6 +16648,40 @@ function UsersPage() {
     setUsers(usersResponse || []);
     setDepartmentsList(departmentsResponse || []);
   }, { enabled: !showInviteForm && !editingUser });
+
+  const requestActionPassword = (action, description) => {
+    pendingUserActionRef.current = action;
+    setActionPasswordDescription(description);
+    setActionPassword("");
+    setActionPasswordError("");
+    setShowActionPasswordDialog(true);
+  };
+
+  const cancelActionPassword = () => {
+    pendingUserActionRef.current = null;
+    setShowActionPasswordDialog(false);
+    setActionPassword("");
+    setActionPasswordError("");
+    setActionPasswordDescription("");
+  };
+
+  const handleActionPasswordSubmit = async (event) => {
+    event.preventDefault();
+    setActionPasswordError("");
+    setIsVerifyingActionPassword(true);
+
+    try {
+      await pcmsApi.verifyUserActionPassword(actionPassword);
+      const action = pendingUserActionRef.current;
+      cancelActionPassword();
+      await action?.();
+    } catch (err) {
+      setActionPasswordError(err?.message || "Unable to verify your password.");
+      setActionPassword("");
+    } finally {
+      setIsVerifyingActionPassword(false);
+    }
+  };
 
   const handleInvite = async (e) => {
     e.preventDefault();
@@ -16683,23 +16723,27 @@ function UsersPage() {
   };
 
   const handleDeactivate = async (user) => {
-    try {
-      await pcmsApi.deactivateUser(user.id);
-      setSuccess(`${user.full_name} was deactivated.`);
-      loadUsers();
-    } catch (err) {
-      setError(err?.message || "Failed to deactivate user.");
-    }
+    requestActionPassword(async () => {
+      try {
+        await pcmsApi.deactivateUser(user.id);
+        setSuccess(`${user.full_name} was deactivated.`);
+        loadUsers();
+      } catch (err) {
+        setError(err?.message || "Failed to deactivate user.");
+      }
+    }, `Confirm your password to deactivate ${user.full_name}.`);
   };
 
   const handleReactivate = async (user) => {
-    try {
-      await pcmsApi.updateUser(user.id, { status: "active" });
-      setSuccess(`${user.full_name} was reactivated.`);
-      loadUsers();
-    } catch (err) {
-      setError(err?.message || "Failed to reactivate user.");
-    }
+    requestActionPassword(async () => {
+      try {
+        await pcmsApi.updateUser(user.id, { status: "active" });
+        setSuccess(`${user.full_name} was reactivated.`);
+        loadUsers();
+      } catch (err) {
+        setError(err?.message || "Failed to reactivate user.");
+      }
+    }, `Confirm your password to reactivate ${user.full_name}.`);
   };
 
   const editPasswordRules = getPasswordRequirements(editFormData.password, editFormData.password_confirmation || "");
@@ -16714,20 +16758,22 @@ function UsersPage() {
     : users;
 
   const openEditDialog = (user) => {
-    setError(null);
-    setSuccess(null);
-    setEditingUser(user);
-    setShowEditPassword(false);
-    setEditFormData({
-      first_name: user.first_name || "",
-      middle_name: user.middle_name || "",
-      last_name: user.last_name || "",
-      email: user.email || "",
-      password: "",
-      password_confirmation: "",
-      role: normalizeManagedUserRole(user.role),
-      department: user.department || "",
-    });
+    requestActionPassword(() => {
+      setError(null);
+      setSuccess(null);
+      setEditingUser(user);
+      setShowEditPassword(false);
+      setEditFormData({
+        first_name: user.first_name || "",
+        middle_name: user.middle_name || "",
+        last_name: user.last_name || "",
+        email: user.email || "",
+        password: "",
+        password_confirmation: "",
+        role: normalizeManagedUserRole(user.role),
+        department: user.department || "",
+      });
+    }, `Confirm your password to edit ${user.full_name}.`);
   };
 
   const handleEditSubmit = async (e) => {
@@ -16759,19 +16805,87 @@ function UsersPage() {
     }
   };
 
+  const toggleInviteForm = () => {
+    if (showInviteForm) {
+      setShowInviteForm(false);
+      return;
+    }
+
+    requestActionPassword(
+      () => setShowInviteForm(true),
+      "Confirm your password to open the Invite User form.",
+    );
+  };
+
   return (
     <ModulePage
       title="User Management"
       subtitle="PCMS accounts, roles, and protected route permissions."
       primary="Invite User"
       icon={Users}
-      onPrimary={() => setShowInviteForm((v) => !v)}
+      onPrimary={toggleInviteForm}
     >
       {error && <div className="form-message error">{error}</div>}
       <SuccessModal message={success} />
       <SuccessModal
         message={temporaryPassword ? `Temporary password: ${temporaryPassword}. Share this with the user; they should change it after first login.` : null}
       />
+      {showActionPasswordDialog && (
+        <div
+          className="modal-overlay user-action-password-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="verify-user-action-password-title"
+        >
+          <form
+            className="modal-card user-form-modal user-form-modal--compact user-action-password-form"
+            onSubmit={handleActionPasswordSubmit}
+          >
+            <div className="modal-header">
+              <div>
+                <h3 id="verify-user-action-password-title">Verify your password</h3>
+                <p className="modal-subtitle">
+                  {actionPasswordDescription || "Confirm your account password to continue."}
+                </p>
+              </div>
+            </div>
+            {actionPasswordError && (
+              <div className="form-message error" role="alert">
+                {actionPasswordError}
+              </div>
+            )}
+            <label>
+              Password
+              <input
+                type="password"
+                value={actionPassword}
+                onChange={(event) => setActionPassword(event.target.value)}
+                autoComplete="current-password"
+                required
+                autoFocus
+              />
+            </label>
+            <div className="modal-actions">
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={cancelActionPassword}
+                disabled={isVerifyingActionPassword}
+              >
+                Cancel
+              </button>
+              <button
+                className="primary-button"
+                type="submit"
+                disabled={isVerifyingActionPassword || !actionPassword}
+              >
+                <LockKeyhole size={16} />
+                {isVerifyingActionPassword ? "Verifying…" : "Verify"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
 
       {showInviteForm && (
         <div

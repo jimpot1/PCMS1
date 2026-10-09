@@ -5760,6 +5760,74 @@ td span:not(.status):not(.risk) {
   z-index: 50;
   overflow: auto;
 }
+.user-action-password-overlay {
+  z-index: 60;
+}
+.modal-overlay.user-action-password-overlay > .modal-card.user-action-password-form {
+  width: min(380px, calc(100vw - 32px));
+  max-width: 380px;
+  height: fit-content;
+  align-self: center;
+  gap: 0;
+  padding: 0;
+}
+.user-action-password-form .modal-header {
+  width: 100%;
+}
+.user-action-password-form > .form-message {
+  margin: 18px 28px 0;
+}
+.user-action-password-form > label {
+  display: grid;
+  gap: 8px;
+  margin: 22px 28px 24px;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 600;
+}
+.user-action-password-form > label input {
+  width: 100%;
+  min-height: 46px;
+  padding: 11px 13px;
+  border: 1px solid #dfe6ef;
+  border-radius: 11px;
+  background: #fff;
+  color: #0f172a;
+  font: inherit;
+  font-weight: 400;
+}
+.user-action-password-form > label input:focus {
+  border-color: rgba(37, 99, 235, 0.7);
+  outline: none;
+  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.12);
+}
+.user-action-password-form .modal-actions {
+  width: 100%;
+  margin: 0;
+  padding: 18px 28px 22px;
+}
+@media (max-width: 520px) {
+  .user-action-password-form {
+    width: calc(100vw - 32px);
+    max-width: 380px;
+  }
+
+  .user-action-password-form .modal-header {
+    padding: 18px 20px 16px;
+  }
+
+  .user-action-password-form > .form-message {
+    margin-inline: 20px;
+  }
+
+  .user-action-password-form > label {
+    margin-inline: 20px;
+  }
+
+  .user-action-password-form .modal-actions {
+    padding: 16px 20px 18px;
+  }
+}
 
 .modal-card {
   width: min(820px, calc(100% - 32px));

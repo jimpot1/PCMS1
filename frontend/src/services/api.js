@@ -1361,6 +1361,13 @@ export async function deactivateUser(id) {
   return request(`/users/${id}`, { method: "DELETE" });
 }
 
+export async function verifyUserActionPassword(password) {
+  return request("/users/verify-action-password", {
+    method: "POST",
+    body: JSON.stringify({ password }),
+  });
+}
+
 export const pcmsApi = {
   dashboard: () => request("/dashboard"),
   notifications: () => fetchNotifications(),
@@ -1517,6 +1524,7 @@ export const pcmsApi = {
   createUser: (payload) => createUser(payload),
   updateUser: (id, payload) => updateUser(id, payload),
   deactivateUser: (id) => deactivateUser(id),
+  verifyUserActionPassword: (password) => verifyUserActionPassword(password),
   systemSettings: () => fetchSystemSettings(),
   updateSystemSettings: (payload) => updateSystemSettings(payload),
   
