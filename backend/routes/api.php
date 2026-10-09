@@ -133,7 +133,6 @@ Route::middleware(['web', 'auth:sanctum', 'delete.admin'])->group(function () {
     Route::patch('/assignments/{id}/cancel', [\App\Http\Controllers\AssetAssignmentController::class, 'cancel']);
     Route::patch('/assignments/{id}/return', [\App\Http\Controllers\AssetAssignmentController::class, 'returnAssignment']);
     Route::apiResource('assignments', \App\Http\Controllers\AssetAssignmentController::class);
-    Route::post('/users/verify-action-password', [UserController::class, 'verifyActionPassword'])->middleware('role:System Administrator');
     Route::apiResource('users', UserController::class)->middleware('role:System Administrator');
     Route::get('/system-settings', [SystemSettingController::class, 'index'])->middleware('role:System Administrator');
     Route::patch('/system-settings', [SystemSettingController::class, 'update'])->middleware('role:System Administrator');

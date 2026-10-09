@@ -95,21 +95,6 @@ class UserController
         return response()->json($user);
     }
 
-    public function verifyActionPassword(Request $request): JsonResponse
-    {
-        $validated = $request->validate([
-            'password' => ['required', 'string'],
-        ]);
-
-        if (! Hash::check($validated['password'], $request->user()->password_hash)) {
-            return response()->json([
-                'message' => 'The password you entered is incorrect.',
-            ], 422);
-        }
-
-        return response()->json(['verified' => true]);
-    }
-
     public function update(Request $request, User $user): JsonResponse
     {
         $validated = $request->validate([
