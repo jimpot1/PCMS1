@@ -41,172 +41,6 @@ class AssetInventoryLifecycleTest extends TestCase
         ]);
     }
 
-    public function test_walk_in_requester_options_include_department_id_for_autofill(): void
-    {
-        $staff = $this->makeUser('PPMO Staff', 'Walk In Staff');
-        $department = Department::create([
-            'code' => 'WALKIN-' . Str::upper(Str::random(6)),
-            'name' => 'Information Technology',
-            'is_active' => true,
-        ]);
-        $requester = $this->makeUser('Requester', 'Walk In Requester');
-        $requester->update(['department' => ' information technology ']);
-
-        $this->actingAs($staff)
-            ->getJson('/api/purchase-requests/walk-in/requesters?search=Walk%20In%20Requester')
-            ->assertOk()
-            ->assertJsonPath('data.0.id', $requester->id)
-            ->assertJsonPath('data.0.department_id', $department->id);
-    }
-
-    public function test_walk_in_requester_options_are_empty_without_a_search_term(): void
-    {
-        $staff = $this->makeUser('PPMO Staff', 'Walk In Staff');
-        $this->makeUser('Requester', 'Walk In Requester');
-
-        $this->actingAs($staff)
-            ->getJson('/api/purchase-requests/walk-in/requesters')
-            ->assertOk()
-            ->assertExactJson(['data' => []]);
-    }
-
-    public function test_walk_in_item_search_returns_the_registered_supply_unit(): void
-    {
-        $staff = $this->makeUser('PPMO Staff', 'Walk In Staff');
-        $supply = \App\Models\Supply::create([
-            'name' => 'Bond Paper Unit Test',
-            'sku' => 'BOND-' . Str::upper(Str::random(6)),
-            'unit' => 'ream',
-            'category' => 'Paper',
-            'stock' => 25,
-            'minimum_stock' => 2,
-            'unit_price' => 100,
-        ]);
-
-        $this->actingAs($staff)
-            ->getJson('/api/purchase-requests/walk-in/item-search?search=Bond%20Paper%20Unit%20Test')
-            ->assertOk()
-            ->assertJsonPath('data.0.id', $supply->id)
-            ->assertJsonPath('data.0.unit', 'ream');
-    }
-
-    public function test_supply_history_combines_supply_creation_stock_in_and_write_off_records(): void
-    {
-        $staff = $this->makeUser('PPMO Staff', 'Supply History Staff');
-        $department = Department::create([
-            'code' => 'HISTORY-' . Str::upper(Str::random(6)),
-            'name' => 'Supply History Department',
-            'is_active' => true,
-        ]);
-        $supply = \App\Models\Supply::create([
-            'name' => 'History Paper',
-            'sku' => 'HISTORY-' . Str::upper(Str::random(6)),
-            'unit' => 'reams',
-            'category' => 'Paper',
-            'stock' => 10,
-            'minimum_stock' => 2,
-            'unit_price' => 1,
-            'department_id' => $department->id,
-        ]);
-
-        DB::table('activity_logs')->insert([
-            'action' => 'supply_created',
-            'payload' => json_encode([
-                'supply_id' => $supply->id,
-                'sku' => $supply->sku,
-                'name' => $supply->name,
-                'initial_quantity' => 10,
-                'unit' => $supply->unit,
-                'department_id' => $department->id,
-                'user_name' => $staff->full_name,
-            ]),
-            'status' => 'active',
-            'created_at' => now()->subMinutes(3),
-            'updated_at' => now()->subMinutes(3),
-        ]);
-
-        \App\Models\StockMovement::create([
-            'supply_id' => $supply->id,
-            'movement_type' => 'in',
-            'quantity' => 5,
-            'department_id' => $department->id,
-            'issued_by' => $staff->id,
-            'notes' => 'Restock delivery',
-        ]);
-        \App\Models\StockMovement::create([
-            'supply_id' => $supply->id,
-            'movement_type' => 'write_off',
-            'quantity' => 2,
-            'department_id' => $department->id,
-            'issued_by' => $staff->id,
-            'write_off_category' => 'damaged',
-            'notes' => 'Water damaged',
-        ]);
-
-        $response = $this->actingAs($staff)
-            ->getJson('/api/supply-history?department_id=' . $department->id)
-            ->assertOk()
-            ->assertJsonCount(3, 'data')
-            ->assertJsonFragment([
-                'type' => 'added',
-                'supply_name' => 'History Paper',
-                'quantity' => 10,
-            ])
-            ->assertJsonFragment([
-                'type' => 'stock_in',
-                'supply_name' => 'History Paper',
-                'quantity' => 5,
-            ])
-            ->assertJsonFragment([
-                'type' => 'write_off',
-                'supply_name' => 'History Paper',
-                'quantity' => 2,
-                'category' => 'damaged',
-            ]);
-
-        $this->assertEqualsCanonicalizing(
-            ['write_off', 'stock_in', 'added'],
-            collect($response->json('data'))->pluck('type')->all(),
-        );
-    }
-
-    public function test_physical_unit_list_includes_the_current_holder_for_gate_pass_selection(): void
-    {
-        $staff = $this->makeUser('PPMO Staff', 'Gate Pass Staff');
-        $holder = $this->makeUser('Requester', 'Current Holder');
-        $asset = Asset::create([
-            'asset_id' => 'AST-' . Str::upper(Str::random(8)),
-            'property_number' => 'PN-' . Str::upper(Str::random(8)),
-            'name' => 'Assigned Chair',
-            'quantity' => 1,
-            'available_quantity' => 0,
-            'condition' => 'good',
-            'status' => 'assigned',
-        ]);
-        $unit = \App\Models\AssetUnit::create([
-            'asset_id' => $asset->id,
-            'unit_code' => 'UNIT-' . Str::upper(Str::random(8)),
-            'status' => 'assigned',
-            'custodian_id' => $holder->id,
-            'condition' => 'good',
-        ]);
-        AssetAssignment::create([
-            'asset_id' => $asset->id,
-            'asset_unit_id' => $unit->id,
-            'assigned_to' => $holder->id,
-            'assigned_by' => $staff->id,
-            'assignment_type' => 'permanent',
-            'quantity' => 1,
-            'assigned_at' => now(),
-            'status' => 'active',
-        ]);
-
-        $this->actingAs($staff)
-            ->getJson("/api/assets/{$asset->id}/units")
-            ->assertOk()
-            ->assertJsonPath('data.0.custodian.full_name', $holder->full_name);
-    }
-
     public function test_low_stock_auto_requisition_is_disabled_by_default(): void
     {
         $this->assertFalse(\App\Http\Controllers\SystemSettingController::bool('low_stock_auto_requisition_enabled', false));
@@ -381,7 +215,6 @@ class AssetInventoryLifecycleTest extends TestCase
         $request = new \Illuminate\Http\Request([
             'has_account' => false,
             'walk_in_requester_name' => 'Walk-in Requester',
-            'walk_in_requester_contact' => 'walkin@example.test',
             'department_id' => null,
             'request_type' => 'request',
             'date_needed' => now()->addDay()->toDateString(),
@@ -404,8 +237,6 @@ class AssetInventoryLifecycleTest extends TestCase
 
         $this->assertSame('supplies_inventory_release', $purchaseRequest->workflow_destination);
         $this->assertSame('approved', $purchaseRequest->status);
-        $this->assertSame('walkin@example.test', $purchaseRequest->walk_in_requester_contact);
-        $this->assertSame('Walk-in Requester', $purchaseRequest->requested_by_name);
         $this->assertSame('supplies_inventory_release', $data['workflow_destination'] ?? $purchaseRequest->workflow_destination);
 
         $purchaseRequest->update(['status' => 'approved', 'current_stage' => 'ppmo_staff']);
@@ -417,55 +248,6 @@ class AssetInventoryLifecycleTest extends TestCase
         $this->assertSame('released', $purchaseRequest->fresh()->status);
         $this->assertSame(2, (int) $supply->fresh()->stock);
         $this->assertSame(3, (int) \App\Models\StockMovement::query()->where('supply_id', $supply->id)->where('movement_type', 'out')->sum('quantity'));
-    }
-
-    public function test_walk_in_request_saves_the_selected_requester_full_name(): void
-    {
-        $staff = $this->makeUser('PPMO Staff', 'PPMO');
-        $this->actingAs($staff);
-        $requester = $this->makeUser('Requester', 'Walk In Account');
-
-        $request = new \Illuminate\Http\Request([
-            'has_account' => true,
-            'requester_user_id' => $requester->id,
-            'request_type' => 'purchase_order',
-            'line_items' => [[
-                'type' => 'new',
-                'item' => 'Printer Paper',
-                'qty' => 1,
-            ]],
-        ]);
-        $request->setUserResolver(fn () => $staff);
-
-        app(\App\Http\Controllers\PurchaseRequestController::class)->storeWalkIn($request);
-        $purchaseRequest = \App\Models\PurchaseRequest::query()->latest('id')->firstOrFail();
-
-        $this->assertSame($requester->id, $purchaseRequest->requested_by);
-        $this->assertSame($requester->full_name, $purchaseRequest->requested_by_name);
-    }
-
-    public function test_walk_in_request_date_needed_can_be_updated_from_edit_details(): void
-    {
-        $staff = $this->makeUser('PPMO Staff', 'PPMO');
-        $this->actingAs($staff);
-        $purchaseRequest = \App\Models\PurchaseRequest::create([
-            'request_number' => 'REQ-' . Str::upper(Str::random(8)),
-            'current_stage' => 'ppmo_staff',
-            'status' => 'approved',
-            'request_type' => 'request',
-            'workflow_destination' => 'supplies_inventory_release',
-            'is_walk_in' => true,
-            'line_items' => [],
-            'timeline' => [],
-            'total_amount' => 0,
-        ]);
-        $dateNeeded = now()->addDays(3)->toDateString();
-        $request = new \Illuminate\Http\Request(['date_needed' => $dateNeeded]);
-        $request->setUserResolver(fn () => $staff);
-
-        app(PurchaseRequestController::class)->updateWalkInDetails($request, $purchaseRequest);
-
-        $this->assertSame($dateNeeded, $purchaseRequest->fresh()->date_needed->toDateString());
     }
 
     public function test_online_asset_request_routes_to_assignment_queue(): void
@@ -488,7 +270,6 @@ class AssetInventoryLifecycleTest extends TestCase
 
         $request = new \Illuminate\Http\Request([
             'department_id' => null,
-            'branch' => 'Building A - Room 2',
             'request_type' => 'request',
             'date_needed' => now()->addDay()->toDateString(),
             'purpose' => 'Office equipment issuance',
@@ -516,7 +297,6 @@ class AssetInventoryLifecycleTest extends TestCase
 
         $response->assertOk()
             ->assertJsonPath('data.0.request_number', $purchaseRequest->request_number)
-            ->assertJsonPath('data.0.branch', 'Building A - Room 2')
             ->assertJsonPath('data.0.status', 'Awaiting Assignment');
     }
 
@@ -540,7 +320,6 @@ class AssetInventoryLifecycleTest extends TestCase
         $request = new \Illuminate\Http\Request([
             'has_account' => false,
             'walk_in_requester_name' => 'Walk-in Requester',
-            'walk_in_requester_contact' => 'walkin@example.test',
             'department_id' => null,
             'request_type' => 'request',
             'date_needed' => now()->addDay()->toDateString(),
@@ -625,19 +404,13 @@ class AssetInventoryLifecycleTest extends TestCase
         $asset = Asset::create([
             'asset_id' => 'AST-' . Str::upper(Str::random(8)),
             'property_number' => 'INV-ROUTE-1002',
-            'name' => 'Tracked Physical Asset',
+            'name' => 'Untracked Physical Asset',
             'quantity' => 1,
             'available_quantity' => 1,
             'condition' => 'good',
             'status' => 'available',
             'purchase_cost' => 1000,
             'purchase_date' => now()->toDateString(),
-        ]);
-        $unit = \App\Models\AssetUnit::create([
-            'asset_id' => $asset->id,
-            'unit_code' => 'UNIT-ROUTE-1002',
-            'status' => 'available',
-            'condition' => 'good',
         ]);
         $purchaseRequest = \App\Models\PurchaseRequest::create([
             'request_number' => 'REQ-ROUTE-1002',
@@ -650,7 +423,7 @@ class AssetInventoryLifecycleTest extends TestCase
                 'source_type' => 'asset',
                 'source_id' => $asset->id,
                 'workflow_destination' => 'asset_assignment',
-                'item' => 'Tracked Physical Asset',
+                'item' => 'Untracked Physical Asset',
                 'qty' => 1,
                 'quantity' => 1,
             ]],
@@ -660,7 +433,6 @@ class AssetInventoryLifecycleTest extends TestCase
             'asset_id' => $asset->id,
             'assigned_to' => $requester->id,
             'quantity' => 1,
-            'physical_unit_ids' => [$unit->id],
             'assignment_type' => 'permanent',
             'accept_now' => true,
             'purchase_request_id' => $purchaseRequest->id,
@@ -677,143 +449,6 @@ class AssetInventoryLifecycleTest extends TestCase
 
         $this->postJson('/api/assignments', $payload)->assertStatus(422);
         $this->assertDatabaseCount('asset_assignments', 1);
-    }
-
-    public function test_requester_can_receive_another_available_unit_of_an_already_assigned_asset(): void
-    {
-        $staff = $this->makeUser('PPMO Staff', 'PPMO Staff');
-        $requester = $this->makeUser('Requester', 'Requester');
-        $asset = Asset::create([
-            'asset_id' => 'AST-' . Str::upper(Str::random(8)),
-            'property_number' => 'INV-REPEAT-' . Str::upper(Str::random(6)),
-            'name' => 'Multi-unit Tracked Asset',
-            'quantity' => 2,
-            'available_quantity' => 1,
-            'condition' => 'good',
-            'status' => 'available',
-            'purchase_cost' => 1000,
-            'purchase_date' => now()->toDateString(),
-        ]);
-        $assignedUnit = \App\Models\AssetUnit::create([
-            'asset_id' => $asset->id,
-            'unit_code' => 'UNIT-ASSIGNED-' . Str::upper(Str::random(6)),
-            'status' => 'assigned',
-            'custodian_id' => $requester->id,
-            'condition' => 'good',
-        ]);
-        $availableUnit = \App\Models\AssetUnit::create([
-            'asset_id' => $asset->id,
-            'unit_code' => 'UNIT-AVAILABLE-' . Str::upper(Str::random(6)),
-            'status' => 'available',
-            'condition' => 'good',
-        ]);
-        AssetAssignment::create([
-            'asset_id' => $asset->id,
-            'asset_unit_id' => $assignedUnit->id,
-            'assigned_to' => $requester->id,
-            'assigned_by' => $staff->id,
-            'assignment_type' => 'permanent',
-            'quantity' => 1,
-            'status' => 'active',
-        ]);
-
-        $makePurchaseRequest = function (string $requestNumber) use ($requester, $asset): \App\Models\PurchaseRequest {
-            return \App\Models\PurchaseRequest::create([
-                'request_number' => $requestNumber,
-                'requested_by' => $requester->id,
-                'current_stage' => 'ppmo_staff',
-                'status' => 'approved',
-                'request_type' => 'request',
-                'workflow_destination' => 'asset_assignment',
-                'line_items' => [[
-                    'source_type' => 'asset',
-                    'source_id' => $asset->id,
-                    'workflow_destination' => 'asset_assignment',
-                    'item' => $asset->name,
-                    'qty' => 1,
-                    'quantity' => 1,
-                ]],
-            ]);
-        };
-        $purchaseRequest = $makePurchaseRequest('REQ-REPEAT-' . Str::upper(Str::random(6)));
-        $payload = [
-            'asset_id' => $asset->id,
-            'assigned_to' => $requester->id,
-            'quantity' => 1,
-            'physical_unit_ids' => [$availableUnit->id],
-            'assignment_type' => 'permanent',
-            'accept_now' => true,
-            'purchase_request_id' => $purchaseRequest->id,
-        ];
-
-        $this->actingAs($staff)
-            ->postJson('/api/assignments', $payload)
-            ->assertCreated();
-
-        $this->assertDatabaseCount('asset_assignments', 2);
-        $this->assertDatabaseHas('asset_assignments', [
-            'asset_id' => $asset->id,
-            'asset_unit_id' => $availableUnit->id,
-            'assigned_to' => $requester->id,
-            'status' => 'active',
-        ]);
-
-        $duplicateUnitRequest = $makePurchaseRequest('REQ-REPEAT-' . Str::upper(Str::random(6)));
-        $this->postJson('/api/assignments', array_merge($payload, [
-            'physical_unit_ids' => [$assignedUnit->id],
-            'purchase_request_id' => $duplicateUnitRequest->id,
-        ]))->assertStatus(422);
-
-        $this->assertDatabaseCount('asset_assignments', 2);
-    }
-
-    public function test_asset_request_assignment_requires_registered_physical_units(): void
-    {
-        $staff = $this->makeUser('PPMO Staff', 'PPMO Staff');
-        $requester = $this->makeUser('Requester', 'Requester');
-        $asset = Asset::create([
-            'asset_id' => 'AST-' . Str::upper(Str::random(8)),
-            'property_number' => 'INV-ROUTE-1003',
-            'name' => 'Asset Without Registered Units',
-            'quantity' => 1,
-            'available_quantity' => 1,
-            'condition' => 'good',
-            'status' => 'available',
-            'purchase_cost' => 1000,
-            'purchase_date' => now()->toDateString(),
-        ]);
-        $purchaseRequest = \App\Models\PurchaseRequest::create([
-            'request_number' => 'REQ-ROUTE-1003',
-            'requested_by' => $requester->id,
-            'current_stage' => 'ppmo_staff',
-            'status' => 'approved',
-            'request_type' => 'request',
-            'workflow_destination' => 'asset_assignment',
-            'line_items' => [[
-                'source_type' => 'asset',
-                'source_id' => $asset->id,
-                'workflow_destination' => 'asset_assignment',
-                'item' => $asset->name,
-                'qty' => 1,
-                'quantity' => 1,
-            ]],
-        ]);
-
-        $this->actingAs($staff)
-            ->postJson('/api/assignments', [
-                'asset_id' => $asset->id,
-                'assigned_to' => $requester->id,
-                'quantity' => 1,
-                'assignment_type' => 'permanent',
-                'accept_now' => true,
-                'purchase_request_id' => $purchaseRequest->id,
-            ])
-            ->assertStatus(422)
-            ->assertJsonValidationErrors('physical_unit_ids');
-
-        $this->assertSame('approved', $purchaseRequest->fresh()->status);
-        $this->assertDatabaseMissing('asset_assignments', ['asset_id' => $asset->id]);
-        $this->assertSame(1, (int) $asset->fresh()->available_quantity);
     }
 
     public function test_ppmo_staff_can_update_purchase_order_for_receiving_workflow(): void

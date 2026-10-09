@@ -882,6 +882,14 @@ class GoogleVisionOcrService
             return null;
         }
 
+        if ($fieldKey === 'property_number') {
+            $value = preg_replace('/^[\s:：]+/u', '', $value) ?? $value;
+        }
+
+        if (in_array($fieldKey, ['property_number', 'model', 'serial_number', 'description'], true)) {
+            $value = preg_replace('/\s*-\s*/u', '-', $value) ?? $value;
+        }
+
         if ($fieldKey === 'serial_number') {
             $value = preg_replace('/^(?:(?:no|number)\s*)?[\s:.;#-]+/i', '', $value) ?? $value;
         }

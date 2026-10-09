@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { AlertTriangle, ArrowUpRight, ClipboardCheck, PackageCheck, RefreshCw, RotateCcw } from 'lucide-react';
+import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { AlertTriangle, ArrowUpRight, ClipboardCheck, PackageCheck, RefreshCw, RotateCcw, Truck } from 'lucide-react';
 import { pcmsApi } from '../../services/api.js';
 
 function formatDashboardDate(value) {
@@ -125,6 +125,7 @@ export default function PPMODashboard() {
     }
   }
 
+  const receivingActions = Array.isArray(metrics?.receiving_actions) ? metrics.receiving_actions : [];
   const recentOperations = Array.isArray(metrics?.recent_operations) ? metrics.recent_operations : [];
   const releaseActivity = Array.isArray(metrics?.release_activity)
     ? metrics.release_activity.map((item) => ({
@@ -134,12 +135,7 @@ export default function PPMODashboard() {
         : item.label,
     }))
     : [];
-  const weeklyActivityTotals = releaseActivity.reduce((totals, item) => ({
-    releases: totals.releases + Number(item.releases || 0),
-    returns: totals.returns + Number(item.returns || 0),
-    receiving_qc: totals.receiving_qc + Number(item.receiving_qc || 0),
-  }), { releases: 0, returns: 0, receiving_qc: 0 });
-  const weeklyActivityCount = Object.values(weeklyActivityTotals).reduce((total, value) => total + value, 0);
+  const weeklyReleaseCount = releaseActivity.reduce((total, item) => total + Number(item.releases || 0), 0);
   const overdueReturns = Number(metrics?.overdue_returns || 0);
   const returnsDue = Number(metrics?.returns_due || 0);
   const openAnomalies = Number(metrics?.open_anomaly_alerts || 0);
@@ -147,6 +143,7 @@ export default function PPMODashboard() {
 
   const cards = [
     { label: 'Ready for release', value: releaseQueue ? releaseItems.length : '—', detail: 'Approved items awaiting processing', icon: PackageCheck, tone: 'blue', route: '/ppmo/approved-release-queue' },
+    { label: 'Receiving & QC', value: metrics ? Number(metrics.receiving_action_count || 0) : '—', detail: 'Purchase orders needing receipt or QC', icon: Truck, tone: 'teal', route: '/ppmo/receive-deliveries' },
     { label: 'Returns due in 7 days', value: metrics ? returnsDue : '—', detail: `${overdueReturns} overdue`, icon: RotateCcw, tone: 'orange', route: '/ppmo/returns' },
     { label: 'Overdue returns', value: metrics ? overdueReturns : '—', detail: 'Active assignments past due', icon: ClipboardCheck, tone: 'indigo', route: '/ppmo/returns' },
     { label: 'Open anomaly alerts', value: metrics ? openAnomalies : '—', detail: 'Unresolved inventory alerts', icon: AlertTriangle, tone: 'red', route: '/ppmo/monitoring' },
@@ -225,6 +222,40 @@ export default function PPMODashboard() {
             )}
           </div>
 
+          <div className="ppmo-dashboard-action-group">
+            <div className="ppmo-dashboard-group-heading">
+              <h4>Receiving & quality control</h4>
+              <button type="button" className="ppmo-dashboard-text-link" onClick={() => navigate('/ppmo/receive-deliveries')}>View receiving</button>
+            </div>
+            {metricsError ? (
+              <div className="ppmo-dashboard-inline-error" role="alert">
+                <span>{metricsError}</span>
+                <button type="button" onClick={retry}>Retry</button>
+              </div>
+            ) : loading && !metrics ? (
+              <div className="ppmo-dashboard-empty">Loading receiving work...</div>
+            ) : receivingActions.length === 0 ? (
+              <div className="ppmo-dashboard-empty">No purchase orders are waiting for receipt or quality control.</div>
+            ) : (
+              <div className="ppmo-dashboard-action-list">
+                {receivingActions.slice(0, 4).map((item) => {
+                  const receivingState = item.qc_status && item.qc_status !== 'pending'
+                    ? `QC ${formatStage(item.qc_status)}`
+                    : item.procurement_status === 'received' ? 'QC pending' : 'Receipt pending';
+                  return (
+                    <button key={item.id} type="button" className="ppmo-dashboard-action-row" onClick={() => navigate('/ppmo/receive-deliveries')}>
+                      <span className="ppmo-dashboard-action-copy">
+                        <strong>{item.request_number || `Purchase order ${item.id}`}</strong>
+                        <small>{item.department || 'Department not assigned'} · Updated {formatDashboardDate(item.updated_at)}</small>
+                      </span>
+                      <span className="ppmo-dashboard-tag warning">{receivingState}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
           {(returnsDue > 0 || overdueReturns > 0 || openAnomalies > 0) && !metricsError && (
             <div className="ppmo-dashboard-alert-links">
               {(returnsDue > 0 || overdueReturns > 0) && (
@@ -244,10 +275,10 @@ export default function PPMODashboard() {
         <section className="staff-panel ppmo-dashboard-panel ppmo-dashboard-chart-panel">
           <div className="ppmo-dashboard-panel-header">
             <div>
-              <h3>Operational throughput</h3>
-              <p>Daily releases, returns, and receiving/QC completions over the last 7 days.</p>
+              <h3>Release activity</h3>
+              <p>Recorded purchase, supply, and gate-pass releases over the last 7 days.</p>
             </div>
-            {!metricsError && metrics && <strong className="ppmo-dashboard-chart-total">{weeklyActivityCount} total events</strong>}
+            {!metricsError && metrics && <strong className="ppmo-dashboard-chart-total">{weeklyReleaseCount} total</strong>}
           </div>
           {metricsError ? (
             <div className="ppmo-dashboard-inline-error" role="alert">
@@ -256,29 +287,20 @@ export default function PPMODashboard() {
             </div>
           ) : loading && !metrics ? (
             <div className="ppmo-dashboard-chart-skeleton" aria-label="Loading release activity" />
-          ) : weeklyActivityCount === 0 ? (
-            <div className="ppmo-dashboard-chart-empty">No operational activity recorded for this period.</div>
+          ) : weeklyReleaseCount === 0 ? (
+            <div className="ppmo-dashboard-chart-empty">No release activity recorded for this period.</div>
           ) : (
-            <>
-              <div className="ppmo-dashboard-chart-summary" aria-label="Seven-day activity totals">
-                <div><span className="release" />Releases<strong>{weeklyActivityTotals.releases}</strong></div>
-                <div><span className="returns" />Returns<strong>{weeklyActivityTotals.returns}</strong></div>
-                <div><span className="receiving" />Receiving &amp; QC<strong>{weeklyActivityTotals.receiving_qc}</strong></div>
-              </div>
-              <div className="ppmo-dashboard-chart-wrap">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={releaseActivity} margin={{ top: 12, right: 12, bottom: 0, left: -18 }}>
-                    <CartesianGrid stroke="var(--chart-grid)" strokeDasharray="3 3" vertical={false} />
-                    <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fill: 'var(--text-light)', fontSize: 11 }} />
-                    <YAxis allowDecimals={false} width={36} tickLine={false} axisLine={false} tick={{ fill: 'var(--text-light)', fontSize: 11 }} />
-                    <Tooltip />
-                    <Line type="monotone" dataKey="releases" name="Releases" stroke="#4f91e8" strokeWidth={2.5} dot={{ r: 3 }} activeDot={{ r: 5 }} />
-                    <Line type="monotone" dataKey="returns" name="Returns" stroke="#e09a3e" strokeWidth={2.5} dot={{ r: 3 }} activeDot={{ r: 5 }} />
-                    <Line type="monotone" dataKey="receiving_qc" name="Receiving & QC" stroke="#28a58e" strokeWidth={2.5} dot={{ r: 3 }} activeDot={{ r: 5 }} />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-            </>
+            <div className="ppmo-dashboard-chart-wrap">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={releaseActivity} margin={{ top: 12, right: 12, bottom: 0, left: -18 }}>
+                  <CartesianGrid stroke="var(--chart-grid)" strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="label" tickLine={false} axisLine={false} tick={{ fill: 'var(--text-light)', fontSize: 11 }} />
+                  <YAxis allowDecimals={false} width={36} tickLine={false} axisLine={false} tick={{ fill: 'var(--text-light)', fontSize: 11 }} />
+                  <Tooltip />
+                  <Area type="monotone" dataKey="releases" name="Completed releases" stroke="#4f91e8" strokeWidth={2} fill="rgba(79, 145, 232, 0.16)" />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
           )}
         </section>
       </section>
