@@ -9808,31 +9808,6 @@ body:has(.modal-overlay) {
 .asset-registry-table-wrap {
   overflow-x: auto;
 }
-.asset-registry-table-scroll {
-  max-height: min(680px, 70vh);
-  overflow-y: auto;
-}
-.asset-registry-table-scroll thead th {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-}
-.asset-register-spinner {
-  display: inline-block;
-  width: 14px;
-  height: 14px;
-  margin-right: 8px;
-  vertical-align: -2px;
-  border: 2px solid currentColor;
-  border-right-color: transparent;
-  border-radius: 50%;
-  animation: assetRegisterSpin 0.7s linear infinite;
-}
-@keyframes assetRegisterSpin {
-  to {
-    transform: rotate(360deg);
-  }
-}
 .asset-skeleton-row td {
   height: 68px;
 }

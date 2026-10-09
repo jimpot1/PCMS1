@@ -14941,16 +14941,12 @@ function OcrPage() {
   };
 
   const [fieldErrors, setFieldErrors] = useState({});
-  const [isRegisteringAsset, setIsRegisteringAsset] = useState(false);
 
   const handleSubmit = async (event) => {
     event.preventDefault();
-    if (isRegisteringAsset) return;
-
     setError("");
     setSuccessMessage("");
     setFieldErrors({});
-    setIsRegisteringAsset(true);
 
     try {
       const quantity = Number(formValues.quantity);
@@ -15025,8 +15021,6 @@ function OcrPage() {
         submitError?.message ||
         "Asset registration failed."
       );
-    } finally {
-      setIsRegisteringAsset(false);
     }
   };
 
@@ -15339,17 +15333,14 @@ function OcrPage() {
               <button
                 className="primary-button"
                 type="submit"
-                disabled={isScanning || isRegisteringAsset}
+                disabled={isScanning}
               >
-                {isRegisteringAsset && (
-                  <span className="asset-register-spinner" aria-hidden="true" />
-                )}
-                {isRegisteringAsset ? "Registering…" : "Register Asset"}
+                Register Asset
               </button>
               <button
                 className="secondary-button"
                 type="button"
-                disabled={isScanning || isRegisteringAsset}
+                disabled={isScanning}
                 onClick={clearOcrSession}
               >
                 Clear OCR Fields
@@ -18045,9 +18036,7 @@ function AssetTable({
   disabled = false,
 }) {
   return (
-    <div
-      className={`table-card asset-registry-table-wrap${assets.length > 5 ? " asset-registry-table-scroll" : ""}`}
-    >
+    <div className="table-card asset-registry-table-wrap">
       <table>
         <thead>
           <tr>
@@ -18264,6 +18253,13 @@ function AssetTable({
           )}
         </tbody>
       </table>
+      <div className="pagination">
+        <span>
+          Showing 1-{Math.min(assets.length, 50)} of {assets.length} assets
+        </span>
+        <button>Previous</button>
+        <button>Next</button>
+      </div>
     </div>
   );
 }
