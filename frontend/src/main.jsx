@@ -19743,6 +19743,12 @@ function AssetTable({
 }) {
   return (
     <div className="table-card asset-registry-table-wrap">
+      <div
+        className={`asset-registry-table-scroll${assets.length > 5 ? " has-overflow" : ""}`}
+        role="region"
+        aria-label="Asset registry table"
+        tabIndex={0}
+      >
       <table>
         <thead>
           <tr>
@@ -19964,12 +19970,6 @@ function AssetTable({
           )}
         </tbody>
       </table>
-      <div className="pagination">
-        <span>
-          Showing 1-{Math.min(assets.length, 50)} of {assets.length} assets
-        </span>
-        <button>Previous</button>
-        <button>Next</button>
       </div>
     </div>
   );

@@ -2953,6 +2953,59 @@ body.pcms-dark .return-form .modal-actions {
   border-radius: 9px;
 }
 
+.asset-registry-table-wrap {
+  overflow: hidden;
+}
+
+.asset-registry-table-scroll {
+  overflow-x: auto;
+}
+
+.asset-registry-table-scroll.has-overflow {
+  max-height: min(420px, 55dvh);
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+.asset-registry-table-scroll.has-overflow tbody td {
+  padding: 8px 10px;
+}
+
+.asset-registry-table-scroll.has-overflow tbody td:nth-child(12) .inline-actions,
+.asset-registry-table-scroll.has-overflow tbody td.actions-column .inline-actions {
+  flex-wrap: nowrap;
+  gap: 4px;
+}
+
+.asset-registry-table-scroll.has-overflow tbody td:nth-child(12),
+.asset-registry-table-scroll.has-overflow tbody td.actions-column {
+  min-width: 96px;
+}
+
+.asset-registry-table-scroll.has-overflow tbody .icon-button {
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  border-radius: 7px;
+}
+
+.asset-registry-table-scroll.has-overflow thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.asset-registry-table-scroll.has-overflow::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.asset-registry-table-scroll.has-overflow::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 999px;
+}
+
 .return-history-panel .table-card {
   max-height: min(420px, 50dvh);
   overflow: auto;

@@ -195,6 +195,25 @@ OCR;
     }
 
     #[Test]
+    public function it_cleans_ocr_spacing_around_asset_identifiers_and_description_punctuation(): void
+    {
+        $text = <<<'OCR'
+Property Number: : PROP - 2026-0914
+Serial Number: HP - PR - 2026-033
+Description: Monochrome printing , automatic duplex , network - ready
+OCR;
+
+        $method = new \ReflectionMethod(GoogleVisionOcrService::class, 'extractFields');
+        $method->setAccessible(true);
+
+        $fields = $method->invoke(null, $text);
+
+        $this->assertSame('PROP-2026-0914', $fields['property_number']);
+        $this->assertSame('HP-PR-2026-033', $fields['serial_number']);
+        $this->assertSame('Monochrome printing, automatic duplex, network-ready', $fields['description']);
+    }
+
+    #[Test]
     public function it_maps_bounding_box_rows_without_merging_neighboring_cells(): void
     {
         $rows = [
