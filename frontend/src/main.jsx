@@ -138,6 +138,7 @@ import "./styles.css";
 import "./styles-staff.css";
 import { normalizeSupplyUnit, SUPPLY_UNIT_OPTIONS } from "./constants/supplyUnits.js";
 import {
+  clearPcmsAuthState,
   signInWithEmail,
   signOut,
   getCurrentSession,
@@ -156,6 +157,9 @@ import { TableSkeleton, ListSkeleton } from "./components/TableSkeleton.jsx";
 import ThemeToggle from "./components/ThemeToggle.jsx";
 import SuccessModal from "./components/SuccessModal.jsx";
 import { applyAuthenticatedTheme, getSavedTheme } from "./services/theme.js";
+
+const IDLE_TIMEOUT_MS = 2 * 60 * 1000;
+const LAST_ACTIVITY_KEY = "pcms_last_activity";
 
 const sidebarSections = [
   {
@@ -783,6 +787,96 @@ function App() {
     setCurrentUser(null);
     setActivePage("dashboard");
   };
+
+  useEffect(() => {
+    if (!isAuthenticated) return undefined;
+
+    let lastActivityAt = Number(localStorage.getItem(LAST_ACTIVITY_KEY));
+    if (!Number.isFinite(lastActivityAt) || lastActivityAt <= 0) {
+      lastActivityAt = Date.now();
+      localStorage.setItem(LAST_ACTIVITY_KEY, String(lastActivityAt));
+    }
+
+    let timeoutId;
+    let lastSavedActivityAt = lastActivityAt;
+    let logoutStarted = false;
+
+    const logoutForInactivity = async () => {
+      if (logoutStarted) return;
+      logoutStarted = true;
+
+      setAuthError("You were logged out after 2 minutes of inactivity.");
+      setIsAuthenticated(false);
+      setCurrentUser(null);
+      setActivePage("dashboard");
+      localStorage.removeItem("pcms_active_page");
+
+      try {
+        await signOut();
+      } catch (error) {
+        setAuthError(
+          `You were logged out after 2 minutes of inactivity. ${error.message || "The server session could not be cleared."}`,
+        );
+      }
+    };
+
+    const checkIdleTimeout = () => {
+      window.clearTimeout(timeoutId);
+      const remainingMs = IDLE_TIMEOUT_MS - (Date.now() - lastActivityAt);
+
+      if (remainingMs <= 0) {
+        void logoutForInactivity();
+        return;
+      }
+
+      timeoutId = window.setTimeout(checkIdleTimeout, remainingMs);
+    };
+
+    const handleActivity = () => {
+      lastActivityAt = Date.now();
+      checkIdleTimeout();
+
+      if (lastActivityAt - lastSavedActivityAt >= 1000) {
+        lastSavedActivityAt = lastActivityAt;
+        localStorage.setItem(LAST_ACTIVITY_KEY, String(lastActivityAt));
+      }
+    };
+
+    const handleStorage = (event) => {
+      if (event.key !== LAST_ACTIVITY_KEY) return;
+
+      if (event.newValue === null) {
+        clearPcmsAuthState();
+        return;
+      }
+
+      const sharedActivityAt = Number(event.newValue);
+      if (Number.isFinite(sharedActivityAt) && sharedActivityAt > lastActivityAt) {
+        lastActivityAt = sharedActivityAt;
+        lastSavedActivityAt = sharedActivityAt;
+        checkIdleTimeout();
+      }
+    };
+
+    const activityEvents = ["pointerdown", "keydown", "mousemove", "scroll", "touchstart"];
+    activityEvents.forEach((eventName) => {
+      window.addEventListener(eventName, handleActivity, { passive: true });
+    });
+    window.addEventListener("storage", handleStorage);
+    document.addEventListener("visibilitychange", checkIdleTimeout);
+    window.addEventListener("focus", checkIdleTimeout);
+    checkIdleTimeout();
+
+    return () => {
+      window.clearTimeout(timeoutId);
+      activityEvents.forEach((eventName) => {
+        window.removeEventListener(eventName, handleActivity);
+      });
+      window.removeEventListener("storage", handleStorage);
+      document.removeEventListener("visibilitychange", checkIdleTimeout);
+      window.removeEventListener("focus", checkIdleTimeout);
+    };
+  }, [isAuthenticated]);
 
   const requestLogout = () => {
     setShowLogoutConfirm(true);

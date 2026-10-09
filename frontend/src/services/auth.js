@@ -1,4 +1,5 @@
 const CURRENT_USER_KEY = 'pcms_current_user';
+const LAST_ACTIVITY_KEY = 'pcms_last_activity';
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api';
 
 function normalizeProfile(profile = {}) {
@@ -46,6 +47,7 @@ function persistSessionUser(user, remember = false) {
 export function clearPcmsAuthState() {
   localStorage.removeItem(CURRENT_USER_KEY);
   sessionStorage.removeItem(CURRENT_USER_KEY);
+  localStorage.removeItem(LAST_ACTIVITY_KEY);
   window.dispatchEvent(new Event('pcms:auth-changed'));
 }
 
@@ -125,6 +127,7 @@ export async function signInWithEmail(email, password, remember = false) {
   }
 
   const user = normalizeProfile(payload.user);
+  localStorage.setItem(LAST_ACTIVITY_KEY, String(Date.now()));
   persistSessionUser(user, remember);
 
   return {
@@ -158,6 +161,7 @@ export async function verifyOtp(userId, otp, remember = false) {
   }
 
   const user = normalizeProfile(payload.user || {});
+  localStorage.setItem(LAST_ACTIVITY_KEY, String(Date.now()));
   persistSessionUser(user, remember);
 
   return {
